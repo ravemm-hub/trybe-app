@@ -97,15 +97,19 @@ export default function CreateScreen() {
   return (
     <SafeAreaView style={s.container}>
       <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={s.header}>
-          <TouchableOpacity onPress={() => router.back()}>
-            <Text style={s.cancel}>Cancel</Text>
-          </TouchableOpacity>
-          <Text style={s.title}>Drop a Trybe</Text>
-          <View style={{ width: 60 }} />
-        </View>
 
-        <ScrollView contentContainerStyle={s.form} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={s.form}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={s.topRow}>
+            <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}>
+              <Text style={s.backText}>← Back</Text>
+            </TouchableOpacity>
+            <Text style={s.screenTitle}>Drop a Trybe</Text>
+            <View style={{ width: 80 }} />
+          </View>
 
           {locLoading && (
             <View style={s.locBanner}>
@@ -123,7 +127,7 @@ export default function CreateScreen() {
             placeholderTextColor="#B4B2A9"
             maxLength={60}
           />
-          <Text style={s.hint}>Auto-suggested from your location & time — edit freely</Text>
+          <Text style={s.hint}>Auto-suggested from location & time — edit freely</Text>
 
           <Text style={s.label}>DROP POINT</Text>
           <TextInput
@@ -149,7 +153,7 @@ export default function CreateScreen() {
           </View>
           <Text style={s.hint}>Everyone within this range gets a ping</Text>
 
-          <Text style={s.label}>CREW SIZE — min people to open chat</Text>
+          <Text style={s.label}>CREW SIZE — min people to unlock chat</Text>
           <View style={s.optionRow}>
             {MIN_OPTIONS.map(n => (
               <TouchableOpacity
@@ -195,13 +199,18 @@ const GRAY = '#888780'
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   flex: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  cancel: { fontSize: 16, color: GRAY },
-  title: { fontSize: 17, fontWeight: '700', color: '#2C2C2A' },
+  topRow: {
+    flexDirection: 'row', alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 8, paddingBottom: 16,
+  },
+  backBtn: { paddingVertical: 8, paddingRight: 16 },
+  backText: { fontSize: 16, color: GREEN, fontWeight: '600' },
+  screenTitle: { fontSize: 17, fontWeight: '700', color: '#2C2C2A' },
   locBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#E1F5EE', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 8 },
   locText: { fontSize: 13, color: '#0F6E56' },
   form: { padding: 20 },
-  label: { fontSize: 11, fontWeight: '700', color: '#888780', marginTop: 24, marginBottom: 8, letterSpacing: 0.8 },
+  label: { fontSize: 11, fontWeight: '700', color: GRAY, marginTop: 24, marginBottom: 8, letterSpacing: 0.8 },
   hint: { fontSize: 11, color: GRAY, marginTop: 4 },
   input: { backgroundColor: '#F1EFE8', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: '#2C2C2A' },
   optionRow: { flexDirection: 'row', gap: 8 },

@@ -5,7 +5,7 @@ import {
 } from 'react-native'
 import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
-import { supabase } from '../lib/supabase'
+import { supabase } from '../../lib/supabase'
 
 type Group = {
   id: string; name: string; location_name: string | null
@@ -32,7 +32,7 @@ export default function DiscoverScreen() {
       if (error) throw error
       setGroups(data || [])
       const { data: memberData } = await supabase.from('group_members').select('group_id').eq('user_id', user.id)
-      if (memberData) setJoined(memberData.map(m => m.group_id))
+      if (memberData) setJoined(memberData.map((m: any) => m.group_id))
     } catch (err: any) { console.error(err.message) }
     finally { setLoading(false); setRefreshing(false) }
   }, [])
@@ -82,20 +82,14 @@ export default function DiscoverScreen() {
           <Text style={s.logo}>trybe</Text>
           <Text style={s.subtitle}>{locationLabel ? `📍 ${locationLabel}` : `${groups.length} active trybes`}</Text>
         </View>
-        <View style={s.headerRight}>
-          <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
-            <Text style={s.createBtnText}>+ Drop Trybe</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => supabase.auth.signOut()}>
-            <Text style={s.signOutText}>Sign out</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
+          <Text style={s.createBtnText}>+ Drop Trybe</Text>
+        </TouchableOpacity>
       </View>
 
       {userName ? (
         <View style={s.welcomeBanner}>
           <Text style={s.welcomeText}>Hey {userName} 👋</Text>
-          {locationLabel && <Text style={s.welcomeSub}>{groups.length} trybes active near you</Text>}
         </View>
       ) : null}
 
@@ -108,7 +102,7 @@ export default function DiscoverScreen() {
           <View style={s.emptyState}>
             <Text style={s.emptyEmoji}>🐦</Text>
             <Text style={s.emptyTitle}>No trybes nearby yet</Text>
-            <Text style={s.emptySub}>Be the first to drop a trybe — everyone nearby gets pinged instantly</Text>
+            <Text style={s.emptySub}>Be the first to drop a trybe</Text>
             <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}>
               <Text style={s.emptyBtnText}>+ Drop the first Trybe</Text>
             </TouchableOpacity>
@@ -167,19 +161,16 @@ const s = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   logo: { fontSize: 28, fontWeight: '700', color: GREEN, letterSpacing: -1 },
   subtitle: { fontSize: 13, color: GRAY, marginTop: 2 },
-  headerRight: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   createBtn: { backgroundColor: GREEN, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
   createBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  signOutText: { fontSize: 13, color: GRAY },
   welcomeBanner: { backgroundColor: '#E1F5EE', paddingHorizontal: 20, paddingVertical: 10 },
   welcomeText: { fontSize: 14, color: '#0F6E56', fontWeight: '600' },
-  welcomeSub: { fontSize: 12, color: '#1D9E75', marginTop: 2 },
   list: { padding: 16, gap: 12 },
   listEmpty: { flex: 1 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32 },
   emptyEmoji: { fontSize: 56, marginBottom: 16 },
   emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A', marginBottom: 8, textAlign: 'center' },
-  emptySub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 24, lineHeight: 22 },
+  emptySub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 24 },
   emptyBtn: { backgroundColor: GREEN, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20 },
   emptyBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   card: { backgroundColor: '#fff', borderRadius: 16, borderWidth: 0.5, borderColor: '#E0DED8', padding: 16 },
