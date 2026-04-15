@@ -54,18 +54,17 @@ export default function ChatScreen() {
         table: 'messages',
         filter: `group_id=eq.${id}`,
       }, async (payload) => {
-        // Fetch with profile
-        const { data } = await supabase
-          .from('messages')
-          .select('*, profile:profiles(display_name, username)')
-          .eq('id', payload.new.id)
+               const newMsg = payload.new as Message
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('display_name, username')
+          .eq('id', newMsg.user_id)
           .single()
-        if (data) {
-          setMessages(prev => [...prev, data])
-          setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
-        }
+        const msgWithProfile = { ...newMsg, profile: profile || undefined }
+        setMessages(prev => [...prev, msgWithProfile])
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
       })
-      .subscribe()
+            .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [id])
 
