@@ -16,7 +16,7 @@ const AGENT_IDS = [
   'a1000001-0000-0000-0000-000000000029',
 ]
 
-const ANTHROPIC_KEY = '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'
+const ANTHROPIC_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_KEY || ''
 
 type DmMessage = {
   id: string
