@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Stack, useRouter, useSegments } from 'expo-router'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { supabase } from '../lib/supabase'
 import type { Session } from '@supabase/supabase-js'
 
@@ -21,15 +22,26 @@ export default function RootLayout() {
   useEffect(() => {
     if (session === undefined) return
     const inAuth = segments[0] === '(auth)'
-    if (!session && !inAuth) {
-      router.replace('/(auth)/login')
-    } else if (session && inAuth) {
-      router.replace('/(tabs)')
+    const inOnboarding = segments[0] === 'onboarding'
+
+    const navigate = async () => {
+      if (!session && !inAuth && !inOnboarding) {
+        const done = await AsyncStorage.getItem('onboarding_done')
+        if (!done) {
+          router.replace('/onboarding')
+        } else {
+          router.replace('/(auth)/login')
+        }
+      } else if (session && (inAuth || inOnboarding)) {
+        router.replace('/(tabs)')
+      }
     }
+    navigate()
   }, [session, segments, router])
 
   return (
     <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
       <Stack.Screen name="(auth)/login" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="chat" options={{ animation: 'slide_from_right' }} />
