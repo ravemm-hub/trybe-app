@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, ActivityIndicator,
-  Pressable, Image, Alert, ActionSheetIOS, Modal,
+  Pressable, Image, Alert, Modal,
 } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import * as ImagePicker from 'expo-image-picker'
@@ -29,6 +29,8 @@ type Message = {
   reply_to_id: string | null
   reply_preview: string | null
   created_at: string
+  deleted?: boolean
+  edited?: boolean
   profile?: { display_name: string | null; username: string; avatar_char: string | null }
 }
 
@@ -41,8 +43,11 @@ export default function ChatScreen() {
   const [uploading, setUploading] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
   const [memberCount, setMemberCount] = useState(parseInt(members || '0'))
-  const [reactionTarget, setReactionTarget] = useState<string | null>(null)
   const [replyTo, setReplyTo] = useState<Message | null>(null)
+  const [selectedMsg, setSelectedMsg] = useState<Message | null>(null)
+  const [editingMsg, setEditingMsg] = useState<Message | null>(null)
+  const [editDraft, setEditDraft] = useState('')
+  const [showMenu, setShowMenu] = useState(false)
   const listRef = useRef<FlatList>(null)
 
   const loadMessages = useCallback(async () => {
@@ -68,10 +73,13 @@ export default function ChatScreen() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `group_id=eq.${id}` },
         async (payload) => {
           const newMsg = payload.new as Message
-          const { data: profile } = await supabase
-            .from('profiles').select('display_name, username, avatar_char').eq('id', newMsg.user_id).single()
+          const { data: profile } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', newMsg.user_id).single()
           setMessages(prev => [...prev, { ...newMsg, profile: profile || undefined }])
           setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
+        })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: `group_id=eq.${id}` },
+        (payload) => {
+          setMessages(prev => prev.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m))
         })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'groups', filter: `id=eq.${id}` },
         (payload) => setMemberCount(payload.new.member_count))
@@ -91,63 +99,63 @@ export default function ChatScreen() {
     setReplyTo(null)
   }
 
+  const deleteMessage = async (msg: Message) => {
+    await supabase.from('messages').update({ content: null, deleted: true }).eq('id', msg.id)
+    setShowMenu(false)
+    setSelectedMsg(null)
+  }
+
+  const startEdit = (msg: Message) => {
+    setEditingMsg(msg)
+    setEditDraft(msg.content || '')
+    setShowMenu(false)
+    setSelectedMsg(null)
+  }
+
+  const saveEdit = async () => {
+    if (!editingMsg || !editDraft.trim()) return
+    await supabase.from('messages').update({ content: editDraft.trim(), edited: true }).eq('id', editingMsg.id)
+    setEditingMsg(null)
+    setEditDraft('')
+  }
+
   const pickImage = async (fromCamera: boolean) => {
     const perm = fromCamera
       ? await ImagePicker.requestCameraPermissionsAsync()
       : await ImagePicker.requestMediaLibraryPermissionsAsync()
-    if (!perm.granted) { Alert.alert('Permission needed'); return }
-
+    if (!perm.granted) return
     const result = fromCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.7, base64: false })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, base64: false })
-
+      ? await ImagePicker.launchCameraAsync({ quality: 0.7 })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7 })
     if (result.canceled || !result.assets?.[0]) return
     const asset = result.assets[0]
     setUploading(true)
-
     try {
       const ext = asset.uri.split('.').pop() || 'jpg'
       const filename = `${Date.now()}.${ext}`
       const formData = new FormData()
       formData.append('file', { uri: asset.uri, type: `image/${ext}`, name: filename } as any)
-
-      const { data: uploadData, error } = await supabase.storage
-        .from('chat-media')
-        .upload(`groups/${id}/${filename}`, formData)
-
-      if (error) throw error
-
-      const { data: { publicUrl } } = supabase.storage
-        .from('chat-media')
-        .getPublicUrl(`groups/${id}/${filename}`)
-
-      await supabase.from('messages').insert({
-        group_id: id, user_id: userId, type: 'image', media_url: publicUrl,
-      })
-    } catch (err: any) {
-      Alert.alert('Upload failed', err.message)
-    } finally {
-      setUploading(false)
-    }
+      await supabase.storage.from('chat-media').upload(`groups/${id}/${filename}`, formData)
+      const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl(`groups/${id}/${filename}`)
+      await supabase.from('messages').insert({ group_id: id, user_id: userId, type: 'image', media_url: publicUrl })
+    } catch (err: any) { Alert.alert('Upload failed', err.message) }
+    finally { setUploading(false) }
   }
 
   const showImageOptions = () => {
-    if (Platform.OS === 'ios') {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options: ['Cancel', 'Camera', 'Photo Library'], cancelButtonIndex: 0 },
-        (idx) => { if (idx === 1) pickImage(true); if (idx === 2) pickImage(false) }
-      )
-    } else {
-      Alert.alert('Add photo', '', [
-        { text: 'Camera', onPress: () => pickImage(true) },
-        { text: 'Photo Library', onPress: () => pickImage(false) },
-        { text: 'Cancel', style: 'cancel' },
-      ])
-    }
+    Alert.alert('Add photo', '', [
+      { text: 'Camera', onPress: () => pickImage(true) },
+      { text: 'Photo Library', onPress: () => pickImage(false) },
+      { text: 'Cancel', style: 'cancel' },
+    ])
   }
 
   const formatTime = (ts: string) => new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
   const isAgent = (uid: string | null) => uid && AGENT_IDS.includes(uid)
+  const canEdit = (msg: Message) => {
+    const diff = Date.now() - new Date(msg.created_at).getTime()
+    return msg.user_id === userId && diff < 15 * 60 * 1000 && !msg.deleted
+  }
 
   return (
     <SafeAreaView style={s.container}>
@@ -163,6 +171,30 @@ export default function ChatScreen() {
         </View>
         <View style={s.liveDot} />
       </View>
+
+      {/* Message action menu */}
+      <Modal visible={showMenu} transparent animationType="fade" onRequestClose={() => setShowMenu(false)}>
+        <Pressable style={s.menuOverlay} onPress={() => setShowMenu(false)}>
+          <View style={s.menu}>
+            <TouchableOpacity style={s.menuItem} onPress={() => { setReplyTo(selectedMsg!); setShowMenu(false); setSelectedMsg(null) }}>
+              <Text style={s.menuItemText}>↩ Reply</Text>
+            </TouchableOpacity>
+            {selectedMsg && canEdit(selectedMsg) && (
+              <TouchableOpacity style={s.menuItem} onPress={() => startEdit(selectedMsg)}>
+                <Text style={s.menuItemText}>✏️ Edit</Text>
+              </TouchableOpacity>
+            )}
+            {selectedMsg?.user_id === userId && !selectedMsg?.deleted && (
+              <TouchableOpacity style={[s.menuItem, s.menuItemDanger]} onPress={() => deleteMessage(selectedMsg)}>
+                <Text style={s.menuItemTextDanger}>🗑️ Delete</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={s.menuItem} onPress={() => setShowMenu(false)}>
+              <Text style={[s.menuItemText, { color: '#888' }]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
 
       <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={90}>
         {loading ? (
@@ -180,15 +212,23 @@ export default function ChatScreen() {
               const isSystem = item.type === 'system'
               const agent = isAgent(item.user_id)
               const displayName = item.profile?.display_name || item.profile?.username || 'Unknown'
-              const avatarChar = item.profile?.avatar_char || (agent ? '🤖' : displayName[0] || '?')
+              const avatarChar = item.profile?.avatar_char || displayName[0] || '?'
 
-              if (isSystem) {
-                return <View style={s.systemMsg}><Text style={s.systemText}>{item.content}</Text></View>
+              if (isSystem) return <View style={s.systemMsg}><Text style={s.systemText}>{item.content}</Text></View>
+
+              if (item.deleted) {
+                return (
+                  <View style={[s.bubbleRow, isMe && s.bubbleRowMe]}>
+                    <View style={s.deletedMsg}>
+                      <Text style={s.deletedText}>🚫 Message deleted</Text>
+                    </View>
+                  </View>
+                )
               }
 
               return (
                 <Pressable
-                  onLongPress={() => setReactionTarget(reactionTarget === item.id ? null : item.id)}
+                  onLongPress={() => { setSelectedMsg(item); setShowMenu(true) }}
                   style={[s.bubbleRow, isMe && s.bubbleRowMe]}
                 >
                   {!isMe && (
@@ -203,13 +243,11 @@ export default function ChatScreen() {
                         {agent && <View style={s.agentBadge}><Text style={s.agentBadgeText}>AI</Text></View>}
                       </View>
                     )}
-
                     {item.reply_preview && (
                       <View style={[s.replyPreview, isMe && s.replyPreviewMe]}>
                         <Text style={s.replyPreviewText} numberOfLines={1}>↩ {item.reply_preview}</Text>
                       </View>
                     )}
-
                     <View style={[s.bubble, isMe ? s.bubbleMe : agent ? s.bubbleAgent : s.bubbleThem]}>
                       {item.type === 'image' && item.media_url ? (
                         <Image source={{ uri: item.media_url }} style={s.msgImage} resizeMode="cover" />
@@ -219,23 +257,10 @@ export default function ChatScreen() {
                         </Text>
                       )}
                     </View>
-
-                    <View style={[s.msgActions, isMe && s.msgActionsMe]}>
+                    <View style={[s.msgMeta, isMe && s.msgMetaMe]}>
                       <Text style={s.timeText}>{formatTime(item.created_at)}</Text>
-                      <TouchableOpacity onPress={() => setReplyTo(item)} style={s.replyBtn}>
-                        <Text style={s.replyBtnText}>↩</Text>
-                      </TouchableOpacity>
+                      {item.edited && <Text style={s.editedTag}>· edited</Text>}
                     </View>
-
-                    {reactionTarget === item.id && (
-                      <View style={[s.reactionPicker, isMe && s.reactionPickerMe]}>
-                        {QUICK_REACTIONS.map(r => (
-                          <TouchableOpacity key={r} onPress={() => setReactionTarget(null)} style={s.reactionOpt}>
-                            <Text style={s.reactionEmoji}>{r}</Text>
-                          </TouchableOpacity>
-                        ))}
-                      </View>
-                    )}
                   </View>
                 </Pressable>
               )
@@ -245,44 +270,55 @@ export default function ChatScreen() {
 
         {replyTo && (
           <View style={s.replyBar}>
-            <Text style={s.replyBarText} numberOfLines={1}>↩ Replying: {replyTo.content}</Text>
+            <Text style={s.replyBarText} numberOfLines={1}>↩ {replyTo.content}</Text>
             <TouchableOpacity onPress={() => setReplyTo(null)}>
               <Text style={s.replyBarClose}>✕</Text>
             </TouchableOpacity>
           </View>
         )}
 
-        <View style={s.inputRow}>
-          <TouchableOpacity style={s.mediaBtn} onPress={showImageOptions} disabled={uploading}>
-            {uploading
-              ? <ActivityIndicator color={GREEN} size="small" />
-              : <Text style={s.mediaBtnText}>📷</Text>
-            }
-          </TouchableOpacity>
-          <TextInput
-            style={s.input}
-            value={draft}
-            onChangeText={setDraft}
-            placeholder="Message..."
-            placeholderTextColor="#B4B2A9"
-            multiline
-            maxLength={500}
-          />
-          <TouchableOpacity
-            style={[s.sendBtn, !draft.trim() && s.sendBtnOff]}
-            onPress={sendMessage}
-            disabled={!draft.trim()}
-          >
-            <Text style={s.sendIcon}>↑</Text>
-          </TouchableOpacity>
-        </View>
+        {editingMsg ? (
+          <View style={s.editBar}>
+            <Text style={s.editBarLabel}>✏️ Editing</Text>
+            <TextInput style={s.editInput} value={editDraft} onChangeText={setEditDraft} autoFocus multiline />
+            <View style={s.editActions}>
+              <TouchableOpacity onPress={() => setEditingMsg(null)} style={s.editCancel}>
+                <Text style={s.editCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={saveEdit} style={s.editSave}>
+                <Text style={s.editSaveText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <View style={s.inputRow}>
+            <TouchableOpacity style={s.mediaBtn} onPress={showImageOptions} disabled={uploading}>
+              {uploading ? <ActivityIndicator color={GREEN} size="small" /> : <Text style={s.mediaBtnText}>📷</Text>}
+            </TouchableOpacity>
+            <TextInput
+              style={s.input}
+              value={draft}
+              onChangeText={setDraft}
+              placeholder="Message..."
+              placeholderTextColor="#B4B2A9"
+              multiline
+              maxLength={500}
+            />
+            <TouchableOpacity
+              style={[s.sendBtn, !draft.trim() && s.sendBtnOff]}
+              onPress={sendMessage}
+              disabled={!draft.trim()}
+            >
+              <Text style={s.sendIcon}>↑</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </KeyboardAvoidingView>
     </SafeAreaView>
   )
 }
 
 const GREEN = '#1D9E75'
-const PURPLE = '#7F77DD'
 const ORANGE = '#FF6B35'
 const GRAY = '#888780'
 
@@ -298,6 +334,12 @@ const s = StyleSheet.create({
   headerName: { fontSize: 15, fontWeight: '700', color: '#2C2C2A' },
   headerSub: { fontSize: 11, color: GRAY },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#E24B4A' },
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  menu: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 32, paddingTop: 8 },
+  menuItem: { paddingHorizontal: 24, paddingVertical: 16, borderBottomWidth: 0.5, borderColor: '#F1EFE8' },
+  menuItemDanger: {},
+  menuItemText: { fontSize: 16, color: '#2C2C2A' },
+  menuItemTextDanger: { fontSize: 16, color: '#E24B4A' },
   messageList: { padding: 16, gap: 10, flexGrow: 1 },
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   bubbleRowMe: { flexDirection: 'row-reverse' },
@@ -309,7 +351,7 @@ const s = StyleSheet.create({
   senderName: { fontSize: 11, color: GRAY, fontWeight: '500' },
   agentBadge: { backgroundColor: ORANGE, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4 },
   agentBadgeText: { fontSize: 9, fontWeight: '700', color: '#fff' },
-  replyPreview: { backgroundColor: '#F1EFE8', borderLeftWidth: 3, borderLeftColor: PURPLE, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginBottom: 3 },
+  replyPreview: { backgroundColor: '#F1EFE8', borderLeftWidth: 3, borderLeftColor: '#7F77DD', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, marginBottom: 3 },
   replyPreviewMe: { borderLeftColor: '#fff' },
   replyPreviewText: { fontSize: 11, color: GRAY },
   bubble: { paddingHorizontal: 13, paddingVertical: 9, borderRadius: 18, overflow: 'hidden' },
@@ -320,20 +362,25 @@ const s = StyleSheet.create({
   bubbleTextMe: { color: '#fff' },
   bubbleTextThem: { color: '#2C2C2A' },
   msgImage: { width: 220, height: 220, borderRadius: 12 },
-  msgActions: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3, marginLeft: 4 },
-  msgActionsMe: { flexDirection: 'row-reverse', marginLeft: 0, marginRight: 4 },
+  msgMeta: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3, marginLeft: 4 },
+  msgMetaMe: { flexDirection: 'row-reverse', marginLeft: 0, marginRight: 4 },
   timeText: { fontSize: 10, color: GRAY },
-  replyBtn: { padding: 2 },
-  replyBtnText: { fontSize: 14, color: GRAY },
+  editedTag: { fontSize: 10, color: GRAY },
   systemMsg: { alignItems: 'center', marginVertical: 8 },
   systemText: { fontSize: 12, color: GRAY, backgroundColor: '#F1EFE8', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 10 },
-  reactionPicker: { flexDirection: 'row', backgroundColor: '#fff', borderRadius: 20, padding: 6, gap: 4, marginTop: 4, borderWidth: 0.5, borderColor: '#E0DED8', elevation: 4 },
-  reactionPickerMe: { alignSelf: 'flex-end' },
-  reactionOpt: { padding: 4 },
-  reactionEmoji: { fontSize: 20 },
+  deletedMsg: { paddingHorizontal: 12, paddingVertical: 8 },
+  deletedText: { fontSize: 13, color: GRAY, fontStyle: 'italic' },
   replyBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1EFE8', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 0.5, borderColor: '#E0DED8' },
-  replyBarText: { flex: 1, fontSize: 12, color: PURPLE },
+  replyBarText: { flex: 1, fontSize: 12, color: '#7F77DD' },
   replyBarClose: { fontSize: 16, color: GRAY, paddingLeft: 8 },
+  editBar: { backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8', padding: 12 },
+  editBarLabel: { fontSize: 11, color: GRAY, marginBottom: 6 },
+  editInput: { backgroundColor: '#F1EFE8', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, color: '#2C2C2A', marginBottom: 8 },
+  editActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 12 },
+  editCancel: { paddingHorizontal: 16, paddingVertical: 8 },
+  editCancelText: { fontSize: 14, color: GRAY },
+  editSave: { backgroundColor: GREEN, paddingHorizontal: 20, paddingVertical: 8, borderRadius: 16 },
+  editSaveText: { fontSize: 14, fontWeight: '700', color: '#fff' },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', padding: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8' },
   mediaBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
   mediaBtnText: { fontSize: 20 },

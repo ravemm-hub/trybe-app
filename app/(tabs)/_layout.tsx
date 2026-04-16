@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router'
-import { Text, View, StyleSheet } from 'react-native'
+import { Text, View, StyleSheet, Platform } from 'react-native'
 import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 
@@ -53,9 +53,9 @@ export default function TabsLayout() {
         backgroundColor: '#fff',
         borderTopWidth: 0.5,
         borderTopColor: '#E0DED8',
-        height: 60,
-        paddingBottom: 6,
-        paddingTop: 6,
+        height: Platform.OS === 'android' ? 58 : 80,
+        paddingBottom: Platform.OS === 'android' ? 8 : 20,
+        paddingTop: 8,
         elevation: 8,
         shadowColor: '#000',
         shadowOpacity: 0.06,
@@ -63,7 +63,12 @@ export default function TabsLayout() {
       },
       tabBarActiveTintColor: GREEN,
       tabBarInactiveTintColor: GRAY,
-      tabBarLabelStyle: { fontSize: 10, fontWeight: '700', letterSpacing: 0.3 },
+      tabBarLabelStyle: {
+        fontSize: 10,
+        fontWeight: '700',
+        letterSpacing: 0.3,
+        marginBottom: Platform.OS === 'android' ? 0 : 4,
+      },
     }}>
       <Tabs.Screen name="index" options={{
         title: 'Trybes',
@@ -71,15 +76,15 @@ export default function TabsLayout() {
       }} />
       <Tabs.Screen name="feed" options={{
         title: 'Feed',
-        tabBarIcon: ({ focused }) => <BadgeIcon emoji={focused ? '🌐' : '🔍'} count={0} />,
+        tabBarIcon: ({ focused }) => <BadgeIcon emoji={focused ? '🌐' : '🌍'} count={0} />,
       }} />
       <Tabs.Screen name="explore" options={{
         title: 'Explore',
-        tabBarIcon: ({ focused }) => <BadgeIcon emoji={focused ? '📡' : '📡'} count={0} />,
+        tabBarIcon: ({ focused }) => <BadgeIcon emoji="📡" count={0} />,
       }} />
       <Tabs.Screen name="agent" options={{
         title: 'Agent',
-        tabBarIcon: ({ focused }) => <BadgeIcon emoji="✦" count={0} color={PURPLE} />,
+        tabBarIcon: ({ focused }) => <BadgeIcon emoji="✦" count={0} color={focused ? PURPLE : undefined} />,
       }} />
       <Tabs.Screen name="profile" options={{
         title: 'Me',
