@@ -31,6 +31,7 @@ export default function CreateScreen() {
   const [locationName, setLocationName] = useState('')
   const [minMembers, setMinMembers] = useState(20)
   const [radius, setRadius] = useState(300)
+  const [isPrivate, setIsPrivate] = useState(false)
   const [loading, setLoading] = useState(false)
   const [locLoading, setLocLoading] = useState(true)
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
@@ -69,6 +70,7 @@ export default function CreateScreen() {
       if (!user) throw new Error('Not signed in')
       const lat = coords?.lat ?? 32.0853
       const lon = coords?.lon ?? 34.7818
+
       const { data, error } = await supabase.from('groups').insert({
         name: name.trim(),
         location_name: locationName.trim() || null,
@@ -78,14 +80,21 @@ export default function CreateScreen() {
         member_count: 1,
         status: 'lobby',
         type: 'manual',
+        is_private: isPrivate,
         created_by: user.id,
       }).select().single()
+
       if (error) throw error
-      await supabase.from('group_members').insert({ group_id: data.id, user_id: user.id, role: 'admin' })
+
+      await supabase.from('group_members').insert({
+        group_id: data.id, user_id: user.id, role: 'admin'
+      })
+
       await supabase.from('messages').insert({
         group_id: data.id, type: 'system',
-        content: `"${data.name}" trybe created — waiting for ${minMembers} people 🐦`,
+        content: `"${data.name}" trybe created${isPrivate ? ' (Private 🔒)' : ' (Public 🌐)'} — waiting for ${minMembers} people 🐦`,
       })
+
       router.replace({ pathname: '/lobby', params: { id: data.id, name: data.name } })
     } catch (err: any) {
       Alert.alert('Error', err.message)
@@ -97,20 +106,15 @@ export default function CreateScreen() {
   return (
     <SafeAreaView style={s.container}>
       <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <View style={s.header}>
+          <TouchableOpacity onPress={() => router.back()}>
+            <Text style={s.cancel}>Cancel</Text>
+          </TouchableOpacity>
+          <Text style={s.title}>Drop a Trybe</Text>
+          <View style={{ width: 60 }} />
+        </View>
 
-        <ScrollView
-          contentContainerStyle={s.form}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
-        >
-          <View style={s.topRow}>
-            <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}>
-              <Text style={s.backText}>← Back</Text>
-            </TouchableOpacity>
-            <Text style={s.screenTitle}>Drop a Trybe</Text>
-            <View style={{ width: 80 }} />
-          </View>
-
+        <ScrollView contentContainerStyle={s.form} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
           {locLoading && (
             <View style={s.locBanner}>
               <ActivityIndicator color={GREEN} size="small" />
@@ -139,6 +143,26 @@ export default function CreateScreen() {
             maxLength={80}
           />
 
+          <Text style={s.label}>PRIVACY</Text>
+          <View style={s.privacyRow}>
+            <TouchableOpacity
+              style={[s.privacyBtn, !isPrivate && s.privacyBtnActive]}
+              onPress={() => setIsPrivate(false)}
+            >
+              <Text style={s.privacyEmoji}>🌐</Text>
+              <Text style={[s.privacyBtnText, !isPrivate && s.privacyBtnTextActive]}>Public</Text>
+              <Text style={s.privacyDesc}>Anyone nearby can join</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[s.privacyBtn, isPrivate && s.privacyBtnActivePrivate]}
+              onPress={() => setIsPrivate(true)}
+            >
+              <Text style={s.privacyEmoji}>🔒</Text>
+              <Text style={[s.privacyBtnText, isPrivate && s.privacyBtnTextActive]}>Private</Text>
+              <Text style={s.privacyDesc}>Admin approves members</Text>
+            </TouchableOpacity>
+          </View>
+
           <Text style={s.label}>SIGNAL RADIUS — who gets notified?</Text>
           <View style={s.optionRow}>
             {RADIUS_OPTIONS.map(r => (
@@ -151,7 +175,6 @@ export default function CreateScreen() {
               </TouchableOpacity>
             ))}
           </View>
-          <Text style={s.hint}>Everyone within this range gets a ping</Text>
 
           <Text style={s.label}>CREW SIZE — min people to unlock chat</Text>
           <View style={s.optionRow}>
@@ -168,8 +191,10 @@ export default function CreateScreen() {
 
           <View style={s.infoCard}>
             <Text style={s.infoText}>
-              🐦 Chat unlocks when {minMembers} people join the lobby.{'\n'}
-              Everyone within {radius >= 1000 ? `${radius/1000}km` : `${radius}m`} gets notified instantly.
+              {isPrivate
+                ? '🔒 Private — only people you approve can join. Great for close groups.'
+                : '🌐 Public — everyone nearby gets notified and can join instantly.'}
+              {'\n'}Chat unlocks when {minMembers} people join the lobby.
             </Text>
           </View>
 
@@ -199,20 +224,23 @@ const GRAY = '#888780'
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   flex: { flex: 1 },
-  topRow: {
-    flexDirection: 'row', alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingTop: 8, paddingBottom: 16,
-  },
-  backBtn: { paddingVertical: 8, paddingRight: 16 },
-  backText: { fontSize: 16, color: GREEN, fontWeight: '600' },
-  screenTitle: { fontSize: 17, fontWeight: '700', color: '#2C2C2A' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  cancel: { fontSize: 16, color: GRAY },
+  title: { fontSize: 17, fontWeight: '700', color: '#2C2C2A' },
   locBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#E1F5EE', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 8 },
   locText: { fontSize: 13, color: '#0F6E56' },
   form: { padding: 20 },
   label: { fontSize: 11, fontWeight: '700', color: GRAY, marginTop: 24, marginBottom: 8, letterSpacing: 0.8 },
   hint: { fontSize: 11, color: GRAY, marginTop: 4 },
   input: { backgroundColor: '#F1EFE8', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: '#2C2C2A' },
+  privacyRow: { flexDirection: 'row', gap: 10 },
+  privacyBtn: { flex: 1, padding: 14, borderRadius: 14, backgroundColor: '#F1EFE8', alignItems: 'center', gap: 4 },
+  privacyBtnActive: { backgroundColor: '#E1F5EE', borderWidth: 2, borderColor: GREEN },
+  privacyBtnActivePrivate: { backgroundColor: '#EEEDFE', borderWidth: 2, borderColor: PURPLE },
+  privacyEmoji: { fontSize: 24 },
+  privacyBtnText: { fontSize: 14, fontWeight: '700', color: '#2C2C2A' },
+  privacyBtnTextActive: { color: '#2C2C2A' },
+  privacyDesc: { fontSize: 11, color: GRAY, textAlign: 'center' },
   optionRow: { flexDirection: 'row', gap: 8 },
   option: { flex: 1, paddingVertical: 13, borderRadius: 12, backgroundColor: '#F1EFE8', alignItems: 'center' },
   optionSelected: { backgroundColor: PURPLE },

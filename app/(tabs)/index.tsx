@@ -1,17 +1,24 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  SafeAreaView, StatusBar, Pressable, RefreshControl, Alert,
+  SafeAreaView, StatusBar, Pressable, RefreshControl,
 } from 'react-native'
 import { useRouter } from 'expo-router'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import * as Location from 'expo-location'
 import { supabase } from '../../lib/supabase'
 
 type Group = {
-  id: string; name: string; location_name: string | null
-  member_count: number; min_members: number; status: 'lobby' | 'open' | 'archived'
-  created_by: string | null
+  id: string
+  name: string
+  location_name: string | null
+  member_count: number
+  min_members: number
+  status: string
+  created_at: string
+  is_private: boolean
+  last_message?: string | null
+  last_message_at?: string | null
+  message_count?: number
+  unread?: number
 }
 
 export default function DiscoverScreen() {
@@ -21,50 +28,64 @@ export default function DiscoverScreen() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [userName, setUserName] = useState('')
-  const [locationLabel, setLocationLabel] = useState<string | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
 
   const loadGroups = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+      setUserId(user.id)
+
       const { data: profile } = await supabase.from('profiles').select('display_name, username').eq('id', user.id).single()
       if (profile) setUserName(profile.display_name || profile.username || '')
-      const { data, error } = await supabase.from('groups').select('*').neq('status', 'archived').order('created_at', { ascending: false })
+
+      const { data, error } = await supabase.from('groups').select('*').neq('status', 'archived')
       if (error) throw error
-      setGroups(data || [])
+
+      const enriched = await Promise.all((data || []).map(async (g: Group) => {
+        const { data: msgs } = await supabase
+          .from('messages').select('content, created_at').eq('group_id', g.id)
+          .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
+        const { count } = await supabase
+          .from('messages').select('id', { count: 'exact', head: true }).eq('group_id', g.id)
+        return {
+          ...g,
+          last_message: msgs?.[0]?.content || null,
+          last_message_at: msgs?.[0]?.created_at || null,
+          message_count: count || 0,
+        }
+      }))
+
+      // Sort by last message time (most recent first) — like WhatsApp
+      enriched.sort((a, b) => {
+        const aTime = a.last_message_at || a.created_at
+        const bTime = b.last_message_at || b.created_at
+        return new Date(bTime).getTime() - new Date(aTime).getTime()
+      })
+
+      setGroups(enriched)
+
       const { data: memberData } = await supabase.from('group_members').select('group_id').eq('user_id', user.id)
       if (memberData) setJoined(memberData.map((m: any) => m.group_id))
     } catch (err: any) { console.error(err.message) }
     finally { setLoading(false); setRefreshing(false) }
   }, [])
 
-  const getLocation = useCallback(async () => {
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync()
-      if (status !== 'granted') return
-      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-      const [place] = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude })
-      if (place) setLocationLabel([place.city, place.district].filter(Boolean).join(', ') || null)
-    } catch {}
-  }, [])
-
-  useEffect(() => { loadGroups(); getLocation() }, [loadGroups, getLocation])
+  useEffect(() => { loadGroups() }, [loadGroups])
 
   useEffect(() => {
     const channel = supabase.channel('groups-rt')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'groups' }, () => loadGroups())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => loadGroups())
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [loadGroups])
 
   const joinGroup = async (groupId: string) => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      await supabase.from('group_members').insert({ group_id: groupId, user_id: user.id })
-      setJoined(prev => [...prev, groupId])
-      setGroups(prev => prev.map(g => g.id === groupId ? { ...g, member_count: g.member_count + 1 } : g))
-    } catch (err: any) { Alert.alert('Error', err.message) }
+    if (!userId) return
+    await supabase.from('group_members').insert({ group_id: groupId, user_id: userId })
+    setJoined(prev => [...prev, groupId])
+    setGroups(prev => prev.map(g => g.id === groupId ? { ...g, member_count: g.member_count + 1 } : g))
   }
 
   const openGroup = (group: Group) => {
@@ -75,24 +96,27 @@ export default function DiscoverScreen() {
     }
   }
 
+  const formatLastMsg = (ts: string) => {
+    const d = new Date(ts)
+    const now = new Date()
+    const diff = now.getTime() - d.getTime()
+    if (diff < 60000) return 'now'
+    if (diff < 3600000) return `${Math.floor(diff/60000)}m`
+    if (diff < 86400000) return `${Math.floor(diff/3600000)}h`
+    return d.toLocaleDateString('en', { day: 'numeric', month: 'short' })
+  }
+
   return (
     <SafeAreaView style={s.container}>
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
-        <View>
-          <Text style={s.logo}>tryber</Text>
-          <Text style={s.subtitle}>{locationLabel ? `📍 ${locationLabel}` : `${groups.length} active trybes`}</Text>
-        </View>
+        <Text style={s.logo}>tryber</Text>
         <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
           <Text style={s.createBtnText}>+ Drop Trybe</Text>
         </TouchableOpacity>
       </View>
 
-      {userName ? (
-        <View style={s.welcomeBanner}>
-          <Text style={s.welcomeText}>Hey {userName} 👋</Text>
-        </View>
-      ) : null}
+      {userName ? <View style={s.welcomeBanner}><Text style={s.welcomeText}>Hey {userName} 👋</Text></View> : null}
 
       <FlatList
         data={groups}
@@ -101,55 +125,66 @@ export default function DiscoverScreen() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadGroups() }} tintColor={GREEN} />}
         ListEmptyComponent={!loading ? (
           <View style={s.emptyState}>
-            <Text style={s.emptyEmoji}>🐦</Text>
-            <Text style={s.emptyTitle}>No trybes nearby yet</Text>
-            <Text style={s.emptySub}>Be the first to drop a trybe</Text>
+            <Text style={s.emptyEmoji}>⚡️</Text>
+            <Text style={s.emptyTitle}>No trybes yet</Text>
+            <Text style={s.emptySub}>Drop the first trybe and get the party started</Text>
             <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}>
-              <Text style={s.emptyBtnText}>+ Drop the first Trybe</Text>
+              <Text style={s.emptyBtnText}>+ Drop Trybe</Text>
             </TouchableOpacity>
           </View>
         ) : null}
-        renderItem={({ item }) => (
-          <GroupCard group={item} isJoined={joined.includes(item.id)} onJoin={() => joinGroup(item.id)} onOpen={() => openGroup(item)} />
-        )}
+        renderItem={({ item }) => {
+          const isOpen = item.status === 'open'
+          const pct = Math.min(100, Math.round((item.member_count / item.min_members) * 100))
+          const isJoined = joined.includes(item.id)
+
+          return (
+            <Pressable style={s.card} onPress={() => openGroup(item)}>
+              <View style={s.cardTop}>
+                <View style={[s.dot, isOpen ? s.dotOpen : s.dotLobby]} />
+                <View style={s.cardInfo}>
+                  <View style={s.cardNameRow}>
+                    <Text style={s.cardName} numberOfLines={1}>{item.name}</Text>
+                    {item.is_private && <Text style={s.privateBadge}>🔒</Text>}
+                  </View>
+                  {item.location_name && <Text style={s.cardLocation}>📍 {item.location_name}</Text>}
+                  {item.last_message && (
+                    <Text style={s.lastMsg} numberOfLines={1}>{item.last_message}</Text>
+                  )}
+                </View>
+                <View style={s.cardRight}>
+                  {item.last_message_at && (
+                    <Text style={s.lastTime}>{formatLastMsg(item.last_message_at)}</Text>
+                  )}
+                  <Text style={s.memberNum}>{item.member_count}</Text>
+                  <Text style={s.memberLabel}>people</Text>
+                </View>
+              </View>
+
+              {!isOpen && (
+                <View style={s.progressSection}>
+                  <View style={s.progressBg}>
+                    <View style={[s.progressFill, { width: `${pct}%` as any }]} />
+                  </View>
+                  <Text style={s.progressLabel}>{item.member_count}/{item.min_members} to unlock</Text>
+                </View>
+              )}
+
+              {isOpen && <Text style={s.openLabel}>🟢 Chat is LIVE — tap to join</Text>}
+
+              {!isOpen && !isJoined && (
+                <TouchableOpacity style={s.joinBtn} onPress={() => joinGroup(item.id)}>
+                  <Text style={s.joinBtnText}>Join Lobby</Text>
+                </TouchableOpacity>
+              )}
+              {!isOpen && isJoined && (
+                <Text style={s.inLobby}>✓ In the lobby</Text>
+              )}
+            </Pressable>
+          )
+        }}
       />
     </SafeAreaView>
-  )
-}
-
-function GroupCard({ group, isJoined, onJoin, onOpen }: { group: Group; isJoined: boolean; onJoin: () => void; onOpen: () => void }) {
-  const isOpen = group.status === 'open'
-  const pct = Math.min(100, Math.round((group.member_count / group.min_members) * 100))
-  return (
-    <Pressable style={s.card} onPress={onOpen}>
-      <View style={s.cardTop}>
-        <View style={[s.dot, isOpen ? s.dotOpen : s.dotLobby]} />
-        <View style={s.cardInfo}>
-          <Text style={s.cardName}>{group.name}</Text>
-          {group.location_name && <Text style={s.cardLocation}>📍 {group.location_name}</Text>}
-        </View>
-        <View style={s.cardRight}>
-          <Text style={s.memberNum}>{group.member_count}</Text>
-          <Text style={s.memberLabel}>people</Text>
-        </View>
-      </View>
-      {!isOpen && (
-        <View style={s.progressSection}>
-          <View style={s.progressBg}>
-            <View style={[s.progressFill, { width: `${pct}%` as any }]} />
-          </View>
-          <Text style={s.progressLabel}>{group.member_count}/{group.min_members} to unlock</Text>
-        </View>
-      )}
-      {isOpen && <Text style={s.openLabel}>🟢 Chat is LIVE — tap to join</Text>}
-      {!isOpen && (
-        <TouchableOpacity style={[s.joinBtn, isJoined && s.joinBtnDone]} onPress={onJoin} disabled={isJoined}>
-          <Text style={[s.joinBtnText, isJoined && s.joinBtnTextDone]}>
-            {isJoined ? '✓ In the lobby' : 'Join Lobby'}
-          </Text>
-        </TouchableOpacity>
-      )}
-    </Pressable>
   )
 }
 
@@ -159,14 +194,13 @@ const GRAY = '#888780'
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAF8' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  logo: { fontSize: 28, fontWeight: '700', color: GREEN, letterSpacing: -1 },
-  subtitle: { fontSize: 13, color: GRAY, marginTop: 2 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  logo: { fontSize: 26, fontWeight: '800', color: GREEN, letterSpacing: -1 },
   createBtn: { backgroundColor: GREEN, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
   createBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  welcomeBanner: { backgroundColor: '#E1F5EE', paddingHorizontal: 20, paddingVertical: 10 },
-  welcomeText: { fontSize: 14, color: '#0F6E56', fontWeight: '600' },
-  list: { padding: 16, gap: 12 },
+  welcomeBanner: { backgroundColor: '#E1F5EE', paddingHorizontal: 20, paddingVertical: 8 },
+  welcomeText: { fontSize: 13, color: '#0F6E56', fontWeight: '600' },
+  list: { padding: 12, gap: 8 },
   listEmpty: { flex: 1 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32 },
   emptyEmoji: { fontSize: 56, marginBottom: 16 },
@@ -174,24 +208,27 @@ const s = StyleSheet.create({
   emptySub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 24 },
   emptyBtn: { backgroundColor: GREEN, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20 },
   emptyBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  card: { backgroundColor: '#fff', borderRadius: 16, borderWidth: 0.5, borderColor: '#E0DED8', padding: 16 },
-  cardTop: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 12 },
-  dot: { width: 8, height: 8, borderRadius: 4, marginTop: 2 },
+  card: { backgroundColor: '#fff', borderRadius: 14, borderWidth: 0.5, borderColor: '#E0DED8', padding: 14 },
+  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
+  dot: { width: 8, height: 8, borderRadius: 4, marginTop: 6 },
   dotOpen: { backgroundColor: GREEN },
   dotLobby: { backgroundColor: PURPLE },
   cardInfo: { flex: 1 },
-  cardName: { fontSize: 15, fontWeight: '600', color: '#2C2C2A', marginBottom: 3 },
-  cardLocation: { fontSize: 12, color: GRAY },
-  cardRight: { alignItems: 'center' },
-  memberNum: { fontSize: 22, fontWeight: '700', color: '#2C2C2A' },
+  cardNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+  cardName: { fontSize: 15, fontWeight: '600', color: '#2C2C2A', flex: 1 },
+  privateBadge: { fontSize: 13 },
+  cardLocation: { fontSize: 12, color: GRAY, marginBottom: 3 },
+  lastMsg: { fontSize: 12, color: GRAY, fontStyle: 'italic' },
+  cardRight: { alignItems: 'flex-end', gap: 2 },
+  lastTime: { fontSize: 11, color: GRAY },
+  memberNum: { fontSize: 20, fontWeight: '700', color: '#2C2C2A' },
   memberLabel: { fontSize: 10, color: GRAY },
-  progressSection: { marginBottom: 12 },
-  progressBg: { height: 5, backgroundColor: '#F1EFE8', borderRadius: 3, marginBottom: 5 },
-  progressFill: { height: 5, backgroundColor: PURPLE, borderRadius: 3, minWidth: 5 },
+  progressSection: { marginBottom: 8 },
+  progressBg: { height: 4, backgroundColor: '#F1EFE8', borderRadius: 2, marginBottom: 4 },
+  progressFill: { height: 4, backgroundColor: PURPLE, borderRadius: 2, minWidth: 4 },
   progressLabel: { fontSize: 11, color: PURPLE, fontWeight: '600' },
-  openLabel: { fontSize: 12, color: GREEN, fontWeight: '600', marginBottom: 4 },
-  joinBtn: { backgroundColor: '#F1EFE8', paddingVertical: 10, borderRadius: 10, alignItems: 'center', marginTop: 8 },
-  joinBtnDone: { backgroundColor: '#E1F5EE' },
-  joinBtnText: { fontSize: 14, fontWeight: '600', color: PURPLE },
-  joinBtnTextDone: { color: GREEN },
+  openLabel: { fontSize: 12, color: GREEN, fontWeight: '600' },
+  joinBtn: { backgroundColor: '#F1EFE8', paddingVertical: 8, borderRadius: 10, alignItems: 'center', marginTop: 6 },
+  joinBtnText: { fontSize: 13, fontWeight: '600', color: PURPLE },
+  inLobby: { fontSize: 12, color: GREEN, fontWeight: '500', textAlign: 'center', marginTop: 6 },
 })
