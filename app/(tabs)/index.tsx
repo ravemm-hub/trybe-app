@@ -4,6 +4,7 @@ import {
   SafeAreaView, StatusBar, Pressable, RefreshControl, Alert,
 } from 'react-native'
 import { useRouter } from 'expo-router'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Location from 'expo-location'
 import { supabase } from '../../lib/supabase'
 
@@ -79,7 +80,7 @@ export default function DiscoverScreen() {
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <View>
-          <Text style={s.logo}>trybe</Text>
+          <Text style={s.logo}>tryber</Text>
           <Text style={s.subtitle}>{locationLabel ? `📍 ${locationLabel}` : `${groups.length} active trybes`}</Text>
         </View>
         <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
