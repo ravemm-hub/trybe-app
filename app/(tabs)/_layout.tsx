@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router'
-import { Text, View, StyleSheet, Platform } from 'react-native'
+import { Text, View, StyleSheet } from 'react-native'
 import { useState, useEffect } from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { supabase } from '../../lib/supabase'
@@ -67,11 +67,7 @@ export default function TabsLayout() {
       },
       tabBarActiveTintColor: GREEN,
       tabBarInactiveTintColor: GRAY,
-      tabBarLabelStyle: {
-        fontSize: 10,
-        fontWeight: '700',
-        letterSpacing: 0.3,
-      },
+      tabBarLabelStyle: { fontSize: 9, fontWeight: '700', letterSpacing: 0.2 },
     }}>
       <Tabs.Screen name="index" options={{
         title: 'Trybes',
@@ -80,6 +76,10 @@ export default function TabsLayout() {
       <Tabs.Screen name="feed" options={{
         title: 'Feed',
         tabBarIcon: ({ focused }) => <BadgeIcon emoji={focused ? '🌐' : '🌍'} count={0} />,
+      }} />
+      <Tabs.Screen name="marketplace" options={{
+        title: 'Market',
+        tabBarIcon: ({ focused }) => <BadgeIcon emoji={focused ? '🛍️' : '🛒'} count={0} />,
       }} />
       <Tabs.Screen name="explore" options={{
         title: 'Explore',
@@ -101,7 +101,7 @@ export default function TabsLayout() {
 
 const s = StyleSheet.create({
   iconWrap: { alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  iconEmoji: { fontSize: 20 },
+  iconEmoji: { fontSize: 19 },
   badge: { position: 'absolute', top: -4, right: -8, backgroundColor: '#E24B4A', borderRadius: 10, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3, borderWidth: 1.5, borderColor: '#fff' },
   badgeText: { fontSize: 9, fontWeight: '700', color: '#fff' },
 })
