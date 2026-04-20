@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, ActivityIndicator,
-  Alert,
+  KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, ActivityIndicator, Alert,
 } from 'react-native'
 import { supabase } from '../../lib/supabase'
 
 const ANTHROPIC_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_KEY || ''
+const TAVILY_KEY = process.env.EXPO_PUBLIC_TAVILY_KEY || ''
 
 type Message = {
   id: string
@@ -16,12 +16,47 @@ type Message = {
 }
 
 const QUICK_PROMPTS = [
-  '📋 Create a shopping list',
-  '⏰ Set a reminder',
-  '🌤️ What\'s the weather like?',
-  '💡 Give me an idea for tonight',
-  '📍 What\'s interesting nearby?',
+  '📋 צור לי רשימת קניות',
+  '🌤️ מה מזג האוויר היום?',
+  '📰 מה קורה בארץ עכשיו?',
+  '💡 מה לעשות הלילה בתל אביב?',
+  '💰 הצע לי מחיר למוצר יד שנייה',
 ]
+
+async function searchWeb(query: string): Promise<string> {
+  try {
+    const res = await fetch('https://api.tavily.com/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        api_key: TAVILY_KEY,
+        query,
+        search_depth: 'basic',
+        max_results: 3,
+        include_answer: true,
+      }),
+    })
+    const data = await res.json()
+    if (data.answer) return `Search result: ${data.answer}`
+    if (data.results?.length) {
+      return data.results.slice(0, 3).map((r: any) => `${r.title}: ${r.content?.slice(0, 200)}`).join('\n\n')
+    }
+    return ''
+  } catch {
+    return ''
+  }
+}
+
+function needsWebSearch(msg: string): boolean {
+  const lower = msg.toLowerCase()
+  const triggers = [
+    'מזג אוויר', 'weather', 'חדשות', 'news', 'עכשיו', 'היום', 'now', 'today',
+    'מחיר', 'price', 'כמה עולה', 'how much', 'שעות פתיחה', 'opening hours',
+    'מה קורה', "what's happening", 'אירועים', 'events', 'מסעדה', 'restaurant',
+    'תוצאות', 'results', 'ספורט', 'sport', 'כדורגל', 'football',
+  ]
+  return triggers.some(t => lower.includes(t))
+}
 
 export default function AgentScreen() {
   const [messages, setMessages] = useState<Message[]>([])
@@ -48,7 +83,7 @@ export default function AgentScreen() {
   }
 
   const send = async (text?: string) => {
-    const msg = text || draft.trim()
+    const msg = (text || draft).trim()
     if (!msg || !userId || loading) return
     setDraft('')
     setLoading(true)
@@ -64,7 +99,31 @@ export default function AgentScreen() {
     await supabase.from('agent_messages').insert({ user_id: userId, role: 'user', content: msg })
 
     try {
+      // Search web if needed
+      let webContext = ''
+      if (needsWebSearch(msg)) {
+        webContext = await searchWeb(msg)
+      }
+
       const history = [...messages, userMsg].slice(-20).map(m => ({ role: m.role, content: m.content }))
+
+      const systemPrompt = `You are a personal AI assistant for ${userName} on Tryber — a location-based social app in Israel.
+
+Your capabilities:
+- Answer any question using your knowledge
+- Search the web for current info (weather, news, prices, events)
+- Create lists with checkboxes (☐ item)
+- Set reminders and help plan
+- Help write posts or messages
+- Suggest local recommendations
+
+${webContext ? `\nCurrent web search results for "${msg}":\n${webContext}\n\nUse this information to give an accurate, up-to-date answer.` : ''}
+
+When creating lists use this format:
+☐ Item 1
+☐ Item 2
+
+Reply in the same language as the user (Hebrew or English). Be warm, helpful, and concise.`
 
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -76,28 +135,12 @@ export default function AgentScreen() {
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
           max_tokens: 800,
-          system: `You are a personal AI assistant for ${userName} on Tryber — a location-based social app. 
-
-Your capabilities:
-- Answer any question (weather, news, recommendations, facts)
-- Create and manage lists (shopping, tasks, ideas)
-- Set reminders and help plan events  
-- Help write messages or posts for the app
-- Give local recommendations based on context
-- Help create shared lists that can be posted to group chats
-
-When creating lists, format them clearly with checkboxes like:
-☐ Item 1
-☐ Item 2
-
-When the user asks to share something with a group, suggest they copy and paste it into the relevant Trybe chat.
-
-Reply in the same language as the user (Hebrew or English). Be warm, concise, and genuinely helpful. Remember context from our conversation.`,
+          system: systemPrompt,
           messages: history,
         }),
       })
       const data = await res.json()
-      const reply = data.content?.[0]?.text || 'Sorry, something went wrong. Please try again.'
+      const reply = data.content?.[0]?.text || 'מצטער, משהו השתבש. נסה שוב.'
 
       const assistantMsg: Message = {
         id: (Date.now() + 1).toString(),
@@ -108,8 +151,8 @@ Reply in the same language as the user (Hebrew or English). Be warm, concise, an
       setMessages(prev => [...prev, assistantMsg])
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
       await supabase.from('agent_messages').insert({ user_id: userId, role: 'assistant', content: reply })
-    } catch (err) {
-      Alert.alert('Error', 'Could not reach agent. Check your connection.')
+    } catch {
+      Alert.alert('שגיאה', 'לא ניתן להתחבר לסוכן. בדוק חיבור לאינטרנט.')
     } finally {
       setLoading(false)
     }
@@ -117,14 +160,12 @@ Reply in the same language as the user (Hebrew or English). Be warm, concise, an
 
   const clearHistory = async () => {
     if (!userId) return
-    Alert.alert('Clear history', 'Delete all conversation history?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Clear', style: 'destructive', onPress: async () => {
-          await supabase.from('agent_messages').delete().eq('user_id', userId)
-          setMessages([])
-        }
-      }
+    Alert.alert('מחק היסטוריה', 'למחוק את כל השיחה?', [
+      { text: 'ביטול', style: 'cancel' },
+      { text: 'מחק', style: 'destructive', onPress: async () => {
+        await supabase.from('agent_messages').delete().eq('user_id', userId)
+        setMessages([])
+      }}
     ])
   }
 
@@ -135,16 +176,14 @@ Reply in the same language as the user (Hebrew or English). Be warm, concise, an
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <View style={s.headerLeft}>
-          <View style={s.headerAvatar}>
-            <Text style={s.headerAvatarText}>✦</Text>
-          </View>
+          <View style={s.headerAvatar}><Text style={s.headerAvatarText}>✦</Text></View>
           <View>
-            <Text style={s.headerName}>My Agent</Text>
-            <Text style={s.headerSub}>Claude · Always available</Text>
+            <Text style={s.headerName}>הסוכן שלי</Text>
+            <Text style={s.headerSub}>Claude + חיפוש אינטרנט · תמיד זמין</Text>
           </View>
         </View>
         <TouchableOpacity onPress={clearHistory}>
-          <Text style={s.clearBtn}>Clear</Text>
+          <Text style={s.clearBtn}>נקה</Text>
         </TouchableOpacity>
       </View>
 
@@ -158,8 +197,8 @@ Reply in the same language as the user (Hebrew or English). Be warm, concise, an
           ListEmptyComponent={
             <View style={s.emptyState}>
               <Text style={s.emptyEmoji}>✦</Text>
-              <Text style={s.emptyTitle}>Your personal agent</Text>
-              <Text style={s.emptySub}>Ask me anything — I can create lists, set reminders, answer questions, and help you use Tryber.</Text>
+              <Text style={s.emptyTitle}>הסוכן האישי שלך</Text>
+              <Text style={s.emptySub}>שאל אותי כל שאלה — אני יכול לחפש באינטרנט, ליצור רשימות, לקבוע תזכורות ועוד.</Text>
               <View style={s.quickPrompts}>
                 {QUICK_PROMPTS.map(p => (
                   <TouchableOpacity key={p} style={s.quickPrompt} onPress={() => send(p)}>
@@ -173,16 +212,10 @@ Reply in the same language as the user (Hebrew or English). Be warm, concise, an
             const isMe = item.role === 'user'
             return (
               <View style={[s.bubbleRow, isMe && s.bubbleRowMe]}>
-                {!isMe && (
-                  <View style={s.agentAvatar}>
-                    <Text style={s.agentAvatarText}>✦</Text>
-                  </View>
-                )}
+                {!isMe && <View style={s.agentAvatar}><Text style={s.agentAvatarText}>✦</Text></View>}
                 <View style={s.bubbleCol}>
                   <View style={[s.bubble, isMe ? s.bubbleMe : s.bubbleAgent]}>
-                    <Text style={[s.bubbleText, isMe ? s.bubbleTextMe : s.bubbleTextAgent]}>
-                      {item.content}
-                    </Text>
+                    <Text style={[s.bubbleText, isMe ? s.bubbleTextMe : s.bubbleTextAgent]}>{item.content}</Text>
                   </View>
                   <Text style={[s.timeText, isMe && s.timeTextMe]}>{formatTime(item.created_at)}</Text>
                 </View>
@@ -205,7 +238,7 @@ Reply in the same language as the user (Hebrew or English). Be warm, concise, an
             style={s.input}
             value={draft}
             onChangeText={setDraft}
-            placeholder="Ask your agent anything..."
+            placeholder="שאל את הסוכן שלך..."
             placeholderTextColor="#B4B2A9"
             multiline
             maxLength={1000}
