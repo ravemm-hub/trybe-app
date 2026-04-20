@@ -119,7 +119,15 @@ export default function LobbyScreen() {
     await supabase.from('join_requests').update({ status: 'rejected' }).eq('id', request.id)
     await load()
   }
-
+const togglePrivacy = async () => {
+  const newValue = !group?.is_private
+  await supabase.from('groups').update({ is_private: newValue }).eq('id', id)
+  setGroup((prev: any) => ({ ...prev, is_private: newValue }))
+  Alert.alert(
+    newValue ? '🔒 Group is now Private' : '🌐 Group is now Public',
+    newValue ? 'New members need approval.' : 'Anyone can join instantly.'
+  )
+}
   const openChat = () => {
     router.replace({ pathname: '/chat', params: { id, name: group?.name || name, members: group?.member_count?.toString() || '0' } })
   }
@@ -138,7 +146,14 @@ export default function LobbyScreen() {
           <Text style={s.back}>‹</Text>
         </TouchableOpacity>
         <Text style={s.headerTitle} numberOfLines={1}>{group?.name || name}</Text>
-        {isAdmin && pendingRequests.length > 0 && (
+     {isAdmin && (
+  <TouchableOpacity style={s.privacyToggleBtn} onPress={togglePrivacy}>
+    <Text style={s.privacyToggleBtnText}>
+      {group?.is_private ? '🔒 Private — tap to make Public' : '🌐 Public — tap to make Private'}
+    </Text>
+  </TouchableOpacity>
+)}   
+{isAdmin && pendingRequests.length > 0 && (
           <TouchableOpacity style={s.requestsBadge} onPress={() => setShowRequests(true)}>
             <Text style={s.requestsBadgeText}>{pendingRequests.length}</Text>
           </TouchableOpacity>
@@ -341,3 +356,5 @@ const s = StyleSheet.create({
   rejectBtn: { flex: 1, backgroundColor: '#fff', borderRadius: 10, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: '#E0DED8' },
   rejectBtnText: { color: GRAY, fontWeight: '600', fontSize: 14 },
 })
+privacyToggleBtn: { backgroundColor: '#F1EFE8', borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#E0DED8' },
+privacyToggleBtnText: { fontSize: 14, fontWeight: '600', color: '#2C2C2A' },
