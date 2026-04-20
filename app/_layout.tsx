@@ -1,8 +1,37 @@
 import { useEffect, useState } from 'react'
 import { Stack, useRouter, useSegments } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
+import * as Notifications from 'expo-notifications'
 import { supabase } from '../lib/supabase'
 import type { Session } from '@supabase/supabase-js'
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: true,
+  }),
+})
+
+async function registerForPushNotifications(userId: string) {
+  try {
+    const { status: existing } = await Notifications.getPermissionsAsync()
+    let finalStatus = existing
+    if (existing !== 'granted') {
+      const { status } = await Notifications.requestPermissionsAsync()
+      finalStatus = status
+    }
+    if (finalStatus !== 'granted') return
+
+    const token = await Notifications.getExpoPushTokenAsync({
+      projectId: 'f39665fe-cfb2-460a-bfa6-826d501d7333',
+    })
+
+    await supabase.from('profiles').update({ push_token: token.data }).eq('id', userId)
+  } catch (err) {
+    console.log('Push token error:', err)
+  }
+}
 
 export default function RootLayout() {
   const [session, setSession] = useState<Session | null | undefined>(undefined)
@@ -15,6 +44,9 @@ export default function RootLayout() {
     })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
       setSession(session)
+      if (session?.user) {
+        registerForPushNotifications(session.user.id)
+      }
     })
     return () => subscription.unsubscribe()
   }, [])
