@@ -15,7 +15,6 @@
     },
     "android": {
       "package": "com.trybe.app",
-      
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
@@ -40,7 +39,8 @@
           "color": "#1D9E75",
           "defaultChannel": "default"
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ],
     "extra": {
       "router": {
