@@ -8,6 +8,8 @@ import * as ImagePicker from 'expo-image-picker'
 import * as Location from 'expo-location'
 import { supabase } from '../../lib/supabase'
 
+const ANTHROPIC_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_KEY || ''
+
 type Listing = {
   id: string
   user_id: string
@@ -31,8 +33,6 @@ export default function MarketplaceScreen() {
   const [userId, setUserId] = useState<string | null>(null)
   const [showAdd, setShowAdd] = useState(false)
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null)
-
-  // Form state
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [price, setPrice] = useState('')
@@ -43,6 +43,7 @@ export default function MarketplaceScreen() {
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [posting, setPosting] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
 
   useEffect(() => {
@@ -65,13 +66,7 @@ export default function MarketplaceScreen() {
 
   const loadListings = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('listings')
-        .select('*')
-        .eq('status', 'active')
-        .order('created_at', { ascending: false })
-        .limit(50)
-      if (error) throw error
+      const { data } = await supabase.from('listings').select('*').eq('status', 'active').order('created_at', { ascending: false }).limit(50)
       const enriched = await Promise.all((data || []).map(async (l: Listing) => {
         const { data: profile } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', l.user_id).single()
         return { ...l, profile: profile || undefined }
@@ -81,14 +76,21 @@ export default function MarketplaceScreen() {
     finally { setRefreshing(false) }
   }, [])
 
-  const pickImage = async () => {
-    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync()
-    if (!granted) return
-    const result = await ImagePicker.launchImageLibraryAsync({ quality: 0.8 })
-    if (result.canceled || !result.assets?.[0] || !userId) return
+  const pickImage = async (fromCamera: boolean) => {
+    const perm = fromCamera
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (!perm.granted) { Alert.alert('Permission needed'); return }
+
+    const result = fromCamera
+      ? await ImagePicker.launchCameraAsync({ quality: 0.8, base64: true })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, base64: true })
+
+    if (result.canceled || !result.assets?.[0]) return
+    const asset = result.assets[0]
+
     setUploading(true)
     try {
-      const asset = result.assets[0]
       const ext = asset.uri.split('.').pop() || 'jpg'
       const filename = `listing_${Date.now()}.${ext}`
       const formData = new FormData()
@@ -97,8 +99,50 @@ export default function MarketplaceScreen() {
       if (error) throw error
       const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl(`listings/${filename}`)
       setMediaUrl(publicUrl)
+
+      // Analyze image with Claude Vision
+      if (asset.base64) {
+        setAnalyzing(true)
+        try {
+          const res = await fetch('https://api.anthropic.com/v1/messages', {
+            method: 'POST',
+            headers: {
+              'x-api-key': ANTHROPIC_KEY,
+              'anthropic-version': '2023-06-01',
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'claude-haiku-4-5-20251001',
+              max_tokens: 200,
+              messages: [{
+                role: 'user',
+                content: [
+                  { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: asset.base64 } },
+                  { type: 'text', text: 'Look at this item for sale. In 1-2 sentences: what is it, what condition does it appear to be in, and what price range (in Israeli Shekels ₪) would you suggest for selling it second-hand? Be specific and practical. Reply in the same language as the image context or in Hebrew if unsure.' }
+                ]
+              }]
+            }),
+          })
+          const data = await res.json()
+          const suggestion = data.content?.[0]?.text?.trim()
+          if (suggestion) {
+            Alert.alert('🤖 Agent Suggestion', suggestion, [
+              { text: 'Thanks!', onPress: () => {} }
+            ])
+          }
+        } catch {}
+        finally { setAnalyzing(false) }
+      }
     } catch (e: any) { Alert.alert('Error', e.message) }
     finally { setUploading(false) }
+  }
+
+  const showImageOptions = () => {
+    Alert.alert('Add photo', 'Choose source', [
+      { text: '📷 Camera', onPress: () => pickImage(true) },
+      { text: '🖼️ Gallery', onPress: () => pickImage(false) },
+      { text: 'Cancel', style: 'cancel' },
+    ])
   }
 
   const createListing = async () => {
@@ -127,10 +171,7 @@ export default function MarketplaceScreen() {
     finally { setPosting(false) }
   }
 
-  const formatPrice = (price: number, currency: string) => {
-    if (currency === 'ILS') return `₪${price.toLocaleString()}`
-    return `$${price.toLocaleString()}`
-  }
+  const formatPrice = (price: number) => `₪${price.toLocaleString()}`
 
   return (
     <SafeAreaView style={s.container}>
@@ -153,7 +194,7 @@ export default function MarketplaceScreen() {
           <View style={s.emptyState}>
             <Text style={s.emptyEmoji}>🛍️</Text>
             <Text style={s.emptyTitle}>Nothing for sale yet</Text>
-            <Text style={s.emptySub}>Be the first to list something in your area</Text>
+            <Text style={s.emptySub}>Be the first to list something</Text>
             <TouchableOpacity style={s.emptyBtn} onPress={() => setShowAdd(true)}>
               <Text style={s.emptyBtnText}>+ List an item</Text>
             </TouchableOpacity>
@@ -161,24 +202,20 @@ export default function MarketplaceScreen() {
         }
         renderItem={({ item }) => (
           <Pressable style={s.card} onPress={() => setSelectedListing(item)}>
-            {item.media_url ? (
-              <Image source={{ uri: item.media_url }} style={s.cardImage} resizeMode="cover" />
-            ) : (
-              <View style={s.cardImagePlaceholder}>
-                <Text style={s.cardImagePlaceholderText}>📦</Text>
-              </View>
-            )}
+            {item.media_url
+              ? <Image source={{ uri: item.media_url }} style={s.cardImage} resizeMode="cover" />
+              : <View style={s.cardImagePlaceholder}><Text style={{ fontSize: 36 }}>📦</Text></View>
+            }
             <View style={s.cardBody}>
               <Text style={s.cardTitle} numberOfLines={2}>{item.title}</Text>
-              <Text style={s.cardPrice}>{formatPrice(item.price, item.currency)}</Text>
+              <Text style={s.cardPrice}>{formatPrice(item.price)}</Text>
               {item.location_name && <Text style={s.cardLocation} numberOfLines={1}>📍 {item.location_name}</Text>}
-              <Text style={s.cardSeller}>{item.profile?.display_name || item.profile?.username || 'Unknown'}</Text>
             </View>
           </Pressable>
         )}
       />
 
-      {/* Item detail modal */}
+      {/* Detail Modal */}
       <Modal visible={!!selectedListing} animationType="slide" onRequestClose={() => setSelectedListing(null)}>
         {selectedListing && (
           <SafeAreaView style={s.detailContainer}>
@@ -196,24 +233,17 @@ export default function MarketplaceScreen() {
               )}
             </View>
             <ScrollView>
-              {selectedListing.media_url ? (
-                <Image source={{ uri: selectedListing.media_url }} style={s.detailImage} resizeMode="cover" />
-              ) : (
-                <View style={s.detailImagePlaceholder}>
-                  <Text style={{ fontSize: 64 }}>📦</Text>
-                </View>
-              )}
+              {selectedListing.media_url
+                ? <Image source={{ uri: selectedListing.media_url }} style={s.detailImage} resizeMode="cover" />
+                : <View style={s.detailImagePlaceholder}><Text style={{ fontSize: 64 }}>📦</Text></View>
+              }
               <View style={s.detailBody}>
                 <Text style={s.detailTitle}>{selectedListing.title}</Text>
-                <Text style={s.detailPrice}>{formatPrice(selectedListing.price, selectedListing.currency)}</Text>
-                {selectedListing.location_name && (
-                  <Text style={s.detailLocation}>📍 {selectedListing.location_name}</Text>
-                )}
-                {selectedListing.description && (
-                  <Text style={s.detailDesc}>{selectedListing.description}</Text>
-                )}
+                <Text style={s.detailPrice}>{formatPrice(selectedListing.price)}</Text>
+                {selectedListing.location_name && <Text style={s.detailLocation}>📍 {selectedListing.location_name}</Text>}
+                {selectedListing.description && <Text style={s.detailDesc}>{selectedListing.description}</Text>}
 
-                <Text style={s.sectionTitle}>Pay with</Text>
+                <Text style={s.sectionTitle}>PAY WITH</Text>
                 <View style={s.paymentBtns}>
                   {selectedListing.payment_bit && (
                     <TouchableOpacity style={[s.payBtn, { backgroundColor: '#E8F4FD' }]}
@@ -237,21 +267,20 @@ export default function MarketplaceScreen() {
                     </TouchableOpacity>
                   )}
                   <TouchableOpacity style={[s.payBtn, { backgroundColor: '#E8F8F0' }]}
-                    onPress={() => Linking.openURL(`https://pay.google.com`)}>
+                    onPress={() => Linking.openURL('https://pay.google.com')}>
                     <Text style={s.payBtnEmoji}>🟢</Text>
                     <Text style={s.payBtnText}>Google Pay</Text>
                   </TouchableOpacity>
                 </View>
 
-                <Text style={s.sectionTitle}>Delivery</Text>
+                <Text style={s.sectionTitle}>DELIVERY & CONTACT</Text>
                 <TouchableOpacity style={s.deliveryBtn}
-                  onPress={() => Linking.openURL(`https://wa.me/972?text=שלום, אני מעוניין בשליחות עבור פריט: ${selectedListing.title} ממיקום: ${selectedListing.location_name || 'ישראל'}`)}>
+                  onPress={() => Linking.openURL(`https://wa.me/972?text=שלום, אני מעוניין בשליחות עבור: ${selectedListing.title}`)}>
                   <Text style={s.deliveryBtnText}>🚚 Request delivery via WhatsApp</Text>
                 </TouchableOpacity>
-
-                <TouchableOpacity style={s.contactBtn}
-                  onPress={() => Linking.openURL(`https://wa.me/?text=היי, ראיתי את המודעה שלך על ${selectedListing.title} ב-Tryber. האם זה עדיין זמין?`)}>
-                  <Text style={s.contactBtnText}>💬 Contact seller via WhatsApp</Text>
+                <TouchableOpacity style={[s.deliveryBtn, { backgroundColor: '#F1EFE8', marginTop: 8 }]}
+                  onPress={() => Linking.openURL(`https://wa.me/?text=היי, ראיתי את המודעה שלך על ${selectedListing.title} ב-Tryber. עדיין זמין?`)}>
+                  <Text style={[s.deliveryBtnText, { color: '#444' }]}>💬 Contact seller</Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -259,7 +288,7 @@ export default function MarketplaceScreen() {
         )}
       </Modal>
 
-      {/* Add listing modal */}
+      {/* Add Modal */}
       <Modal visible={showAdd} animationType="slide" onRequestClose={() => setShowAdd(false)}>
         <SafeAreaView style={s.addContainer}>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
@@ -273,15 +302,20 @@ export default function MarketplaceScreen() {
               </TouchableOpacity>
             </View>
             <ScrollView contentContainerStyle={s.addForm} keyboardShouldPersistTaps="handled">
-              <TouchableOpacity style={s.imagePickerBtn} onPress={pickImage} disabled={uploading}>
-                {uploading ? (
-                  <ActivityIndicator color="#1D9E75" />
+
+              <TouchableOpacity style={s.imagePickerBtn} onPress={showImageOptions} disabled={uploading || analyzing}>
+                {uploading || analyzing ? (
+                  <View style={s.imagePickerPlaceholder}>
+                    <ActivityIndicator color="#1D9E75" size="large" />
+                    <Text style={s.imagePickerText}>{analyzing ? '🤖 Analyzing...' : 'Uploading...'}</Text>
+                  </View>
                 ) : mediaUrl ? (
                   <Image source={{ uri: mediaUrl }} style={s.pickedImage} resizeMode="cover" />
                 ) : (
                   <View style={s.imagePickerPlaceholder}>
                     <Text style={s.imagePickerIcon}>📷</Text>
-                    <Text style={s.imagePickerText}>Add photo</Text>
+                    <Text style={s.imagePickerText}>Camera or Gallery</Text>
+                    <Text style={s.imagePickerSub}>Agent will suggest a price 🤖</Text>
                   </View>
                 )}
               </TouchableOpacity>
@@ -298,11 +332,10 @@ export default function MarketplaceScreen() {
               <Text style={s.formLabel}>LOCATION</Text>
               <TextInput style={s.formInput} value={locationName} onChangeText={setLocationName} placeholder="Your city / neighborhood" placeholderTextColor="#B4B2A9" />
 
-              <Text style={s.formLabel}>PAYMENT — add your handles</Text>
-              <TextInput style={s.formInput} value={paymentBit} onChangeText={setPaymentBit} placeholder="Bit phone number" placeholderTextColor="#B4B2A9" keyboardType="phone-pad" />
-              <TextInput style={[s.formInput, { marginTop: 8 }]} value={paymentPaybox} onChangeText={setPaymentPaybox} placeholder="Paybox phone number" placeholderTextColor="#B4B2A9" keyboardType="phone-pad" />
-              <TextInput style={[s.formInput, { marginTop: 8 }]} value={paymentPaypal} onChangeText={setPaymentPaypal} placeholder="PayPal username" placeholderTextColor="#B4B2A9" autoCapitalize="none" />
-
+              <Text style={s.formLabel}>PAYMENT HANDLES</Text>
+              <TextInput style={s.formInput} value={paymentBit} onChangeText={setPaymentBit} placeholder="💙 Bit phone number" placeholderTextColor="#B4B2A9" keyboardType="phone-pad" />
+              <TextInput style={[s.formInput, { marginTop: 8 }]} value={paymentPaybox} onChangeText={setPaymentPaybox} placeholder="🟠 Paybox phone number" placeholderTextColor="#B4B2A9" keyboardType="phone-pad" />
+              <TextInput style={[s.formInput, { marginTop: 8 }]} value={paymentPaypal} onChangeText={setPaymentPaypal} placeholder="💛 PayPal username" placeholderTextColor="#B4B2A9" autoCapitalize="none" />
               <View style={{ height: 40 }} />
             </ScrollView>
           </KeyboardAvoidingView>
@@ -321,17 +354,15 @@ const s = StyleSheet.create({
   title: { fontSize: 20, fontWeight: '700', color: '#2C2C2A' },
   addBtn: { backgroundColor: GREEN, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
   addBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  list: { padding: 12, gap: 10 },
-  row: { gap: 10 },
+  list: { padding: 12, paddingBottom: 20 },
+  row: { gap: 10, marginBottom: 10 },
   card: { flex: 1, backgroundColor: '#fff', borderRadius: 14, borderWidth: 0.5, borderColor: '#E0DED8', overflow: 'hidden' },
-  cardImage: { width: '100%', height: 160 },
-  cardImagePlaceholder: { width: '100%', height: 160, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
-  cardImagePlaceholderText: { fontSize: 40 },
+  cardImage: { width: '100%', height: 150 },
+  cardImagePlaceholder: { width: '100%', height: 150, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
   cardBody: { padding: 10 },
   cardTitle: { fontSize: 13, fontWeight: '600', color: '#2C2C2A', marginBottom: 4 },
   cardPrice: { fontSize: 16, fontWeight: '800', color: GREEN, marginBottom: 3 },
-  cardLocation: { fontSize: 11, color: GRAY, marginBottom: 3 },
-  cardSeller: { fontSize: 11, color: GRAY },
+  cardLocation: { fontSize: 11, color: GRAY },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32 },
   emptyEmoji: { fontSize: 56, marginBottom: 16 },
   emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A', marginBottom: 8 },
@@ -342,7 +373,7 @@ const s = StyleSheet.create({
   detailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   detailBack: { fontSize: 16, color: GREEN, fontWeight: '500' },
   markSold: { fontSize: 14, color: '#E24B4A', fontWeight: '600' },
-  detailImage: { width: '100%', height: 300 },
+  detailImage: { width: '100%', height: 280 },
   detailImagePlaceholder: { width: '100%', height: 200, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
   detailBody: { padding: 20 },
   detailTitle: { fontSize: 22, fontWeight: '700', color: '#2C2C2A', marginBottom: 8 },
@@ -354,21 +385,20 @@ const s = StyleSheet.create({
   payBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12 },
   payBtnEmoji: { fontSize: 18 },
   payBtnText: { fontSize: 14, fontWeight: '600', color: '#2C2C2A' },
-  deliveryBtn: { backgroundColor: '#E1F5EE', borderRadius: 14, padding: 16, alignItems: 'center', marginBottom: 10 },
+  deliveryBtn: { backgroundColor: '#E1F5EE', borderRadius: 14, padding: 16, alignItems: 'center' },
   deliveryBtnText: { fontSize: 15, fontWeight: '600', color: '#0F6E56' },
-  contactBtn: { backgroundColor: '#F1EFE8', borderRadius: 14, padding: 16, alignItems: 'center' },
-  contactBtnText: { fontSize: 15, fontWeight: '600', color: '#444441' },
   addContainer: { flex: 1, backgroundColor: '#fff' },
   addHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   addCancel: { fontSize: 16, color: GRAY },
   addTitle: { fontSize: 17, fontWeight: '700', color: '#2C2C2A' },
   addPost: { fontSize: 16, fontWeight: '700', color: GREEN },
   addForm: { padding: 20 },
-  imagePickerBtn: { width: '100%', height: 200, borderRadius: 14, overflow: 'hidden', marginBottom: 20 },
-  imagePickerPlaceholder: { width: '100%', height: 200, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1.5, borderColor: '#E0DED8', borderStyle: 'dashed' },
-  imagePickerIcon: { fontSize: 40, marginBottom: 8 },
-  imagePickerText: { fontSize: 14, color: GRAY },
-  pickedImage: { width: '100%', height: 200, borderRadius: 14 },
+  imagePickerBtn: { width: '100%', height: 180, borderRadius: 14, overflow: 'hidden', marginBottom: 16 },
+  imagePickerPlaceholder: { width: '100%', height: 180, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1.5, borderColor: '#E0DED8', borderStyle: 'dashed', gap: 6 },
+  imagePickerIcon: { fontSize: 36 },
+  imagePickerText: { fontSize: 14, color: GRAY, fontWeight: '500' },
+  imagePickerSub: { fontSize: 12, color: '#7F77DD' },
+  pickedImage: { width: '100%', height: 180 },
   formLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginBottom: 8, marginTop: 16 },
   formInput: { backgroundColor: '#F1EFE8', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: '#2C2C2A' },
 })
