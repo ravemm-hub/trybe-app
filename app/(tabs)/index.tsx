@@ -2,10 +2,15 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   StatusBar, Pressable, RefreshControl, ActivityIndicator,
+  Alert, Linking,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
+import * as Contacts from 'expo-contacts'
+import * as SMS from 'expo-sms'
 import { supabase } from '../../lib/supabase'
+
+const INVITE_MSG = `Hey! Join me on Tryber — The Next Generation of SocialAIsing 🚀\nDownload: https://ravemm-hub.github.io/trybe-app`
 
 type ChatItem = {
   id: string
@@ -15,12 +20,10 @@ type ChatItem = {
   last_message: string | null
   last_message_at: string | null
   unread: number
-  // group fields
   status?: string
   member_count?: number
   min_members?: number
   is_private?: boolean
-  // dm fields
   other_user_id?: string
 }
 
@@ -31,16 +34,12 @@ export default function ChatsScreen() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
-  const [userName, setUserName] = useState('')
 
   const loadAll = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       setUserId(user.id)
-
-      const { data: profile } = await supabase.from('profiles').select('display_name, username').eq('id', user.id).single()
-      if (profile) setUserName(profile.display_name || profile.username || '')
 
       const results: ChatItem[] = []
 
@@ -89,7 +88,6 @@ export default function ChatsScreen() {
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .order('created_at', { ascending: false })
 
-      // Group DMs by conversation partner
       const dmMap = new Map<string, any>()
       for (const dm of dms || []) {
         const otherId = dm.sender_id === user.id ? dm.receiver_id : dm.sender_id
@@ -102,11 +100,6 @@ export default function ChatsScreen() {
         const name = otherProfile?.display_name || otherProfile?.username || 'Unknown'
         const avatar = otherProfile?.avatar_char || name[0] || '?'
 
-        const { count: unread } = await supabase.from('dm_messages')
-          .select('id', { count: 'exact', head: true })
-          .eq('sender_id', otherId).eq('receiver_id', user.id)
-          .eq('read', false)
-
         results.push({
           id: `dm_${otherId}`,
           type: 'dm',
@@ -114,12 +107,11 @@ export default function ChatsScreen() {
           avatar,
           last_message: lastDm.content,
           last_message_at: lastDm.created_at,
-          unread: unread || 0,
+          unread: 0,
           other_user_id: otherId,
         })
       }
 
-      // Sort all by last message
       results.sort((a, b) => {
         const aTime = a.last_message_at || ''
         const bTime = b.last_message_at || ''
@@ -164,6 +156,11 @@ export default function ChatsScreen() {
     }
   }
 
+  const inviteFriends = () => {
+    router.push('/contacts')
+  }
+    
+
   const formatTime = (ts: string) => {
     const diff = Date.now() - new Date(ts).getTime()
     if (diff < 60000) return 'now'
@@ -186,9 +183,14 @@ export default function ChatsScreen() {
             </View>
           )}
         </View>
-        <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
-          <Text style={s.createBtnText}>+ Drop Trybe</Text>
-        </TouchableOpacity>
+        <View style={s.headerRight}>
+          <TouchableOpacity style={s.inviteBtn} onPress={inviteFriends}>
+            <Text style={s.inviteBtnText}>👥 Invite</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
+            <Text style={s.createBtnText}>+ Trybe</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {loading ? (
@@ -203,9 +205,12 @@ export default function ChatsScreen() {
             <View style={s.emptyState}>
               <Text style={s.emptyEmoji}>💬</Text>
               <Text style={s.emptyTitle}>No chats yet</Text>
-              <Text style={s.emptySub}>Drop a Trybe or find people on Explore</Text>
+              <Text style={s.emptySub}>Drop a Trybe or invite friends to join</Text>
               <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}>
                 <Text style={s.emptyBtnText}>+ Drop Trybe</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.emptyBtn, s.emptyBtnInvite]} onPress={inviteFriends}>
+                <Text style={[s.emptyBtnText, { color: PURPLE }]}>👥 Invite Friends</Text>
               </TouchableOpacity>
             </View>
           }
@@ -216,7 +221,7 @@ export default function ChatsScreen() {
 
             return (
               <Pressable style={s.row} onPress={() => openItem(item)}>
-                <View style={[s.avatar, isGroup && s.avatarGroup, !isGroup && s.avatarDM]}>
+                <View style={[s.avatar, isGroup ? s.avatarGroup : s.avatarDM]}>
                   <Text style={s.avatarText}>{item.avatar}</Text>
                 </View>
                 <View style={s.rowInfo}>
@@ -254,21 +259,25 @@ const GRAY = '#888780'
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAF8' },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   logo: { fontSize: 26, fontWeight: '800', color: GREEN, letterSpacing: -1 },
   totalUnread: { backgroundColor: '#E24B4A', borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
   totalUnreadText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  createBtn: { backgroundColor: GREEN, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
-  createBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  headerRight: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  inviteBtn: { backgroundColor: '#EEEDFE', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
+  inviteBtnText: { color: PURPLE, fontSize: 12, fontWeight: '700' },
+  createBtn: { backgroundColor: GREEN, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
+  createBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   listEmpty: { flex: 1 },
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32 },
-  emptyEmoji: { fontSize: 56, marginBottom: 16 },
-  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A', marginBottom: 8 },
-  emptySub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 24 },
-  emptyBtn: { backgroundColor: GREEN, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20 },
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32, gap: 12 },
+  emptyEmoji: { fontSize: 56, marginBottom: 8 },
+  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A' },
+  emptySub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 8 },
+  emptyBtn: { backgroundColor: GREEN, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20, width: '100%', alignItems: 'center' },
+  emptyBtnInvite: { backgroundColor: '#EEEDFE' },
   emptyBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14, backgroundColor: '#fff' },
   avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
   avatarGroup: { backgroundColor: '#E1F5EE' },
   avatarDM: { backgroundColor: '#EEEDFE' },
