@@ -27,11 +27,12 @@ type Action = {
 }
 
 const QUICK_PROMPTS = [
-  '📍 What\'s happening near me?',
-  '⚡ Find active groups',
-  '🤝 Find interesting people',
-  '🛍️ Marketplace deals',
-  '📋 Create a list',
+ const QUICK_PROMPTS = [
+  '📬 סכם מה פספסתי בקבוצות',
+  '📍 מה קורה סביבי עכשיו?',
+  '⚡ מצא לי קבוצות פעילות',
+  '🛍️ מה יש במרקטפלייס?',
+  '📋 צור לי רשימה',
 ]
 
 async function searchWeb(query: string): Promise<string> {
@@ -189,7 +190,22 @@ if (lastTime < oneHourAgo) {
     await supabase.from('agent_messages').insert({ user_id: userId, role: 'user', content: msg })
     try {
       const lower = msg.toLowerCase()
-      const needsGroups = lower.includes('group') || lower.includes('קבוצ') || lower.includes('near') || lower.includes('סביב') || lower.includes('happening')
+     const needsSummary = lower.includes('פספסתי') || lower.includes('missed') || lower.includes('סכם') || lower.includes('summary') || lower.includes('unread')
+if (needsSummary && userId) {
+  const { data: myGroups } = await supabase.from('group_members').select('group_id, last_read_at, groups(name)').eq('user_id', userId)
+  if (myGroups?.length) {
+    let summaryContext = 'Unread messages summary:\n'
+    for (const m of myGroups) {
+      if (!m.last_read_at) continue
+      const { data: msgs } = await supabase.from('messages').select('content').eq('group_id', m.group_id).neq('user_id', userId).gt('created_at', m.last_read_at).limit(5)
+      if (msgs?.length) {
+        summaryContext += `\n${(m as any).groups?.name}: ${msgs.map((msg: any) => msg.content).join(' | ')}`
+      }
+    }
+    context += summaryContext
+  }
+}
+ const needsGroups = lower.includes('group') || lower.includes('קבוצ') || lower.includes('near') || lower.includes('סביב') || lower.includes('happening')
       const needsWeb = lower.includes('weather') || lower.includes('מזג') || lower.includes('news') || lower.includes('חדשות') || lower.includes('today') || lower.includes('היום')
       const needsMarket = lower.includes('market') || lower.includes('מרקט') || lower.includes('buy') || lower.includes('sell')
       let context = ''
