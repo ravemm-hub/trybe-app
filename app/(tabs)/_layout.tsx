@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router'
-import { Text, View, StyleSheet } from 'react-native'
+import { Text, View, StyleSheet, Platform } from 'react-native'
 import { useState, useEffect } from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { supabase } from '../../lib/supabase'
@@ -58,7 +58,7 @@ export default function TabsLayout() {
         borderTopWidth: 0.5,
         borderTopColor: '#E0DED8',
         height: tabBarHeight,
-        paddingBottom: insets.bottom + 4,
+        paddingBottom: insets.bottom + 2,
         paddingTop: 6,
         elevation: 8,
         shadowColor: '#000',
@@ -86,7 +86,7 @@ export default function TabsLayout() {
         tabBarIcon: ({ focused }) => <BadgeIcon emoji="📡" count={0} />,
       }} />
       <Tabs.Screen name="agent" options={{
-        title: 'Agent',
+        title: 'Teeby',
         tabBarIcon: ({ focused }) => <BadgeIcon emoji="✦" count={0} color={focused ? PURPLE : undefined} />,
       }} />
       <Tabs.Screen name="profile" options={{

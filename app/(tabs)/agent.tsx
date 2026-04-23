@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, ActivityIndicator,
-  Alert, Modal, ScrollView,
+  KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator,
+  Alert, Modal, ScrollView, Pressable,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Location from 'expo-location'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
@@ -20,25 +21,17 @@ type Message = {
 }
 
 type Action = {
-  type: 'join_group' | 'view_group' | 'view_marketplace' | 'create_group' | 'open_dm' | 'view_profile'
+  type: 'join_group' | 'view_marketplace' | 'create_group' | 'open_dm'
   label: string
   data: any
 }
 
-type Memory = {
-  facts: string[]
-  preferences: Record<string, string>
-  name?: string
-  personality?: string
-}
-
 const QUICK_PROMPTS = [
-  '📍 מה קורה סביבי עכשיו?',
-  '⚡ מצא לי קבוצות פעילות',
-  '🤝 מצא לי אנשים מעניינים',
-  '🛍️ מה יש במרקטפלייס?',
-  '📋 צור לי רשימה',
-  '🌤️ מה מזג האוויר?',
+  '📍 What\'s happening near me?',
+  '⚡ Find active groups',
+  '🤝 Find interesting people',
+  '🛍️ Marketplace deals',
+  '📋 Create a list',
 ]
 
 async function searchWeb(query: string): Promise<string> {
@@ -49,7 +42,7 @@ async function searchWeb(query: string): Promise<string> {
       body: JSON.stringify({ api_key: TAVILY_KEY, query, search_depth: 'basic', max_results: 3, include_answer: true }),
     })
     const data = await res.json()
-    return data.answer || data.results?.slice(0, 2).map((r: any) => `${r.title}: ${r.content?.slice(0, 200)}`).join('\n') || ''
+    return data.answer || ''
   } catch { return '' }
 }
 
@@ -62,13 +55,6 @@ async function getNearbyGroups(lat: number, lon: number) {
   } catch { return [] }
 }
 
-async function getNearbyUsers(lat: number, lon: number) {
-  try {
-    const { data } = await supabase.rpc('nearby_users', { lat, lon, radius_m: 2000 })
-    return data || []
-  } catch { return [] }
-}
-
 async function getMarketplace() {
   try {
     const { data } = await supabase.from('listings').select('id, title, price, location_name').eq('status', 'active').order('created_at', { ascending: false }).limit(5)
@@ -76,19 +62,17 @@ async function getMarketplace() {
   } catch { return [] }
 }
 
-async function updateMemory(userId: string, newFact: string, memory: Memory) {
-  const updatedFacts = [...(memory.facts || []), newFact].slice(-20)
+async function updateMemory(userId: string, newFact: string, currentFacts: string[]) {
+  const updatedFacts = [...currentFacts, newFact].slice(-20)
   await supabase.from('teeby_memory').upsert({
-    user_id: userId,
-    facts: updatedFacts,
-    preferences: memory.preferences || {},
-    updated_at: new Date().toISOString(),
+    user_id: userId, facts: updatedFacts, updated_at: new Date().toISOString(),
   }, { onConflict: 'user_id' })
-  return { ...memory, facts: updatedFacts }
+  return updatedFacts
 }
 
 export default function AgentScreen() {
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(false)
@@ -96,38 +80,33 @@ export default function AgentScreen() {
   const [userName, setUserName] = useState('')
   const [teebyName, setTeebyName] = useState('Teeby')
   const [userLocation, setUserLocation] = useState<{ lat: number; lon: number; name: string } | null>(null)
-  const [memory, setMemory] = useState<Memory>({ facts: [], preferences: {} })
+  const [memoryFacts, setMemoryFacts] = useState<string[]>([])
   const [showSettings, setShowSettings] = useState(false)
   const [newTeebyName, setNewTeebyName] = useState('Teeby')
-  const [proactiveShown, setProactiveShown] = useState(false)
   const listRef = useRef<FlatList>(null)
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
       setUserId(user.id)
-
       const { data: profile } = await supabase.from('profiles').select('display_name, username, teeby_name').eq('id', user.id).single()
       if (profile) {
         setUserName(profile.display_name || profile.username || '')
         setTeebyName(profile.teeby_name || 'Teeby')
         setNewTeebyName(profile.teeby_name || 'Teeby')
       }
-
-      const { data: mem } = await supabase.from('teeby_memory').select('*').eq('user_id', user.id).single()
-      if (mem) setMemory({ facts: mem.facts || [], preferences: mem.preferences || {} })
-
+      const { data: mem } = await supabase.from('teeby_memory').select('facts').eq('user_id', user.id).single()
+      if (mem?.facts) setMemoryFacts(mem.facts)
       const { data: history } = await supabase.from('agent_messages').select('*').eq('user_id', user.id).order('created_at', { ascending: true }).limit(50)
       if (history?.length) {
         setMessages(history as Message[])
-        setProactiveShown(true)
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 200)
       }
-
-      getLocationAndInit(user.id, profile?.display_name || '', !history?.length)
+      getLocation(user.id, profile?.display_name || '', history?.length || 0)
     })
   }, [])
 
-  const getLocationAndInit = async (uid: string, name: string, isFirst: boolean) => {
+  const getLocation = async (uid: string, name: string, historyLen: number) => {
     try {
       const { status } = await Location.requestForegroundPermissionsAsync()
       if (status !== 'granted') return
@@ -136,75 +115,60 @@ export default function AgentScreen() {
       const [place] = await Location.reverseGeocodeAsync({ latitude, longitude })
       const locName = [place?.city, place?.district].filter(Boolean).join(', ')
       setUserLocation({ lat: latitude, lon: longitude, name: locName })
-   // Send proactive if last message was more than 3 hours ago
-const lastMsg = history?.[history.length - 1]
-const lastMsgTime = lastMsg ? new Date(lastMsg.created_at).getTime() : 0
-const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000
 
-if (!proactiveShown && lastMsgTime < threeHoursAgo) {
-  setProactiveShown(true)
-  await sendProactiveWelcome(uid, name, latitude, longitude, locName)
-} 
+      // Check last message time — send proactive if >3 hours or first time
+      const { data: lastMsg } = await supabase.from('agent_messages').select('created_at').eq('user_id', uid).order('created_at', { ascending: false }).limit(1)
+      const lastTime = lastMsg?.[0] ? new Date(lastMsg[0].created_at).getTime() : 0
+      const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000
+      if (lastTime < threeHoursAgo) {
+        await sendProactive(uid, name, latitude, longitude, locName)
+      }
     } catch {}
   }
 
-  const sendProactiveWelcome = async (uid: string, name: string, lat: number, lon: number, locName: string) => {
+  const sendProactive = async (uid: string, name: string, lat: number, lon: number, locName: string) => {
     await new Promise(r => setTimeout(r, 1500))
-    const [groups, users, listings] = await Promise.all([
-      getNearbyGroups(lat, lon),
-      getNearbyUsers(lat, lon),
-      getMarketplace(),
-    ])
-
+    const [groups, listings] = await Promise.all([getNearbyGroups(lat, lon), getMarketplace()])
     const actions: Action[] = []
-    let text = `היי${name ? ` ${name}` : ''}! אני ${teebyName}, הסוכן האישי שלך 👋\n\n`
-
-    if (locName) text += `📍 ראיתי שאתה ב**${locName}**\n\n`
-
+    let text = `Hey${name ? ` ${name}` : ''}! 👋 I'm ${teebyName}, your personal agent.\n\n`
+    if (locName) text += `📍 I see you're in **${locName}**\n\n`
     const openGroups = groups.filter((g: any) => g.status === 'open')
-    const lobbyGroups = groups.filter((g: any) => g.status === 'lobby')
-
     if (openGroups.length > 0) {
-      text += `⚡ יש ${openGroups.length} קבוצות פעילות עכשיו:\n`
+      text += `⚡ ${openGroups.length} active groups right now:\n`
       openGroups.slice(0, 3).forEach((g: any) => {
-        text += `• **${g.name}** — ${g.member_count} אנשים${g.location_name ? ` @ ${g.location_name}` : ''}\n`
+        text += `• **${g.name}** — ${g.member_count} people${g.location_name ? ` @ ${g.location_name}` : ''}\n`
         actions.push({ type: 'join_group', label: `⚡ ${g.name}`, data: g })
       })
       text += '\n'
-    } else if (lobbyGroups.length > 0) {
-      text += `🔮 יש ${lobbyGroups.length} קבוצות בלובי שמחכות לאנשים\n\n`
-      lobbyGroups.slice(0, 2).forEach((g: any) => {
-        actions.push({ type: 'join_group', label: `🔮 ${g.name}`, data: g })
-      })
+    } else {
+      text += `No active groups nearby yet — want to start one?\n\n`
+      actions.push({ type: 'create_group', label: '⚡ Create a Trybe', data: {} })
     }
-
-    if (users.length > 0) {
-      text += `👥 יש ${users.length} אנשים עם Radar פעיל קרוב אליך\n\n`
-    }
-
     if (listings.length > 0) {
-      text += `🛍️ יש ${listings.length} מוצרים חדשים במרקטפלייס\n`
-      actions.push({ type: 'view_marketplace', label: '🛍️ ראה מרקטפלייס', data: {} })
+      text += `🛍️ ${listings.length} new listings in the marketplace`
+      actions.push({ type: 'view_marketplace', label: '🛍️ Open Marketplace', data: {} })
     }
-
-    text += '\nאיך אני יכול לעזור?'
-
+    text += '\n\nHow can I help?'
     const msg: Message = { id: Date.now().toString(), role: 'assistant', content: text, created_at: new Date().toISOString(), actions }
-    setMessages([msg])
+    setMessages(prev => [...prev, msg])
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 200)
     await supabase.from('agent_messages').insert({ user_id: uid, role: 'assistant', content: text })
   }
 
   const handleAction = (action: Action) => {
-    if (action.type === 'join_group' || action.type === 'view_group') {
+    if (action.type === 'join_group') {
       const g = action.data
       router.push({ pathname: g.status === 'open' ? '/chat' : '/lobby', params: { id: g.id, name: g.name, members: g.member_count?.toString() || '0' } })
     } else if (action.type === 'view_marketplace') {
       router.push('/(tabs)/marketplace')
     } else if (action.type === 'create_group') {
       router.push('/create')
-    } else if (action.type === 'open_dm') {
-      router.push({ pathname: '/dm', params: action.data })
     }
+  }
+
+  const deleteMessage = async (msgId: string) => {
+    await supabase.from('agent_messages').delete().eq('id', msgId)
+    setMessages(prev => prev.filter(m => m.id !== msgId))
   }
 
   const saveTeebyName = async () => {
@@ -212,7 +176,6 @@ if (!proactiveShown && lastMsgTime < threeHoursAgo) {
     await supabase.from('profiles').update({ teeby_name: newTeebyName.trim() }).eq('id', userId)
     setTeebyName(newTeebyName.trim())
     setShowSettings(false)
-    Alert.alert('✓ נשמר', `הסוכן שלך נקרא עכשיו ${newTeebyName}`)
   }
 
   const send = async (text?: string) => {
@@ -220,126 +183,86 @@ if (!proactiveShown && lastMsgTime < threeHoursAgo) {
     if (!msg || !userId || loading) return
     setDraft('')
     setLoading(true)
-
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: msg, created_at: new Date().toISOString() }
     setMessages(prev => [...prev, userMsg])
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
     await supabase.from('agent_messages').insert({ user_id: userId, role: 'user', content: msg })
-
     try {
       const lower = msg.toLowerCase()
-      const needsGroups = lower.includes('קבוצ') || lower.includes('group') || lower.includes('סביב') || lower.includes('nearby') || lower.includes('לידי') || lower.includes('מה קורה')
-      const needsWeb = lower.includes('מזג') || lower.includes('weather') || lower.includes('חדשות') || lower.includes('news') || lower.includes('מחיר') || lower.includes('price') || lower.includes('היום') || lower.includes('עכשיו')
-      const needsMarket = lower.includes('מרקט') || lower.includes('קנ') || lower.includes('מכיר') || lower.includes('market') || lower.includes('מוצר')
-      const needsMatch = lower.includes('הכר') || lower.includes('חבר') || lower.includes('אנשים') || lower.includes('meet') || lower.includes('people')
-
+      const needsGroups = lower.includes('group') || lower.includes('קבוצ') || lower.includes('near') || lower.includes('סביב') || lower.includes('happening')
+      const needsWeb = lower.includes('weather') || lower.includes('מזג') || lower.includes('news') || lower.includes('חדשות') || lower.includes('today') || lower.includes('היום')
+      const needsMarket = lower.includes('market') || lower.includes('מרקט') || lower.includes('buy') || lower.includes('sell')
       let context = ''
       const actions: Action[] = []
-
       if (needsGroups) {
         const groups = userLocation ? await getNearbyGroups(userLocation.lat, userLocation.lon) : await getNearbyGroups(32.08, 34.78)
         if (groups.length) {
-          context += `\nקבוצות זמינות:\n${groups.map((g: any) => `- ${g.name} (${g.member_count} אנשים, ${g.status === 'open' ? 'פעיל' : 'לובי'}${g.location_name ? `, ${g.location_name}` : ''})`).join('\n')}`
+          context += `\nAvailable groups:\n${groups.map((g: any) => `- ${g.name} (${g.member_count} people, ${g.status}${g.location_name ? `, ${g.location_name}` : ''})`).join('\n')}`
           groups.slice(0, 3).forEach((g: any) => actions.push({ type: 'join_group', label: `⚡ ${g.name}`, data: g }))
         } else {
-          actions.push({ type: 'create_group', label: '⚡ הקם קבוצה חדשה', data: {} })
+          actions.push({ type: 'create_group', label: '⚡ Create group', data: {} })
         }
       }
-
       if (needsMarket) {
         const listings = await getMarketplace()
         if (listings.length) {
-          context += `\nמוצרים במרקטפלייס:\n${listings.map((l: any) => `- ${l.title}: ₪${l.price}${l.location_name ? ` (${l.location_name})` : ''}`).join('\n')}`
-          actions.push({ type: 'view_marketplace', label: '🛍️ פתח מרקטפלייס', data: {} })
+          context += `\nMarketplace: ${listings.map((l: any) => `${l.title}: ₪${l.price}`).join(', ')}`
+          actions.push({ type: 'view_marketplace', label: '🛍️ Open Marketplace', data: {} })
         }
       }
-
-      if (needsMatch && userLocation) {
-        const users = await getNearbyUsers(userLocation.lat, userLocation.lon)
-        if (users.length) context += `\nאנשים קרובים עם Radar פעיל: ${users.length} אנשים`
-      }
-
       if (needsWeb) {
         const result = await searchWeb(msg)
-        if (result) context += `\nתוצאת חיפוש: ${result}`
+        if (result) context += `\nWeb: ${result}`
       }
-
-      const memoryContext = memory.facts.length > 0 ? `\nמה שאני זוכר עליך:\n${memory.facts.slice(-10).join('\n')}` : ''
-
+      const memCtx = memoryFacts.length > 0 ? `\nWhat I remember about you:\n${memoryFacts.slice(-8).join('\n')}` : ''
       const history = [...messages, userMsg].slice(-15).map(m => ({ role: m.role, content: m.content }))
-
-      const systemPrompt = `אתה ${teebyName}, הסוכן האישי של ${userName || 'היוזר'} באפליקציית Tryber — רשת חברתית מבוססת AI.
-
-The Next Generation of SocialAIsing.
-
-${memoryContext}
-${userLocation ? `מיקום היוזר: ${userLocation.name}` : ''}
-${context ? `\nמידע בזמן אמת:${context}` : ''}
-
-תפקידך:
-- להיות חבר חכם שמכיר את האפליקציה לעומק
-- לייזום שיחות, לחבר אנשים, למצוא הזדמנויות
-- לזכור כל מה שהיוזר מספר לך
-- להציע פעולות ספציפיות — לא רק המלצות
-- לפעול בשם היוזר כשמתאים
-- כשמכווין לקבוצה — לתאר מה קורה בפנים
-
-כשמשתמש מספר משהו אישי (תחביבים, עבודה, מיקום, העדפות) — זכור את זה.
-
-ענה בעברית (אלא אם כתבו אנגלית). היה קצר, חם, ויזום. מקסימום 4-5 משפטים.`
-
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 400, system: systemPrompt, messages: history }),
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 400,
+          system: `You are ${teebyName}, the personal AI agent for ${userName || 'the user'} on Tryber — The Next Generation of SocialAIsing.
+${memCtx}
+${userLocation ? `User location: ${userLocation.name}` : ''}
+${context ? `\nReal-time data:${context}` : ''}
+Be proactive, warm, and concise (max 4 sentences). Suggest actions. Reply in same language as user.`,
+          messages: history,
+        }),
       })
       const data = await res.json()
-      const reply = data.content?.[0]?.text || 'מצטער, נסה שוב.'
-
-      // Extract and save memory
+      const reply = data.content?.[0]?.text || 'Sorry, try again.'
       if (msg.length > 20) {
         const factRes = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',
           headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
           body: JSON.stringify({
-            model: 'claude-haiku-4-5-20251001', max_tokens: 60,
-            messages: [{ role: 'user', content: `Extract ONE key personal fact from this message (or return "none"): "${msg}". Format: short fact about the user. Examples: "אוהב מוזיקת ג'אז", "גר בתל אביב", "מחפש דירה". Reply in Hebrew or "none".` }]
+            model: 'claude-haiku-4-5-20251001', max_tokens: 50,
+            messages: [{ role: 'user', content: `Extract one personal fact from: "${msg}". Return just the fact or "none". Example: "likes jazz music". Keep it very short.` }]
           }),
         })
         const factData = await factRes.json()
         const fact = factData.content?.[0]?.text?.trim()
-        if (fact && fact !== 'none' && fact.length < 50) {
-          const updatedMem = await updateMemory(userId, fact, memory)
-          setMemory(updatedMem)
+        if (fact && fact !== 'none' && fact.length < 60) {
+          const updated = await updateMemory(userId, fact, memoryFacts)
+          setMemoryFacts(updated)
         }
       }
-
-      const assistantMsg: Message = {
-        id: (Date.now() + 1).toString(),
-        role: 'assistant',
-        content: reply,
-        created_at: new Date().toISOString(),
-        actions: actions.length > 0 ? actions : undefined,
-      }
+      const assistantMsg: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: reply, created_at: new Date().toISOString(), actions: actions.length > 0 ? actions : undefined }
       setMessages(prev => [...prev, assistantMsg])
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
       await supabase.from('agent_messages').insert({ user_id: userId, role: 'assistant', content: reply })
-    } catch {
-      Alert.alert('שגיאה', 'לא ניתן להתחבר ל-Teeby. בדוק חיבור לאינטרנט.')
-    } finally {
-      setLoading(false)
-    }
+    } catch { Alert.alert('Error', 'Could not reach Teeby.') }
+    finally { setLoading(false) }
   }
 
   const clearHistory = async () => {
     if (!userId) return
-    Alert.alert('נקה היסטוריה', 'למחוק את כל השיחה? הזיכרון של Teeby ישמר.', [
-      { text: 'ביטול', style: 'cancel' },
-      { text: 'מחק', style: 'destructive', onPress: async () => {
+    Alert.alert('Clear history', 'Delete all messages? Memory is kept.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Clear', style: 'destructive', onPress: async () => {
         await supabase.from('agent_messages').delete().eq('user_id', userId)
         setMessages([])
-        setProactiveShown(false)
-        if (userLocation) sendProactiveWelcome(userId, userName, userLocation.lat, userLocation.lon, userLocation.name)
       }}
     ])
   }
@@ -347,7 +270,7 @@ ${context ? `\nמידע בזמן אמת:${context}` : ''}
   const formatTime = (ts: string) => new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
 
       <View style={s.header}>
@@ -356,78 +279,84 @@ ${context ? `\nמידע בזמן אמת:${context}` : ''}
           <View>
             <View style={s.headerNameRow}>
               <Text style={s.headerName}>{teebyName}</Text>
-              <Text style={s.headerEdit}>✏️</Text>
+              <Text style={{ fontSize: 11 }}>✏️</Text>
             </View>
-            <Text style={s.headerSub}>{userLocation?.name || 'מאתר מיקום...'} · פעיל</Text>
+            <Text style={s.headerSub}>{userLocation?.name || 'Locating...'} · Active</Text>
           </View>
         </TouchableOpacity>
         <View style={s.headerRight}>
-          {memory.facts.length > 0 && (
-            <View style={s.memoryBadge}>
-              <Text style={s.memoryBadgeText}>🧠 {memory.facts.length}</Text>
-            </View>
+          {memoryFacts.length > 0 && (
+            <View style={s.memBadge}><Text style={s.memBadgeText}>🧠 {memoryFacts.length}</Text></View>
           )}
           <TouchableOpacity onPress={clearHistory}>
-            <Text style={s.clearBtn}>נקה</Text>
+            <Text style={s.clearBtn}>Clear</Text>
           </TouchableOpacity>
         </View>
       </View>
 
       {/* Settings Modal */}
       <Modal visible={showSettings} animationType="slide" onRequestClose={() => setShowSettings(false)}>
-        <SafeAreaView style={s.settingsModal}>
+        <View style={[s.settingsModal, { paddingTop: insets.top }]}>
           <View style={s.settingsHeader}>
-            <TouchableOpacity onPress={() => setShowSettings(false)}><Text style={s.settingsCancel}>ביטול</Text></TouchableOpacity>
-            <Text style={s.settingsTitle}>הגדרות {teebyName}</Text>
-            <TouchableOpacity onPress={saveTeebyName}><Text style={s.settingsSave}>שמור</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowSettings(false)}><Text style={s.settingsCancel}>Cancel</Text></TouchableOpacity>
+            <Text style={s.settingsTitle}>Agent Settings</Text>
+            <TouchableOpacity onPress={saveTeebyName}><Text style={s.settingsSave}>Save</Text></TouchableOpacity>
           </View>
           <ScrollView style={s.settingsBody}>
-            <Text style={s.settingsLabel}>שם הסוכן שלך</Text>
+            <Text style={s.settingsLabel}>AGENT NAME</Text>
             <TextInput style={s.settingsInput} value={newTeebyName} onChangeText={setNewTeebyName} placeholder="Teeby" maxLength={20} />
-            <Text style={s.settingsHint}>כך הסוכן יופיע בכל מקום באפליקציה</Text>
-
-            {memory.facts.length > 0 && (
+            <Text style={s.settingsHint}>This is how your agent appears everywhere in the app</Text>
+            {memoryFacts.length > 0 && (
               <>
-                <Text style={s.settingsLabel}>מה {teebyName} זוכר עליך ({memory.facts.length})</Text>
-                {memory.facts.map((fact, i) => (
+                <Text style={s.settingsLabel}>WHAT {teebyName.toUpperCase()} REMEMBERS ({memoryFacts.length})</Text>
+                {memoryFacts.map((fact, i) => (
                   <View key={i} style={s.factRow}>
                     <Text style={s.factEmoji}>🧠</Text>
                     <Text style={s.factText}>{fact}</Text>
                   </View>
                 ))}
-                <TouchableOpacity style={s.clearMemoryBtn} onPress={async () => {
+                <TouchableOpacity style={s.clearMemBtn} onPress={async () => {
                   if (!userId) return
                   await supabase.from('teeby_memory').update({ facts: [] }).eq('user_id', userId)
-                  setMemory({ facts: [], preferences: {} })
-                  Alert.alert('✓', 'הזיכרון נמחק')
+                  setMemoryFacts([])
+                  setShowSettings(false)
                 }}>
-                  <Text style={s.clearMemoryBtnText}>🗑️ מחק זיכרון</Text>
+                  <Text style={s.clearMemBtnText}>🗑️ Clear memory</Text>
                 </TouchableOpacity>
               </>
             )}
           </ScrollView>
-        </SafeAreaView>
+        </View>
       </Modal>
 
-      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={90}>
+      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 56}>
         <FlatList
           ref={listRef}
           data={messages}
           keyExtractor={m => m.id}
           contentContainerStyle={[s.list, messages.length === 0 && s.listEmpty]}
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           ListEmptyComponent={
             <View style={s.emptyState}>
               <Text style={s.emptyEmoji}>✦</Text>
-              <Text style={s.emptyTitle}>{teebyName} — הסוכן שלך</Text>
-              <Text style={s.emptySub}>מאתר מיקום ומחפש מה קורה סביבך...</Text>
+              <Text style={s.emptyTitle}>{teebyName} — Your Agent</Text>
+              <Text style={s.emptySub}>Scanning what's around you...</Text>
               <ActivityIndicator color={PURPLE} style={{ marginTop: 20 }} />
             </View>
           }
           renderItem={({ item }) => {
             const isMe = item.role === 'user'
             return (
-              <View style={s.msgGroup}>
+              <Pressable
+                onLongPress={() => {
+                  Alert.alert('Message', '', [
+                    { text: 'Delete', style: 'destructive', onPress: () => deleteMessage(item.id) },
+                    { text: 'Cancel', style: 'cancel' },
+                  ])
+                }}
+                style={s.msgGroup}
+              >
                 <View style={[s.bubbleRow, isMe && s.bubbleRowMe]}>
                   {!isMe && <View style={s.agentAvatar}><Text style={s.agentAvatarText}>✦</Text></View>}
                   <View style={s.bubbleCol}>
@@ -446,7 +375,7 @@ ${context ? `\nמידע בזמן אמת:${context}` : ''}
                     ))}
                   </View>
                 )}
-              </View>
+              </Pressable>
             )
           }}
         />
@@ -461,28 +390,26 @@ ${context ? `\nמידע בזמן אמת:${context}` : ''}
         )}
 
         {messages.length <= 1 && (
-          <View style={s.quickPromptsBar}>
-            <FlatList
-              data={QUICK_PROMPTS}
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}
-              keyExtractor={p => p}
-              renderItem={({ item }) => (
-                <TouchableOpacity style={s.quickPrompt} onPress={() => send(item)}>
-                  <Text style={s.quickPromptText}>{item}</Text>
-                </TouchableOpacity>
-              )}
-            />
-          </View>
+          <FlatList
+            data={QUICK_PROMPTS}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ gap: 8, paddingHorizontal: 16, paddingVertical: 8 }}
+            keyExtractor={p => p}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={s.quickPrompt} onPress={() => send(item)}>
+                <Text style={s.quickPromptText}>{item}</Text>
+              </TouchableOpacity>
+            )}
+          />
         )}
 
-        <View style={s.inputRow}>
+        <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           <TextInput
             style={s.input}
             value={draft}
             onChangeText={setDraft}
-            placeholder={`שאל את ${teebyName}...`}
+            placeholder={`Ask ${teebyName}...`}
             placeholderTextColor="#B4B2A9"
             multiline
             maxLength={1000}
@@ -492,7 +419,7 @@ ${context ? `\nמידע בזמן אמת:${context}` : ''}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   )
 }
 
@@ -509,11 +436,10 @@ const s = StyleSheet.create({
   headerAvatarText: { fontSize: 16, color: PURPLE, fontWeight: '700' },
   headerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   headerName: { fontSize: 15, fontWeight: '700', color: '#2C2C2A' },
-  headerEdit: { fontSize: 12 },
   headerSub: { fontSize: 11, color: GRAY },
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  memoryBadge: { backgroundColor: '#EEEDFE', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
-  memoryBadgeText: { fontSize: 11, color: PURPLE, fontWeight: '600' },
+  memBadge: { backgroundColor: '#EEEDFE', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 10 },
+  memBadgeText: { fontSize: 11, color: PURPLE, fontWeight: '600' },
   clearBtn: { fontSize: 14, color: GRAY },
   settingsModal: { flex: 1, backgroundColor: '#fff' },
   settingsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
@@ -527,14 +453,14 @@ const s = StyleSheet.create({
   factRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#F1EFE8', borderRadius: 10, padding: 10, marginBottom: 6 },
   factEmoji: { fontSize: 16 },
   factText: { fontSize: 14, color: '#2C2C2A', flex: 1 },
-  clearMemoryBtn: { marginTop: 16, padding: 14, borderRadius: 12, backgroundColor: '#FFF0EB', alignItems: 'center' },
-  clearMemoryBtnText: { fontSize: 14, color: '#E24B4A', fontWeight: '600' },
+  clearMemBtn: { marginTop: 16, padding: 14, borderRadius: 12, backgroundColor: '#FFF0EB', alignItems: 'center' },
+  clearMemBtnText: { fontSize: 14, color: '#E24B4A', fontWeight: '600' },
   list: { padding: 16, gap: 12 },
   listEmpty: { flex: 1 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60 },
   emptyEmoji: { fontSize: 52, color: PURPLE, marginBottom: 14 },
   emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A', marginBottom: 8 },
-  emptySub: { fontSize: 14, color: GRAY, textAlign: 'center' },
+  emptySub: { fontSize: 14, color: GRAY },
   msgGroup: { gap: 8 },
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   bubbleRowMe: { flexDirection: 'row-reverse' },
@@ -553,7 +479,6 @@ const s = StyleSheet.create({
   actionBtn: { backgroundColor: '#fff', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8, borderWidth: 1, borderColor: PURPLE },
   actionBtnText: { fontSize: 13, color: PURPLE, fontWeight: '600' },
   typingRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
-  quickPromptsBar: { borderTopWidth: 0.5, borderColor: '#E0DED8' },
   quickPrompt: { backgroundColor: '#EEEDFE', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
   quickPromptText: { fontSize: 13, color: PURPLE, fontWeight: '500' },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', padding: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8' },
