@@ -7,32 +7,33 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
 
-type Group = {
+type ChatItem = {
   id: string
+  type: 'group' | 'dm'
   name: string
-  location_name: string | null
-  member_count: number
-  min_members: number
-  status: string
-  created_at: string
-  is_private: boolean
-  last_message?: string | null
-  last_message_at?: string | null
-  unread?: number
+  avatar: string
+  last_message: string | null
+  last_message_at: string | null
+  unread: number
+  // group fields
+  status?: string
+  member_count?: number
+  min_members?: number
+  is_private?: boolean
+  // dm fields
+  other_user_id?: string
 }
 
-export default function DiscoverScreen() {
+export default function ChatsScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const [groups, setGroups] = useState<Group[]>([])
-  const [joined, setJoined] = useState<string[]>([])
+  const [items, setItems] = useState<ChatItem[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
-  const [userName, setUserName] = useState('')
   const [userId, setUserId] = useState<string | null>(null)
-  const [lastReadMap, setLastReadMap] = useState<Record<string, string>>({})
+  const [userName, setUserName] = useState('')
 
-  const loadGroups = useCallback(async () => {
+  const loadAll = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -41,88 +42,129 @@ export default function DiscoverScreen() {
       const { data: profile } = await supabase.from('profiles').select('display_name, username').eq('id', user.id).single()
       if (profile) setUserName(profile.display_name || profile.username || '')
 
-      const { data, error } = await supabase.from('groups').select('*').neq('status', 'archived')
-      if (error) throw error
+      const results: ChatItem[] = []
 
-      // Get my memberships with last_read_at
+      // Load groups
       const { data: memberData } = await supabase
-        .from('group_members').select('group_id, last_read_at').eq('user_id', user.id)
-      const joinedIds = memberData?.map((m: any) => m.group_id) || []
-      setJoined(joinedIds)
-      const readMap: Record<string, string> = {}
-      memberData?.forEach((m: any) => { readMap[m.group_id] = m.last_read_at })
-      setLastReadMap(readMap)
+        .from('group_members')
+        .select('group_id, last_read_at, groups(*)')
+        .eq('user_id', user.id)
 
-      const enriched = await Promise.all((data || []).map(async (g: Group) => {
+      for (const m of memberData || []) {
+        const g = (m as any).groups
+        if (!g || g.status === 'archived') continue
+
         const { data: msgs } = await supabase
           .from('messages').select('content, created_at').eq('group_id', g.id)
           .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
 
-        // Count unread
         let unread = 0
-        const lastRead = readMap[g.id]
-        if (lastRead && joinedIds.includes(g.id)) {
+        if (m.last_read_at) {
           const { count } = await supabase.from('messages')
             .select('id', { count: 'exact', head: true })
             .eq('group_id', g.id).neq('user_id', user.id)
-            .gt('created_at', lastRead)
+            .gt('created_at', m.last_read_at)
           unread = count || 0
         }
 
-        return {
-          ...g,
+        results.push({
+          id: g.id,
+          type: 'group',
+          name: g.name,
+          avatar: g.is_private ? '🔒' : '⚡',
           last_message: msgs?.[0]?.content || null,
-          last_message_at: msgs?.[0]?.created_at || null,
+          last_message_at: msgs?.[0]?.created_at || g.created_at,
           unread,
-        }
-      }))
+          status: g.status,
+          member_count: g.member_count,
+          min_members: g.min_members,
+          is_private: g.is_private,
+        })
+      }
 
-      enriched.sort((a, b) => {
-        const aTime = a.last_message_at || a.created_at
-        const bTime = b.last_message_at || b.created_at
+      // Load DMs
+      const { data: dms } = await supabase
+        .from('dm_messages')
+        .select('*')
+        .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
+        .order('created_at', { ascending: false })
+
+      // Group DMs by conversation partner
+      const dmMap = new Map<string, any>()
+      for (const dm of dms || []) {
+        const otherId = dm.sender_id === user.id ? dm.receiver_id : dm.sender_id
+        if (!dmMap.has(otherId)) dmMap.set(otherId, dm)
+      }
+
+      for (const [otherId, lastDm] of dmMap.entries()) {
+        const { data: otherProfile } = await supabase
+          .from('profiles').select('display_name, username, avatar_char').eq('id', otherId).single()
+        const name = otherProfile?.display_name || otherProfile?.username || 'Unknown'
+        const avatar = otherProfile?.avatar_char || name[0] || '?'
+
+        const { count: unread } = await supabase.from('dm_messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('sender_id', otherId).eq('receiver_id', user.id)
+          .eq('read', false)
+
+        results.push({
+          id: `dm_${otherId}`,
+          type: 'dm',
+          name,
+          avatar,
+          last_message: lastDm.content,
+          last_message_at: lastDm.created_at,
+          unread: unread || 0,
+          other_user_id: otherId,
+        })
+      }
+
+      // Sort all by last message
+      results.sort((a, b) => {
+        const aTime = a.last_message_at || ''
+        const bTime = b.last_message_at || ''
         return new Date(bTime).getTime() - new Date(aTime).getTime()
       })
 
-      setGroups(enriched)
+      setItems(results)
     } catch (err: any) { console.error(err.message) }
     finally { setLoading(false); setRefreshing(false) }
   }, [])
 
-  useEffect(() => { loadGroups() }, [loadGroups])
+  useEffect(() => { loadAll() }, [loadAll])
 
   useEffect(() => {
-    const channel = supabase.channel('groups-rt')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'groups' }, () => loadGroups())
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => loadGroups())
+    const channel = supabase.channel('chats-rt')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => loadAll())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, () => loadAll())
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [loadGroups])
+  }, [loadAll])
 
-  const markAsRead = async (groupId: string) => {
+  const markGroupRead = async (groupId: string) => {
     if (!userId) return
     await supabase.from('group_members')
       .update({ last_read_at: new Date().toISOString() })
       .eq('group_id', groupId).eq('user_id', userId)
-    setGroups(prev => prev.map(g => g.id === groupId ? { ...g, unread: 0 } : g))
   }
 
-  const joinGroup = async (groupId: string) => {
-    if (!userId) return
-    await supabase.from('group_members').insert({ group_id: groupId, user_id: userId })
-    setJoined(prev => [...prev, groupId])
-    setGroups(prev => prev.map(g => g.id === groupId ? { ...g, member_count: g.member_count + 1 } : g))
-  }
-
-  const openGroup = (group: Group) => {
-    markAsRead(group.id)
-    if (group.status === 'open') {
-      router.push({ pathname: '/chat', params: { id: group.id, name: group.name, members: group.member_count.toString() } })
+  const openItem = (item: ChatItem) => {
+    if (item.type === 'group') {
+      markGroupRead(item.id)
+      if (item.status === 'open') {
+        router.push({ pathname: '/chat', params: { id: item.id, name: item.name, members: item.member_count?.toString() || '0' } })
+      } else {
+        router.push({ pathname: '/lobby', params: { id: item.id, name: item.name } })
+      }
     } else {
-      router.push({ pathname: '/lobby', params: { id: group.id, name: group.name } })
+      router.push({
+        pathname: '/dm',
+        params: { userId: item.other_user_id, userName: item.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' }
+      })
     }
   }
 
-  const formatLastMsg = (ts: string) => {
+  const formatTime = (ts: string) => {
     const diff = Date.now() - new Date(ts).getTime()
     if (diff < 60000) return 'now'
     if (diff < 3600000) return `${Math.floor(diff / 60000)}m`
@@ -130,7 +172,7 @@ export default function DiscoverScreen() {
     return new Date(ts).toLocaleDateString('en', { day: 'numeric', month: 'short' })
   }
 
-  const totalUnread = groups.reduce((sum, g) => sum + (g.unread || 0), 0)
+  const totalUnread = items.reduce((sum, i) => sum + i.unread, 0)
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -149,83 +191,56 @@ export default function DiscoverScreen() {
         </TouchableOpacity>
       </View>
 
-      {userName ? <View style={s.welcomeBanner}><Text style={s.welcomeText}>Hey {userName} 👋</Text></View> : null}
-
       {loading ? (
         <View style={s.center}><ActivityIndicator color={GREEN} size="large" /></View>
       ) : (
         <FlatList
-          data={groups}
-          keyExtractor={g => g.id}
-          contentContainerStyle={[s.list, groups.length === 0 && s.listEmpty]}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadGroups() }} tintColor={GREEN} />}
+          data={items}
+          keyExtractor={i => i.id}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadAll() }} tintColor={GREEN} />}
+          contentContainerStyle={items.length === 0 ? s.listEmpty : undefined}
           ListEmptyComponent={
             <View style={s.emptyState}>
-              <Text style={s.emptyEmoji}>⚡️</Text>
-              <Text style={s.emptyTitle}>No trybes yet</Text>
-              <Text style={s.emptySub}>Drop the first trybe and get the party started</Text>
+              <Text style={s.emptyEmoji}>💬</Text>
+              <Text style={s.emptyTitle}>No chats yet</Text>
+              <Text style={s.emptySub}>Drop a Trybe or find people on Explore</Text>
               <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}>
                 <Text style={s.emptyBtnText}>+ Drop Trybe</Text>
               </TouchableOpacity>
             </View>
           }
           renderItem={({ item }) => {
+            const hasUnread = item.unread > 0
+            const isGroup = item.type === 'group'
             const isOpen = item.status === 'open'
-            const pct = Math.min(100, Math.round((item.member_count / Math.max(item.min_members, 1)) * 100))
-            const isJoined = joined.includes(item.id)
-            const hasUnread = (item.unread || 0) > 0
 
             return (
-              <Pressable style={[s.card, hasUnread && s.cardUnread]} onPress={() => openGroup(item)}>
-                <View style={s.cardTop}>
-                  <View style={[s.dot, isOpen ? s.dotOpen : s.dotLobby]} />
-                  <View style={s.cardInfo}>
-                    <View style={s.cardNameRow}>
-                      <Text style={[s.cardName, hasUnread && s.cardNameBold]} numberOfLines={1}>{item.name}</Text>
-                      <View style={[s.privacyTag, item.is_private ? s.privacyTagPrivate : s.privacyTagPublic]}>
-                        <Text style={s.privacyTagText}>{item.is_private ? '🔒' : '🌐'}</Text>
-                      </View>
-                    </View>
-                    {item.location_name && <Text style={s.cardLocation}>📍 {item.location_name}</Text>}
-                    {item.last_message && (
-                      <Text style={[s.lastMsg, hasUnread && s.lastMsgBold]} numberOfLines={1}>{item.last_message}</Text>
+              <Pressable style={s.row} onPress={() => openItem(item)}>
+                <View style={[s.avatar, isGroup && s.avatarGroup, !isGroup && s.avatarDM]}>
+                  <Text style={s.avatarText}>{item.avatar}</Text>
+                </View>
+                <View style={s.rowInfo}>
+                  <View style={s.rowTop}>
+                    <Text style={[s.rowName, hasUnread && s.rowNameBold]} numberOfLines={1}>{item.name}</Text>
+                    {item.last_message_at && (
+                      <Text style={[s.rowTime, hasUnread && { color: GREEN }]}>{formatTime(item.last_message_at)}</Text>
                     )}
                   </View>
-                  <View style={s.cardRight}>
-                    {item.last_message_at && <Text style={s.lastTime}>{formatLastMsg(item.last_message_at)}</Text>}
-                    {hasUnread ? (
+                  <View style={s.rowBottom}>
+                    <Text style={[s.rowLastMsg, hasUnread && s.rowLastMsgBold]} numberOfLines={1}>
+                      {item.last_message || (isGroup ? (isOpen ? '🟢 Live' : `🟣 ${item.member_count}/${item.min_members} to unlock`) : 'Start chatting')}
+                    </Text>
+                    {hasUnread && (
                       <View style={s.unreadBadge}>
-                        <Text style={s.unreadBadgeText}>{item.unread! > 99 ? '99+' : item.unread}</Text>
+                        <Text style={s.unreadBadgeText}>{item.unread > 99 ? '99+' : item.unread}</Text>
                       </View>
-                    ) : (
-                      <>
-                        <Text style={s.memberNum}>{item.member_count}</Text>
-                        <Text style={s.memberLabel}>people</Text>
-                      </>
                     )}
                   </View>
                 </View>
-
-                {!isOpen && (
-                  <View style={s.progressSection}>
-                    <View style={s.progressBg}>
-                      <View style={[s.progressFill, { width: `${pct}%` as any }]} />
-                    </View>
-                    <Text style={s.progressLabel}>{item.member_count}/{item.min_members} to unlock</Text>
-                  </View>
-                )}
-
-                {isOpen && <Text style={s.openLabel}>🟢 Chat is LIVE — tap to join</Text>}
-
-                {!isOpen && !isJoined && (
-                  <TouchableOpacity style={s.joinBtn} onPress={() => joinGroup(item.id)}>
-                    <Text style={s.joinBtnText}>Join Lobby</Text>
-                  </TouchableOpacity>
-                )}
-                {!isOpen && isJoined && <Text style={s.inLobby}>✓ In the lobby</Text>}
               </Pressable>
             )
           }}
+          ItemSeparatorComponent={() => <View style={s.separator} />}
         />
       )}
     </View>
@@ -246,45 +261,27 @@ const s = StyleSheet.create({
   totalUnreadText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   createBtn: { backgroundColor: GREEN, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
   createBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  welcomeBanner: { backgroundColor: '#E1F5EE', paddingHorizontal: 20, paddingVertical: 8 },
-  welcomeText: { fontSize: 13, color: '#0F6E56', fontWeight: '600' },
-  list: { padding: 12, gap: 8 },
   listEmpty: { flex: 1 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32 },
   emptyEmoji: { fontSize: 56, marginBottom: 16 },
-  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A', marginBottom: 8, textAlign: 'center' },
+  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A', marginBottom: 8 },
   emptySub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 24 },
   emptyBtn: { backgroundColor: GREEN, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20 },
   emptyBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  card: { backgroundColor: '#fff', borderRadius: 14, borderWidth: 0.5, borderColor: '#E0DED8', padding: 14 },
-  cardUnread: { borderColor: GREEN, borderWidth: 1 },
-  cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
-  dot: { width: 8, height: 8, borderRadius: 4, marginTop: 6 },
-  dotOpen: { backgroundColor: GREEN },
-  dotLobby: { backgroundColor: PURPLE },
-  cardInfo: { flex: 1 },
-  cardNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
-  cardName: { fontSize: 15, fontWeight: '500', color: '#2C2C2A', flex: 1 },
-  cardNameBold: { fontWeight: '700' },
-  privacyTag: { paddingHorizontal: 5, paddingVertical: 2, borderRadius: 6 },
-  privacyTagPublic: { backgroundColor: '#E1F5EE' },
-  privacyTagPrivate: { backgroundColor: '#EEEDFE' },
-  privacyTagText: { fontSize: 11 },
-  cardLocation: { fontSize: 12, color: GRAY, marginBottom: 3 },
-  lastMsg: { fontSize: 12, color: GRAY, fontStyle: 'italic' },
-  lastMsgBold: { color: '#2C2C2A', fontStyle: 'normal', fontWeight: '500' },
-  cardRight: { alignItems: 'flex-end', gap: 2, minWidth: 44 },
-  lastTime: { fontSize: 11, color: GRAY },
-  memberNum: { fontSize: 20, fontWeight: '700', color: '#2C2C2A' },
-  memberLabel: { fontSize: 10, color: GRAY },
-  unreadBadge: { backgroundColor: GREEN, borderRadius: 12, minWidth: 24, height: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
+  avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  avatarGroup: { backgroundColor: '#E1F5EE' },
+  avatarDM: { backgroundColor: '#EEEDFE' },
+  avatarText: { fontSize: 24 },
+  rowInfo: { flex: 1 },
+  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  rowName: { fontSize: 15, fontWeight: '500', color: '#2C2C2A', flex: 1 },
+  rowNameBold: { fontWeight: '700' },
+  rowTime: { fontSize: 12, color: GRAY },
+  rowBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  rowLastMsg: { fontSize: 13, color: GRAY, flex: 1 },
+  rowLastMsgBold: { color: '#2C2C2A', fontWeight: '500' },
+  unreadBadge: { backgroundColor: GREEN, borderRadius: 12, minWidth: 22, height: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   unreadBadgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  progressSection: { marginBottom: 8 },
-  progressBg: { height: 4, backgroundColor: '#F1EFE8', borderRadius: 2, marginBottom: 4 },
-  progressFill: { height: 4, backgroundColor: PURPLE, borderRadius: 2, minWidth: 4 },
-  progressLabel: { fontSize: 11, color: PURPLE, fontWeight: '600' },
-  openLabel: { fontSize: 12, color: GREEN, fontWeight: '600' },
-  joinBtn: { backgroundColor: '#F1EFE8', paddingVertical: 8, borderRadius: 10, alignItems: 'center', marginTop: 6 },
-  joinBtnText: { fontSize: 13, fontWeight: '600', color: PURPLE },
-  inLobby: { fontSize: 12, color: GREEN, fontWeight: '500', textAlign: 'center', marginTop: 6 },
+  separator: { height: 0.5, backgroundColor: '#E0DED8', marginLeft: 80 },
 })

@@ -352,7 +352,7 @@ Be proactive, warm, and concise (max 4 sentences). Suggest actions. Reply in sam
           keyExtractor={m => m.id}
           contentContainerStyle={[s.list, messages.length === 0 && s.listEmpty]}
           
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          
           ListEmptyComponent={
             <View style={s.emptyState}>
               <Text style={s.emptyEmoji}>✦</Text>
