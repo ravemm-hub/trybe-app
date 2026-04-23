@@ -114,7 +114,7 @@ export default function OnboardingScreen() {
 
     if (currentStep === 'features') {
       setStep(5)
-      await typeMessage(`מעולה ${userName}! 🎉\n\nאני אהיה כאן בכל עת — פשוט לחץ על ✦ Agent בתחתית המסך.\n\nאגב, אפשר לייבא קבוצות מ-WhatsApp שלך ישירות ל-Tryber — אני אקרא את כל ההיסטוריה ואכיר את הקבוצה שלך מהיום הראשון 🤯\n\nמוכן לנסות?`)
+      await typeMessage(`מעולה ${userName}! 🎉\n\nאני אהיה כאן בכל עת — פשוט לחץ על ✦ Agent בתחתית המסך.\n\n
       return
     }
 

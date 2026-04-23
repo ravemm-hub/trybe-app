@@ -335,7 +335,7 @@ Be proactive, warm, and concise (max 4 sentences). Suggest actions. Reply in sam
           data={messages}
           keyExtractor={m => m.id}
           contentContainerStyle={[s.list, messages.length === 0 && s.listEmpty]}
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+          
           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           ListEmptyComponent={
             <View style={s.emptyState}>
