@@ -136,10 +136,15 @@ export default function AgentScreen() {
       const [place] = await Location.reverseGeocodeAsync({ latitude, longitude })
       const locName = [place?.city, place?.district].filter(Boolean).join(', ')
       setUserLocation({ lat: latitude, lon: longitude, name: locName })
-      if (isFirst && !proactiveShown) {
-        setProactiveShown(true)
-        await sendProactiveWelcome(uid, name, latitude, longitude, locName)
-      }
+   // Send proactive if last message was more than 3 hours ago
+const lastMsg = history?.[history.length - 1]
+const lastMsgTime = lastMsg ? new Date(lastMsg.created_at).getTime() : 0
+const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000
+
+if (!proactiveShown && lastMsgTime < threeHoursAgo) {
+  setProactiveShown(true)
+  await sendProactiveWelcome(uid, name, latitude, longitude, locName)
+} 
     } catch {}
   }
 
