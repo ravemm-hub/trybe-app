@@ -8,7 +8,7 @@ import * as ImagePicker from 'expo-image-picker'
 import * as Location from 'expo-location'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
-
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 const ANTHROPIC_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_KEY || ''
 
 const DELIVERY_SERVICES = [
@@ -45,9 +45,10 @@ type Offer = {
   counter_amount: number | null
   created_at: string
   buyer_profile?: { display_name: string | null; username: string }
-}
+}const insets = useSafeAreaInsets()
 
 export default function MarketplaceScreen() {
+
   const router = useRouter()
   const [listings, setListings] = useState<Listing[]>([])
   const [refreshing, setRefreshing] = useState(false)
@@ -259,7 +260,7 @@ export default function MarketplaceScreen() {
   const isOwner = selectedListing?.user_id === userId
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={s.container}>
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <Text style={s.title}>Marketplace 🛍️</Text>

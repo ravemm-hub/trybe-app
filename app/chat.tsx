@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, ActivityIndicator,
-  Pressable, Image, Alert, Modal,
+  KeyboardAvoidingView, Platform, ActivityIndicator,
+  Pressable, Image, Alert, Modal, StatusBar,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import * as ImagePicker from 'expo-image-picker'
 import { supabase } from '../lib/supabase'
@@ -36,6 +37,7 @@ type Message = {
 export default function ChatScreen() {
   const { id, name, members } = useLocalSearchParams<{ id: string; name: string; members: string }>()
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const [messages, setMessages] = useState<Message[]>([])
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(true)
@@ -53,7 +55,6 @@ export default function ChatScreen() {
   const [agentInstructions, setAgentInstructions] = useState('')
   const [savingAgent, setSavingAgent] = useState(false)
   const [senderMode, setSenderMode] = useState<'lit' | 'ghost'>('lit')
-  const [myAvatarChar, setMyAvatarChar] = useState('🦊')
   const [blockedUsers, setBlockedUsers] = useState<string[]>([])
   const listRef = useRef<FlatList>(null)
 
@@ -75,8 +76,6 @@ export default function ChatScreen() {
       setUserId(user.id)
       const { data: member } = await supabase.from('group_members').select('role').eq('group_id', id).eq('user_id', user.id).single()
       if (member?.role === 'admin') setIsAdmin(true)
-      const { data: profile } = await supabase.from('profiles').select('avatar_char').eq('id', user.id).single()
-      if (profile?.avatar_char) setMyAvatarChar(profile.avatar_char)
       const { data: blocks } = await supabase.from('group_blocks').select('blocked_user_id').eq('group_id', id)
       if (blocks) setBlockedUsers(blocks.map((b: any) => b.blocked_user_id))
     })
@@ -129,28 +128,18 @@ export default function ChatScreen() {
 
   const reportMessage = async (msg: Message) => {
     if (!userId) return
-    const { error } = await supabase.from('message_reports').insert({
-      message_id: msg.id,
-      reporter_id: userId,
-      group_id: id,
-      reason: 'inappropriate',
-    })
-    if (error?.code === '23505') {
-      Alert.alert('Already reported', 'You already reported this message.')
-    } else {
-      Alert.alert('✓ Reported', 'Thank you. Admins will review this.')
-    }
-    setShowMenu(false)
-    setSelectedMsg(null)
+    const { error } = await supabase.from('message_reports').insert({ message_id: msg.id, reporter_id: userId, group_id: id, reason: 'inappropriate' })
+    if (error?.code === '23505') Alert.alert('Already reported', 'You already reported this message.')
+    else Alert.alert('✓ Reported', 'Admins will review this.')
+    setShowMenu(false); setSelectedMsg(null)
   }
 
   const blockUser = async (targetUserId: string) => {
     await supabase.from('group_blocks').insert({ group_id: id, blocked_user_id: targetUserId, blocked_by: userId })
     await supabase.from('group_members').delete().eq('group_id', id).eq('user_id', targetUserId)
     setBlockedUsers(prev => [...prev, targetUserId])
-    setShowMenu(false)
-    setSelectedMsg(null)
-    Alert.alert('✓ Blocked', 'User has been removed from the group.')
+    setShowMenu(false); setSelectedMsg(null)
+    Alert.alert('✓ Blocked', 'User removed from group.')
   }
 
   const deleteMessage = async (msg: Message) => {
@@ -201,7 +190,7 @@ export default function ChatScreen() {
   const canEdit = (msg: Message) => msg.user_id === userId && Date.now() - new Date(msg.created_at).getTime() < 15 * 60 * 1000 && !msg.deleted
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
 
       <View style={s.header}>
@@ -222,7 +211,7 @@ export default function ChatScreen() {
 
       {/* Agent Settings Modal */}
       <Modal visible={showAgentSettings} animationType="slide" onRequestClose={() => setShowAgentSettings(false)}>
-        <SafeAreaView style={s.agentModal}>
+        <View style={[s.agentModal, { paddingTop: insets.top }]}>
           <View style={s.agentModalHeader}>
             <TouchableOpacity onPress={() => setShowAgentSettings(false)}><Text style={s.agentModalCancel}>Cancel</Text></TouchableOpacity>
             <Text style={s.agentModalTitle}>Group Agent ✦</Text>
@@ -241,26 +230,26 @@ export default function ChatScreen() {
               </TouchableOpacity>
             </View>
             <Text style={s.agentInstructionsLabel}>AGENT INSTRUCTIONS</Text>
-            <TextInput style={s.agentInstructionsInput} value={agentInstructions} onChangeText={setAgentInstructions} placeholder="e.g. Speak only Hebrew, welcome new members..." placeholderTextColor="#B4B2A9" multiline maxLength={500} />
+            <TextInput style={s.agentInstructionsInput} value={agentInstructions} onChangeText={setAgentInstructions} placeholder="e.g. Speak only English, welcome new members..." placeholderTextColor="#B4B2A9" multiline maxLength={500} />
             <Text style={s.agentPresetsLabel}>QUICK PRESETS</Text>
             {[
               { label: '🏘️ Neighborhood', text: 'Help neighbors with local info, businesses, and services. Keep a friendly tone.' },
               { label: '🎵 Event/Party', text: 'Share schedule, answer logistics questions, keep the energy high!' },
-              { label: '🎓 Study Group', text: 'Help with questions, share reminders about deadlines, keep discussions on topic.' },
-              { label: '💼 Work Team', text: 'Professional tone. Help with task coordination and work questions.' },
+              { label: '🎓 Study Group', text: 'Help with questions, share reminders, keep discussions on topic.' },
+              { label: '💼 Work Team', text: 'Professional tone. Help with task coordination.' },
             ].map(preset => (
               <TouchableOpacity key={preset.label} style={s.presetBtn} onPress={() => setAgentInstructions(preset.text)}>
                 <Text style={s.presetBtnText}>{preset.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
-        </SafeAreaView>
+        </View>
       </Modal>
 
       {/* Message action menu */}
       <Modal visible={showMenu} transparent animationType="fade" onRequestClose={() => setShowMenu(false)}>
         <Pressable style={s.menuOverlay} onPress={() => setShowMenu(false)}>
-          <View style={s.menu}>
+          <View style={[s.menu, { paddingBottom: insets.bottom + 16 }]}>
             <TouchableOpacity style={s.menuItem} onPress={() => { setReplyTo(selectedMsg!); setShowMenu(false); setSelectedMsg(null) }}>
               <Text style={s.menuItemText}>↩ Reply</Text>
             </TouchableOpacity>
@@ -281,7 +270,7 @@ export default function ChatScreen() {
             )}
             {isAdmin && selectedMsg?.user_id !== userId && selectedMsg?.user_id && !AGENT_IDS.includes(selectedMsg.user_id) && (
               <TouchableOpacity style={s.menuItem} onPress={() => {
-                Alert.alert('Block user', 'Remove this user from the group?', [
+                Alert.alert('Block user', 'Remove from group?', [
                   { text: 'Cancel', style: 'cancel' },
                   { text: 'Block', style: 'destructive', onPress: () => blockUser(selectedMsg.user_id!) }
                 ])
@@ -296,7 +285,7 @@ export default function ChatScreen() {
         </Pressable>
       </Modal>
 
-      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={90}>
+      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 56}>
         {loading ? (
           <View style={s.center}><ActivityIndicator color={GREEN} size="large" /></View>
         ) : (
@@ -338,9 +327,7 @@ export default function ChatScreen() {
                         {isGhost && !agent && <View style={s.ghostBadge}><Text style={s.ghostBadgeText}>anon</Text></View>}
                       </View>
                     )}
-                    {isMe && isGhost && (
-                      <Text style={s.myGhostLabel}>👻 sent anonymously</Text>
-                    )}
+                    {isMe && isGhost && <Text style={s.myGhostLabel}>👻 sent anonymously</Text>}
                     {item.reply_preview && (
                       <View style={[s.replyPreview, isMe && s.replyPreviewMe]}>
                         <Text style={s.replyPreviewText} numberOfLines={1}>↩ {item.reply_preview}</Text>
@@ -371,7 +358,7 @@ export default function ChatScreen() {
         )}
 
         {editingMsg ? (
-          <View style={s.editBar}>
+          <View style={[s.editBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
             <Text style={s.editBarLabel}>✏️ Editing</Text>
             <TextInput style={s.editInput} value={editDraft} onChangeText={setEditDraft} autoFocus multiline />
             <View style={s.editActions}>
@@ -380,12 +367,23 @@ export default function ChatScreen() {
             </View>
           </View>
         ) : (
-          <View style={s.inputRow}>
+          <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
             <TouchableOpacity style={s.mediaBtn} onPress={showImageOptions} disabled={uploading}>
               {uploading ? <ActivityIndicator color={GREEN} size="small" /> : <Text style={s.mediaBtnText}>📷</Text>}
             </TouchableOpacity>
-            <TextInput style={s.input} value={draft} onChangeText={setDraft} placeholder={senderMode === 'ghost' ? '👻 Anonymous message...' : 'Message...'} placeholderTextColor="#B4B2A9" multiline maxLength={500} />
-            <TouchableOpacity style={[s.modeToggle, senderMode === 'ghost' && s.modeToggleGhost]} onPress={() => setSenderMode(senderMode === 'lit' ? 'ghost' : 'lit')}>
+            <TextInput
+              style={s.input}
+              value={draft}
+              onChangeText={setDraft}
+              placeholder={senderMode === 'ghost' ? '👻 Anonymous message...' : 'Message...'}
+              placeholderTextColor="#B4B2A9"
+              multiline
+              maxLength={500}
+            />
+            <TouchableOpacity
+              style={[s.modeToggle, senderMode === 'ghost' && s.modeToggleGhost]}
+              onPress={() => setSenderMode(senderMode === 'lit' ? 'ghost' : 'lit')}
+            >
               <Text style={s.modeToggleText}>{senderMode === 'lit' ? '🔥' : '👻'}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={sendMessage} disabled={!draft.trim()}>
@@ -394,7 +392,7 @@ export default function ChatScreen() {
           </View>
         )}
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   )
 }
 
@@ -431,12 +429,12 @@ const s = StyleSheet.create({
   toggleThumb: { width: 24, height: 24, borderRadius: 12, backgroundColor: '#fff' },
   toggleThumbOn: { transform: [{ translateX: 20 }] },
   agentInstructionsLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginBottom: 10 },
-  agentInstructionsInput: { backgroundColor: '#F1EFE8', borderRadius: 14, padding: 14, fontSize: 14, color: '#2C2C2A', minHeight: 120, textAlignVertical: 'top', marginBottom: 20 },
+  agentInstructionsInput: { backgroundColor: '#F1EFE8', borderRadius: 14, padding: 14, fontSize: 14, color: '#2C2C2A', minHeight: 100, textAlignVertical: 'top', marginBottom: 20 },
   agentPresetsLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginBottom: 10 },
   presetBtn: { backgroundColor: '#EEEDFE', borderRadius: 12, paddingHorizontal: 16, paddingVertical: 10, marginBottom: 8 },
   presetBtnText: { fontSize: 14, color: PURPLE, fontWeight: '500' },
   menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  menu: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingBottom: 32, paddingTop: 8 },
+  menu: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 8 },
   menuItem: { paddingHorizontal: 24, paddingVertical: 16, borderBottomWidth: 0.5, borderColor: '#F1EFE8' },
   menuItemText: { fontSize: 16, color: '#2C2C2A' },
   messageList: { padding: 16, gap: 10, flexGrow: 1 },
@@ -486,7 +484,7 @@ const s = StyleSheet.create({
   editCancelText: { fontSize: 14, color: GRAY },
   editSave: { backgroundColor: GREEN, paddingHorizontal: 20, paddingVertical: 8, borderRadius: 16 },
   editSaveText: { fontSize: 14, fontWeight: '700', color: '#fff' },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', padding: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8' },
+  inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 10, paddingTop: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8' },
   mediaBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
   mediaBtnText: { fontSize: 20 },
   input: { flex: 1, minHeight: 40, maxHeight: 100, backgroundColor: '#F1EFE8', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#2C2C2A' },

@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView,
+  View, Text, StyleSheet, FlatList, TouchableOpacity,
   StatusBar, RefreshControl, Image, TextInput, Alert,
   KeyboardAvoidingView, Platform, Modal,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as ImagePicker from 'expo-image-picker'
 import { supabase } from '../../lib/supabase'
 
@@ -28,6 +29,7 @@ type Comment = {
 }
 
 export default function FeedScreen() {
+  const insets = useSafeAreaInsets()
   const [posts, setPosts] = useState<Post[]>([])
   const [refreshing, setRefreshing] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
@@ -43,7 +45,7 @@ export default function FeedScreen() {
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) { setUserId(user.id); loadFeed(user.id); loadFollowing(user.id) }
+      if (user) { setUserId(user.id); loadFeed(); loadFollowing(user.id) }
     })
   }, [])
 
@@ -52,14 +54,9 @@ export default function FeedScreen() {
     if (data) setFollowing(data.map((f: any) => f.following_id))
   }
 
-  const loadFeed = useCallback(async (uid?: string) => {
+  const loadFeed = useCallback(async () => {
     try {
-      const { data } = await supabase
-        .from('posts')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(30)
-
+      const { data } = await supabase.from('posts').select('*').order('created_at', { ascending: false }).limit(30)
       const enriched = await Promise.all((data || []).map(async (post: Post) => {
         if (post.is_anonymous) return { ...post, profile: undefined }
         const { data: profile } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', post.user_id).single()
@@ -147,8 +144,8 @@ export default function FeedScreen() {
   const formatTime = (ts: string) => {
     const diff = Date.now() - new Date(ts).getTime()
     if (diff < 60000) return 'just now'
-    if (diff < 3600000) return `${Math.floor(diff/60000)}m`
-    if (diff < 86400000) return `${Math.floor(diff/3600000)}h`
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`
     return new Date(ts).toLocaleDateString('en', { day: 'numeric', month: 'short' })
   }
 
@@ -157,7 +154,7 @@ export default function FeedScreen() {
     : posts
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <Text style={s.logo}>tryber</Text>
@@ -166,7 +163,6 @@ export default function FeedScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Feed filter */}
       <View style={s.filterRow}>
         <TouchableOpacity style={[s.filterBtn, feedFilter === 'all' && s.filterBtnActive]} onPress={() => setFeedFilter('all')}>
           <Text style={[s.filterBtnText, feedFilter === 'all' && s.filterBtnTextActive]}>🌐 All</Text>
@@ -179,7 +175,7 @@ export default function FeedScreen() {
       {showCompose && (
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
           <View style={s.composeBox}>
-            <TextInput style={s.composeInput} value={draft} onChangeText={setDraft} placeholder={isAnonymous ? '👻 Anonymous post...' : "What's happening near you?"} placeholderTextColor="#B4B2A9" multiline maxLength={300} autoFocus />
+            <TextInput style={s.composeInput} value={draft} onChangeText={setDraft} placeholder={isAnonymous ? '👻 Anonymous post...' : "What's happening?"} placeholderTextColor="#B4B2A9" multiline maxLength={300} autoFocus />
             <View style={s.composeActions}>
               <TouchableOpacity style={s.photoBtn} onPress={pickAndPost} disabled={posting}>
                 <Text style={s.photoBtnText}>📷</Text>
@@ -199,12 +195,12 @@ export default function FeedScreen() {
         data={filteredPosts}
         keyExtractor={p => p.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadFeed() }} tintColor="#1D9E75" />}
-        contentContainerStyle={filteredPosts.length === 0 ? s.listEmpty : s.list}
+        contentContainerStyle={filteredPosts.length === 0 ? s.listEmpty : undefined}
         ListEmptyComponent={
           <View style={s.emptyState}>
             <Text style={s.emptyEmoji}>🌐</Text>
             <Text style={s.emptyTitle}>{feedFilter === 'following' ? 'No posts from people you follow' : 'Feed is empty'}</Text>
-            <Text style={s.emptySub}>{feedFilter === 'following' ? 'Follow people to see their posts here' : 'Be the first to post!'}</Text>
+            <Text style={s.emptySub}>{feedFilter === 'following' ? 'Follow people to see their posts' : 'Be the first to post!'}</Text>
             {feedFilter === 'following' && (
               <TouchableOpacity style={s.emptyBtn} onPress={() => setFeedFilter('all')}>
                 <Text style={s.emptyBtnText}>See all posts</Text>
@@ -213,12 +209,11 @@ export default function FeedScreen() {
           </View>
         }
         renderItem={({ item }) => {
-          const isMe = item.user_id === userId
           const isAnon = item.is_anonymous
+          const isMe = item.user_id === userId
           const displayName = isAnon ? '👻 Anonymous' : (item.profile?.display_name || item.profile?.username || 'Unknown')
           const avatar = isAnon ? '👻' : (item.profile?.avatar_char || displayName[0] || '?')
           const isFollowing = following.includes(item.user_id)
-
           return (
             <View style={s.post}>
               <View style={s.postHeader}>
@@ -253,9 +248,8 @@ export default function FeedScreen() {
         }}
       />
 
-      {/* Comments Modal */}
       <Modal visible={!!commentModal} animationType="slide" onRequestClose={() => setCommentModal(null)}>
-        <SafeAreaView style={s.commentsContainer}>
+        <View style={[s.commentsContainer, { paddingTop: insets.top }]}>
           <View style={s.commentsHeader}>
             <TouchableOpacity onPress={() => setCommentModal(null)}>
               <Text style={s.commentsBack}>‹ Back</Text>
@@ -281,26 +275,25 @@ export default function FeedScreen() {
             )}
           />
           <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-            <View style={s.commentInput}>
+            <View style={[s.commentInput, { paddingBottom: Math.max(insets.bottom, 8) }]}>
               <TextInput style={s.commentInputField} value={commentDraft} onChangeText={setCommentDraft} placeholder="Add a comment..." placeholderTextColor="#B4B2A9" />
               <TouchableOpacity style={[s.commentSendBtn, !commentDraft.trim() && { opacity: 0.4 }]} onPress={addComment} disabled={!commentDraft.trim()}>
                 <Text style={s.commentSendText}>↑</Text>
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>
-        </SafeAreaView>
+        </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   )
 }
 
 const GREEN = '#1D9E75'
 const GRAY = '#888780'
-const PURPLE = '#7F77DD'
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAF8' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   logo: { fontSize: 24, fontWeight: '800', color: GREEN, letterSpacing: -1 },
   composeBtn: { backgroundColor: GREEN, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
   composeBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
@@ -320,7 +313,6 @@ const s = StyleSheet.create({
   postBtn: { flex: 1, backgroundColor: GREEN, paddingVertical: 10, borderRadius: 20, alignItems: 'center' },
   postBtnOff: { opacity: 0.5 },
   postBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  list: { paddingBottom: 20 },
   listEmpty: { flex: 1 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32 },
   emptyEmoji: { fontSize: 56, marginBottom: 16 },
@@ -357,7 +349,7 @@ const s = StyleSheet.create({
   commentBody: { flex: 1, backgroundColor: '#fff', borderRadius: 14, padding: 12, borderWidth: 0.5, borderColor: '#E0DED8' },
   commentName: { fontSize: 12, fontWeight: '600', color: '#2C2C2A', marginBottom: 3 },
   commentText: { fontSize: 14, color: '#444441', lineHeight: 20 },
-  commentInput: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 10, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8' },
+  commentInput: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingTop: 10, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8' },
   commentInputField: { flex: 1, backgroundColor: '#F1EFE8', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#2C2C2A' },
   commentSendBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' },
   commentSendText: { color: '#fff', fontSize: 16, fontWeight: '700' },

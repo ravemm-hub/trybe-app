@@ -119,10 +119,10 @@ export default function AgentScreen() {
       // Check last message time — send proactive if >3 hours or first time
       const { data: lastMsg } = await supabase.from('agent_messages').select('created_at').eq('user_id', uid).order('created_at', { ascending: false }).limit(1)
       const lastTime = lastMsg?.[0] ? new Date(lastMsg[0].created_at).getTime() : 0
-      const threeHoursAgo = Date.now() - 3 * 60 * 60 * 1000
-      if (lastTime < threeHoursAgo) {
-        await sendProactive(uid, name, latitude, longitude, locName)
-      }
+    const oneHourAgo = Date.now() - 60 * 60 * 1000
+if (lastTime < oneHourAgo) {
+  await sendProactive(uid, name, latitude, longitude, locName)
+} 
     } catch {}
   }
 
