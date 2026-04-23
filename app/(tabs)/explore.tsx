@@ -3,7 +3,6 @@ import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
   SafeAreaView, StatusBar, TouchableOpacity, Switch, ActivityIndicator, Alert,
 } from 'react-native'
-import MapView, { Marker, Circle, PROVIDER_GOOGLE } from 'react-native-maps'
 import * as Location from 'expo-location'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
@@ -30,60 +29,84 @@ type NearbyUser = {
   is_agent?: boolean
 }
 
-type NearbyGroup = {
+type Group = {
   id: string
   name: string
   location_name: string | null
   member_count: number
   min_members: number
   status: string
-  distance_m: number
+  distance_m?: number
+  last_message?: string | null
 }
 
 export default function ExploreScreen() {
   const router = useRouter()
-  const [view, setView] = useState<'map' | 'list'>('list')
-  const [tab, setTab] = useState<'people' | 'trybes'>('people')
+  const [tab, setTab] = useState<'people' | 'trybes'>('trybes')
   const [radarOn, setRadarOn] = useState(false)
   const [myMode, setMyMode] = useState<'lit' | 'ghost'>('lit')
   const [myAvatar, setMyAvatar] = useState('🦊')
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
   const [nearbyUsers, setNearbyUsers] = useState<NearbyUser[]>([])
-  const [nearbyGroups, setNearbyGroups] = useState<NearbyGroup[]>([])
+  const [groups, setGroups] = useState<Group[]>([])
   const [search, setSearch] = useState('')
   const [userId, setUserId] = useState<string | null>(null)
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
   const [loading, setLoading] = useState(false)
+  const [radius, setRadius] = useState(5000)
+  const [showAllGroups, setShowAllGroups] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user) setUserId(user.id)
     })
+    loadAllGroups()
   }, [])
 
-  const updateRadar = async (on: boolean, mode: 'lit' | 'ghost') => {
-    if (!userId) return
-    const { status } = await Location.requestForegroundPermissionsAsync()
-    if (status !== 'granted') { Alert.alert('Location needed', 'Radar needs your location'); return }
-    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-    const { latitude, longitude } = loc.coords
-    setCoords({ lat: latitude, lon: longitude })
-    await supabase.from('user_locations').upsert({
-      user_id: userId,
-      location: `POINT(${longitude} ${latitude})`,
-      radar_on: on,
-      identity_mode: mode,
-      avatar_char: myAvatar,
-      updated_at: new Date().toISOString(),
-    })
-    if (on) {
-      loadNearbyUsers(latitude, longitude)
-      loadNearbyGroups(latitude, longitude)
-    }
+  const loadAllGroups = useCallback(async () => {
+    setLoading(true)
+    try {
+      const { data } = await supabase
+        .from('groups')
+        .select('*')
+        .neq('status', 'archived')
+        .order('member_count', { ascending: false })
+        .limit(50)
+
+      const enriched = await Promise.all((data || []).map(async (g: Group) => {
+        const { data: msgs } = await supabase
+          .from('messages').select('content').eq('group_id', g.id)
+          .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
+        return { ...g, last_message: msgs?.[0]?.content || null }
+      }))
+      setGroups(enriched)
+      setShowAllGroups(true)
+    } catch (e: any) { console.error(e) }
+    finally { setLoading(false) }
+  }, [])
+
+  const loadNearbyGroups = async (lat: number, lon: number, r: number) => {
+    setLoading(true)
+    try {
+      const { data } = await supabase.rpc('nearby_groups', { lat, lon, radius_m: r })
+      if (data?.length) {
+        const enriched = await Promise.all(data.map(async (g: Group) => {
+          const { data: msgs } = await supabase
+            .from('messages').select('content').eq('group_id', g.id)
+            .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
+          return { ...g, last_message: msgs?.[0]?.content || null }
+        }))
+        setGroups(enriched)
+        setShowAllGroups(false)
+      } else {
+        // No nearby groups — show all
+        await loadAllGroups()
+      }
+    } catch { await loadAllGroups() }
+    finally { setLoading(false) }
   }
 
   const loadNearbyUsers = async (lat: number, lon: number) => {
-    setLoading(true)
     try {
       const { data } = await supabase.rpc('nearby_users', { lat, lon, radius_m: 2000 })
       const users = ((data || []) as NearbyUser[])
@@ -91,24 +114,53 @@ export default function ExploreScreen() {
         .map((u) => ({ ...u, is_agent: AGENT_IDS.includes(u.id) }))
       setNearbyUsers(users)
     } catch (e) { console.log(e) }
-    finally { setLoading(false) }
   }
 
-  const loadNearbyGroups = async (lat: number, lon: number) => {
-    try {
-      const { data } = await supabase.rpc('nearby_groups', { lat, lon, radius_m: 5000 })
-      setNearbyGroups(data || [])
-    } catch (e) { console.log(e) }
+  const activateRadar = async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync()
+    if (status !== 'granted') { Alert.alert('Location needed', 'Radar needs your location'); return }
+    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+    const { latitude, longitude } = loc.coords
+    setCoords({ lat: latitude, lon: longitude })
+
+    await supabase.from('user_locations').upsert({
+      user_id: userId,
+      location: `POINT(${longitude} ${latitude})`,
+      radar_on: true,
+      identity_mode: myMode,
+      avatar_char: myAvatar,
+      updated_at: new Date().toISOString(),
+    })
+
+    await loadNearbyUsers(latitude, longitude)
+    await loadNearbyGroups(latitude, longitude, radius)
   }
 
   const toggleRadar = async (val: boolean) => {
     setRadarOn(val)
-    await updateRadar(val, myMode)
+    if (val) {
+      await activateRadar()
+    } else {
+      if (userId) await supabase.from('user_locations').update({ radar_on: false }).eq('user_id', userId)
+      setNearbyUsers([])
+      await loadAllGroups()
+    }
   }
 
   const switchMode = async (mode: 'lit' | 'ghost') => {
     setMyMode(mode)
-    if (radarOn) await updateRadar(true, mode)
+    if (radarOn && coords) {
+      await supabase.from('user_locations').upsert({
+        user_id: userId, location: `POINT(${coords.lon} ${coords.lat})`,
+        radar_on: true, identity_mode: mode, avatar_char: myAvatar,
+        updated_at: new Date().toISOString(),
+      })
+    }
+  }
+
+  const changeRadius = async (r: number) => {
+    setRadius(r)
+    if (radarOn && coords) await loadNearbyGroups(coords.lat, coords.lon, r)
   }
 
   const openDM = (user: NearbyUser) => {
@@ -116,27 +168,20 @@ export default function ExploreScreen() {
       pathname: '/dm',
       params: {
         userId: user.id,
-        userName: user.identity_mode === 'ghost'
-          ? (user.avatar_char || '👻')
-          : (user.display_name || user.username),
-        myMode,
-        myAvatar,
-        isAgent: user.is_agent ? '1' : '0',
+        userName: user.identity_mode === 'ghost' ? (user.avatar_char || '👻') : (user.display_name || user.username),
+        myMode, myAvatar, isAgent: user.is_agent ? '1' : '0',
       }
     })
   }
 
   const createGroupWithUser = async (user: NearbyUser) => {
     if (!userId || !coords) return
-    const name = `${myMode === 'ghost' ? myAvatar : 'You'} & ${user.identity_mode === 'ghost' ? (user.avatar_char || '👻') : (user.display_name || user.username)}`
+    const myName = myMode === 'ghost' ? myAvatar : 'You'
+    const otherName = user.identity_mode === 'ghost' ? (user.avatar_char || '👻') : (user.display_name || user.username)
     const { data, error } = await supabase.from('groups').insert({
-      name,
+      name: `${myName} & ${otherName}`,
       location: `POINT(${coords.lon} ${coords.lat})`,
-      status: 'open',
-      type: 'manual',
-      min_members: 2,
-      member_count: 2,
-      created_by: userId,
+      status: 'open', type: 'manual', min_members: 2, member_count: 2, created_by: userId,
     }).select().single()
     if (error) { Alert.alert('Error', error.message); return }
     await supabase.from('group_members').insert([
@@ -146,7 +191,7 @@ export default function ExploreScreen() {
     router.push({ pathname: '/chat', params: { id: data.id, name: data.name, members: '2' } })
   }
 
-  const filteredGroups = nearbyGroups.filter(g =>
+  const filteredGroups = groups.filter(g =>
     g.name.toLowerCase().includes(search.toLowerCase()) ||
     (g.location_name || '').toLowerCase().includes(search.toLowerCase())
   )
@@ -157,42 +202,28 @@ export default function ExploreScreen() {
 
       <View style={s.header}>
         <Text style={s.title}>Explore</Text>
-        <View style={s.headerRight}>
-          <TouchableOpacity
-            style={[s.viewBtn, view === 'map' && s.viewBtnActive]}
-            onPress={() => setView('map')}
-          >
-            <Text style={[s.viewBtnText, view === 'map' && s.viewBtnTextActive]}>🗺️</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[s.viewBtn, view === 'list' && s.viewBtnActive]}
-            onPress={() => setView('list')}
-          >
-            <Text style={[s.viewBtnText, view === 'list' && s.viewBtnTextActive]}>☰</Text>
-          </TouchableOpacity>
-          <View style={s.radarToggle}>
-            <Text style={s.radarLabel}>{radarOn ? '📡' : '📡'}</Text>
-            <Switch value={radarOn} onValueChange={toggleRadar} trackColor={{ true: GREEN }} thumbColor="#fff" />
-          </View>
+        <View style={s.radarToggle}>
+          <Text style={s.radarLabel}>📡 Radar</Text>
+          <Switch value={radarOn} onValueChange={toggleRadar} trackColor={{ true: GREEN }} thumbColor="#fff" />
         </View>
       </View>
 
+      {/* Mode bar — only when radar on */}
       {radarOn && (
         <View style={s.modeBar}>
-          <View style={s.modeBtns}>
-            <TouchableOpacity style={[s.modeBtn, myMode === 'lit' && s.modeBtnLit]} onPress={() => switchMode('lit')}>
-              <Text style={s.modeBtnText}>🔥 Lit</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[s.modeBtn, myMode === 'ghost' && s.modeBtnGhost]} onPress={() => switchMode('ghost')}>
-              <Text style={s.modeBtnText}>👻 Ghost</Text>
-            </TouchableOpacity>
-          </View>
-          {myMode === 'ghost' && (
-            <TouchableOpacity onPress={() => setShowAvatarPicker(!showAvatarPicker)} style={s.avatarBtn}>
-              <Text style={s.avatarBtnText}>Your avatar: {myAvatar} — tap to change</Text>
-            </TouchableOpacity>
-          )}
+          <TouchableOpacity style={[s.modeBtn, myMode === 'lit' && s.modeBtnLit]} onPress={() => switchMode('lit')}>
+            <Text style={s.modeBtnText}>🔥 Lit — מזוהה</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[s.modeBtn, myMode === 'ghost' && s.modeBtnGhost]} onPress={() => switchMode('ghost')}>
+            <Text style={s.modeBtnText}>👻 Ghost — אנונימי</Text>
+          </TouchableOpacity>
         </View>
+      )}
+
+      {radarOn && myMode === 'ghost' && (
+        <TouchableOpacity style={s.avatarBtn} onPress={() => setShowAvatarPicker(!showAvatarPicker)}>
+          <Text style={s.avatarBtnText}>האווטאר שלך: {myAvatar} — לחץ לשינוי</Text>
+        </TouchableOpacity>
       )}
 
       {showAvatarPicker && (
@@ -205,159 +236,147 @@ export default function ExploreScreen() {
         </View>
       )}
 
-      {!radarOn ? (
-        <View style={s.offState}>
-          <Text style={s.offEmoji}>📡</Text>
-          <Text style={s.offTitle}>Radar is off</Text>
-          <Text style={s.offSub}>Turn on to discover people and trybes near you</Text>
-          <TouchableOpacity style={s.offBtn} onPress={() => toggleRadar(true)}>
-            <Text style={s.offBtnText}>Activate Radar</Text>
-          </TouchableOpacity>
+      {/* Tabs */}
+      <View style={s.tabRow}>
+        <TouchableOpacity style={[s.tabBtn, tab === 'trybes' && s.tabBtnActive]} onPress={() => setTab('trybes')}>
+          <Text style={[s.tabBtnText, tab === 'trybes' && s.tabBtnTextActive]}>
+            ⚡ Trybes {groups.length > 0 ? `(${groups.length})` : ''}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.tabBtn, tab === 'people' && s.tabBtnActive]} onPress={() => setTab('people')}>
+          <Text style={[s.tabBtnText, tab === 'people' && s.tabBtnTextActive]}>
+            👥 People {nearbyUsers.length > 0 ? `(${nearbyUsers.length})` : ''}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Radius selector for trybes */}
+      {tab === 'trybes' && radarOn && (
+        <View style={s.radiusRow}>
+          <Text style={s.radiusLabel}>טווח:</Text>
+          {[1000, 5000, 10000, 50000].map(r => (
+            <TouchableOpacity key={r} style={[s.radiusBtn, radius === r && s.radiusBtnActive]} onPress={() => changeRadius(r)}>
+              <Text style={[s.radiusBtnText, radius === r && s.radiusBtnTextActive]}>
+                {r < 1000 ? `${r}m` : `${r/1000}km`}
+              </Text>
+            </TouchableOpacity>
+          ))}
         </View>
-      ) : (
-        <>
-          <View style={s.tabRow}>
-            <TouchableOpacity style={[s.tabBtn, tab === 'people' && s.tabBtnActive]} onPress={() => setTab('people')}>
-              <Text style={[s.tabBtnText, tab === 'people' && s.tabBtnTextActive]}>
-                People {nearbyUsers.length > 0 ? `(${nearbyUsers.length})` : ''}
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[s.tabBtn, tab === 'trybes' && s.tabBtnActive]} onPress={() => setTab('trybes')}>
-              <Text style={[s.tabBtnText, tab === 'trybes' && s.tabBtnTextActive]}>
-                Trybes {nearbyGroups.length > 0 ? `(${nearbyGroups.length})` : ''}
-              </Text>
-            </TouchableOpacity>
-          </View>
+      )}
 
-          {tab === 'trybes' && (
-            <View style={s.searchRow}>
-              <TextInput
-                style={s.searchInput}
-                value={search}
-                onChangeText={setSearch}
-                placeholder="Search trybes..."
-                placeholderTextColor="#B4B2A9"
-              />
+      {/* Search */}
+      {tab === 'trybes' && (
+        <View style={s.searchRow}>
+          <TextInput style={s.searchInput} value={search} onChangeText={setSearch} placeholder="חפש קבוצות..." placeholderTextColor="#B4B2A9" />
+        </View>
+      )}
+
+      {showAllGroups && tab === 'trybes' && (
+        <View style={s.allGroupsBanner}>
+          <Text style={s.allGroupsBannerText}>
+            {radarOn ? '📍 לא נמצאו קבוצות קרובות — מציג את כל הקבוצות' : '⚡ כל הקבוצות הפעילות באפליקציה'}
+          </Text>
+        </View>
+      )}
+
+      {tab === 'trybes' ? (
+        <FlatList
+          data={filteredGroups}
+          keyExtractor={g => g.id}
+          contentContainerStyle={s.list}
+          refreshing={loading}
+          onRefresh={radarOn && coords ? () => loadNearbyGroups(coords.lat, coords.lon, radius) : loadAllGroups}
+          ListEmptyComponent={
+            <View style={s.emptySmall}>
+              {loading
+                ? <ActivityIndicator color={GREEN} />
+                : <Text style={s.emptySmallText}>אין קבוצות כרגע</Text>
+              }
             </View>
+          }
+          renderItem={({ item }) => (
+            <Pressable style={s.groupCard} onPress={() =>
+              router.push({
+                pathname: item.status === 'open' ? '/chat' : '/lobby',
+                params: { id: item.id, name: item.name, members: item.member_count.toString() }
+              })
+            }>
+              <View style={s.groupCardTop}>
+                <View style={[s.groupDot, item.status === 'open' ? s.dotOpen : s.dotLobby]} />
+                <View style={s.groupInfo}>
+                  <Text style={s.groupName} numberOfLines={1}>{item.name}</Text>
+                  {item.location_name && <Text style={s.groupLoc}>📍 {item.location_name}</Text>}
+                  {item.last_message && <Text style={s.groupLastMsg} numberOfLines={1}>💬 "{item.last_message}"</Text>}
+                </View>
+                <View style={s.groupRight}>
+                  <Text style={s.groupCount}>{item.member_count}</Text>
+                  <Text style={s.groupLabel}>אנשים</Text>
+                </View>
+              </View>
+              <View style={s.groupStatus}>
+                {item.status === 'open'
+                  ? <Text style={s.openLabel}>🟢 צ'אט פעיל</Text>
+                  : <Text style={s.lobbyLabel}>🟣 לובי — {item.member_count}/{item.min_members}</Text>
+                }
+                {item.distance_m && (
+                  <Text style={s.distLabel}>
+                    {item.distance_m < 1000 ? `${Math.round(item.distance_m)}מ` : `${(item.distance_m/1000).toFixed(1)}ק"מ`}
+                  </Text>
+                )}
+              </View>
+            </Pressable>
           )}
-
-          {view === 'map' && coords ? (
-            <MapView
-              style={s.map}
-              provider={PROVIDER_GOOGLE}
-              initialRegion={{
-                latitude: coords.lat,
-                longitude: coords.lon,
-                latitudeDelta: 0.02,
-                longitudeDelta: 0.02,
-              }}
-              showsUserLocation
-            >
-              {tab === 'people' && nearbyUsers.map(user => (
-                <Marker
-                  key={user.id}
-                  coordinate={{ latitude: coords.lat + (Math.random()-0.5)*0.01, longitude: coords.lon + (Math.random()-0.5)*0.01 }}
-                  onPress={() => openDM(user)}
-                >
-                  <View style={[s.mapPin, user.is_agent && s.mapPinAgent]}>
-                    <Text style={s.mapPinText}>
-                      {user.identity_mode === 'ghost' ? (user.avatar_char || '👻') : (user.display_name?.[0] || '?')}
-                    </Text>
-                    {user.is_agent && <Text style={s.agentDot}>AI</Text>}
+        />
+      ) : (
+        <FlatList
+          data={nearbyUsers}
+          keyExtractor={u => u.id}
+          contentContainerStyle={s.list}
+          ListEmptyComponent={
+            <View style={s.emptySmall}>
+              {!radarOn
+                ? <View style={s.radarOffMsg}>
+                    <Text style={s.radarOffEmoji}>📡</Text>
+                    <Text style={s.radarOffTitle}>הפעל Radar</Text>
+                    <Text style={s.radarOffSub}>כדי לראות אנשים קרובים, הפעל את הRadar למעלה</Text>
+                    <TouchableOpacity style={s.radarOffBtn} onPress={() => toggleRadar(true)}>
+                      <Text style={s.radarOffBtnText}>הפעל Radar</Text>
+                    </TouchableOpacity>
                   </View>
-                </Marker>
-              ))}
-              {tab === 'trybes' && filteredGroups.map(group => (
-                <Marker
-                  key={group.id}
-                  coordinate={{ latitude: coords.lat + (Math.random()-0.5)*0.01, longitude: coords.lon + (Math.random()-0.5)*0.01 }}
-                  onPress={() => router.push({ pathname: group.status === 'open' ? '/chat' : '/lobby', params: { id: group.id, name: group.name, members: group.member_count.toString() } })}
-                >
-                  <View style={[s.mapGroupPin, group.status === 'open' ? s.mapPinOpen : s.mapPinLobby]}>
-                    <Text style={s.mapGroupCount}>{group.member_count}</Text>
+                : <Text style={s.emptySmallText}>אין אנשים קרובים עם Radar פעיל</Text>
+              }
+            </View>
+          }
+          renderItem={({ item }) => {
+            const displayName = item.identity_mode === 'ghost' ? 'Ghost' : (item.display_name || item.username)
+            const avatar = item.identity_mode === 'ghost' ? (item.avatar_char || '👻') : (item.display_name?.[0] || '?')
+            return (
+              <View style={s.userCard}>
+                <View style={[s.userAvatar, item.is_agent && s.userAvatarAgent]}>
+                  <Text style={{ fontSize: 24 }}>{avatar}</Text>
+                </View>
+                <View style={s.userInfo}>
+                  <View style={s.userNameRow}>
+                    <Text style={s.userName}>{displayName}</Text>
+                    {item.is_agent && <View style={s.agentBadge}><Text style={s.agentBadgeText}>AI</Text></View>}
+                    {item.identity_mode === 'ghost' && !item.is_agent && <View style={s.ghostBadge}><Text style={s.ghostBadgeText}>👻 אנונימי</Text></View>}
                   </View>
-                </Marker>
-              ))}
-            </MapView>
-          ) : (
-            <FlatList
-              data={tab === 'people' ? nearbyUsers : filteredGroups}
-              keyExtractor={item => item.id}
-              contentContainerStyle={s.list}
-              ListEmptyComponent={
-                <View style={s.emptySmall}>
-                  <Text style={s.emptySmallText}>
-                    {loading ? 'Scanning...' : tab === 'people' ? 'No one nearby on radar' : 'No trybes found nearby'}
+                  <Text style={s.userDist}>
+                    {item.distance_m < 1000 ? `${Math.round(item.distance_m)}מ` : `${(item.distance_m/1000).toFixed(1)}ק"מ`} ממך
                   </Text>
                 </View>
-              }
-              renderItem={({ item }) => {
-                if (tab === 'people') {
-                  const user = item as NearbyUser
-                  const displayName = user.identity_mode === 'ghost'
-                    ? 'Ghost'
-                    : (user.display_name || user.username)
-                  const avatar = user.identity_mode === 'ghost'
-                    ? (user.avatar_char || '👻')
-                    : (user.display_name?.[0] || '?')
-
-                  return (
-                    <View style={s.userCard}>
-                      <View style={[s.userAvatar, user.is_agent && s.userAvatarAgent]}>
-                        <Text style={{ fontSize: 24 }}>{avatar}</Text>
-                      </View>
-                      <View style={s.userInfo}>
-                        <View style={s.userNameRow}>
-                          <Text style={s.userName}>{displayName}</Text>
-                          {user.is_agent && (
-                            <View style={s.agentBadge}>
-                              <Text style={s.agentBadgeText}>AI</Text>
-                            </View>
-                          )}
-                        </View>
-                        <Text style={s.userDist}>
-                          {user.identity_mode === 'ghost' ? '👻 Anonymous' : '🔥 Lit'} ·{' '}
-                          {user.distance_m < 1000
-                            ? `${Math.round(user.distance_m)}m away`
-                            : `${(user.distance_m/1000).toFixed(1)}km away`}
-                        </Text>
-                      </View>
-                      <View style={s.userActions}>
-                        <TouchableOpacity style={s.actionBtn} onPress={() => openDM(user)}>
-                          <Text style={s.actionBtnText}>💬</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity style={[s.actionBtn, s.actionBtnGroup]} onPress={() => createGroupWithUser(user)}>
-                          <Text style={s.actionBtnText}>⚡</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                  )
-                } else {
-                  const group = item as NearbyGroup
-                  return (
-                    <Pressable
-                      style={s.groupCard}
-                      onPress={() => router.push({
-                        pathname: group.status === 'open' ? '/chat' : '/lobby',
-                        params: { id: group.id, name: group.name, members: group.member_count.toString() }
-                      })}
-                    >
-                      <View style={[s.groupDot, group.status === 'open' ? s.dotOpen : s.dotLobby]} />
-                      <View style={s.groupInfo}>
-                        <Text style={s.groupName}>{group.name}</Text>
-                        {group.location_name && <Text style={s.groupLoc}>📍 {group.location_name}</Text>}
-                      </View>
-                      <View style={s.groupRight}>
-                        <Text style={s.groupCount}>{group.member_count}</Text>
-                        <Text style={s.groupLabel}>people</Text>
-                      </View>
-                    </Pressable>
-                  )
-                }
-              }}
-            />
-          )}
-        </>
+                <View style={s.userActions}>
+                  <TouchableOpacity style={s.actionBtn} onPress={() => openDM(item)}>
+                    <Text style={s.actionBtnText}>💬</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={[s.actionBtn, s.actionBtnGroup]} onPress={() => createGroupWithUser(item)}>
+                    <Text style={s.actionBtnText}>⚡</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )
+          }}
+        />
       )}
     </SafeAreaView>
   )
@@ -369,72 +388,73 @@ const GRAY = '#888780'
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAF8' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 16, paddingBottom: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  title: { fontSize: 24, fontWeight: '700', color: '#2C2C2A' },
-  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  viewBtn: { width: 34, height: 34, borderRadius: 8, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
-  viewBtnActive: { backgroundColor: GREEN },
-  viewBtnText: { fontSize: 16 },
-  viewBtnTextActive: { fontSize: 16 },
-  radarToggle: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  radarLabel: { fontSize: 16 },
-  modeBar: { backgroundColor: '#fff', paddingHorizontal: 20, paddingVertical: 10, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  modeBtns: { flexDirection: 'row', gap: 8 },
-  modeBtn: { flex: 1, paddingVertical: 9, borderRadius: 10, backgroundColor: '#F1EFE8', alignItems: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  title: { fontSize: 22, fontWeight: '700', color: '#2C2C2A' },
+  radarToggle: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  radarLabel: { fontSize: 13, fontWeight: '600', color: GRAY },
+  modeBar: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  modeBtn: { flex: 1, paddingVertical: 10, borderRadius: 12, backgroundColor: '#F1EFE8', alignItems: 'center' },
   modeBtnLit: { backgroundColor: '#E1F5EE', borderWidth: 1.5, borderColor: GREEN },
   modeBtnGhost: { backgroundColor: '#EEEDFE', borderWidth: 1.5, borderColor: PURPLE },
-  modeBtnText: { fontSize: 14, fontWeight: '600', color: '#2C2C2A' },
-  avatarBtn: { marginTop: 8 },
+  modeBtnText: { fontSize: 13, fontWeight: '600', color: '#2C2C2A' },
+  avatarBtn: { backgroundColor: '#EEEDFE', paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   avatarBtnText: { fontSize: 13, color: PURPLE, fontWeight: '500' },
   avatarGrid: { flexDirection: 'row', flexWrap: 'wrap', padding: 12, backgroundColor: '#fff', gap: 8, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   avatarOpt: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
   avatarOptSel: { backgroundColor: '#EEEDFE', borderWidth: 2, borderColor: PURPLE },
   tabRow: { flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  tabBtn: { flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#F1EFE8', alignItems: 'center' },
+  tabBtn: { flex: 1, paddingVertical: 9, borderRadius: 10, backgroundColor: '#F1EFE8', alignItems: 'center' },
   tabBtnActive: { backgroundColor: GREEN },
   tabBtnText: { fontSize: 13, fontWeight: '600', color: GRAY },
   tabBtnTextActive: { color: '#fff' },
-  searchRow: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  radiusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  radiusLabel: { fontSize: 12, color: GRAY, fontWeight: '600' },
+  radiusBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: '#F1EFE8' },
+  radiusBtnActive: { backgroundColor: PURPLE },
+  radiusBtnText: { fontSize: 12, color: GRAY, fontWeight: '600' },
+  radiusBtnTextActive: { color: '#fff' },
+  searchRow: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   searchInput: { backgroundColor: '#F1EFE8', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: '#2C2C2A' },
-  map: { flex: 1 },
-  mapPin: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EEEDFE', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: PURPLE },
-  mapPinAgent: { borderColor: '#FF6B35', backgroundColor: '#FFF0EB' },
-  mapPinText: { fontSize: 20 },
-  agentDot: { fontSize: 8, fontWeight: '700', color: '#FF6B35', position: 'absolute', bottom: 0, right: 0, backgroundColor: '#fff', borderRadius: 4, paddingHorizontal: 2 },
-  mapGroupPin: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
-  mapPinOpen: { backgroundColor: '#E1F5EE', borderColor: GREEN },
-  mapPinLobby: { backgroundColor: '#EEEDFE', borderColor: PURPLE },
-  mapGroupCount: { fontSize: 14, fontWeight: '700', color: '#2C2C2A' },
-  offState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  offEmoji: { fontSize: 64, marginBottom: 16 },
-  offTitle: { fontSize: 22, fontWeight: '700', color: '#2C2C2A', marginBottom: 8 },
-  offSub: { fontSize: 14, color: GRAY, textAlign: 'center', lineHeight: 22, marginBottom: 28 },
-  offBtn: { backgroundColor: GREEN, paddingHorizontal: 32, paddingVertical: 14, borderRadius: 24 },
-  offBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  list: { padding: 16, gap: 10 },
+  allGroupsBanner: { backgroundColor: '#E1F5EE', paddingHorizontal: 16, paddingVertical: 8 },
+  allGroupsBannerText: { fontSize: 12, color: '#0F6E56', fontWeight: '500' },
+  list: { padding: 12, gap: 10, paddingBottom: 20 },
   emptySmall: { paddingTop: 40, alignItems: 'center' },
   emptySmallText: { fontSize: 14, color: GRAY },
-  userCard: { backgroundColor: '#fff', borderRadius: 16, borderWidth: 0.5, borderColor: '#E0DED8', padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  userAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#EEEDFE', alignItems: 'center', justifyContent: 'center' },
-  userAvatarAgent: { backgroundColor: '#FFF0EB', borderWidth: 2, borderColor: '#FF6B35' },
-  userInfo: { flex: 1 },
-  userNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
-  userName: { fontSize: 15, fontWeight: '600', color: '#2C2C2A' },
-  agentBadge: { backgroundColor: '#FF6B35', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
-  agentBadgeText: { fontSize: 10, fontWeight: '700', color: '#fff' },
-  userDist: { fontSize: 12, color: GRAY },
-  userActions: { flexDirection: 'row', gap: 8 },
-  actionBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
-  actionBtnGroup: { backgroundColor: '#EEEDFE' },
-  actionBtnText: { fontSize: 18 },
-  groupCard: { backgroundColor: '#fff', borderRadius: 16, borderWidth: 0.5, borderColor: '#E0DED8', padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  groupDot: { width: 10, height: 10, borderRadius: 5 },
+  radarOffMsg: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },
+  radarOffEmoji: { fontSize: 56, marginBottom: 16 },
+  radarOffTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A', marginBottom: 8 },
+  radarOffSub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 24, lineHeight: 22 },
+  radarOffBtn: { backgroundColor: GREEN, paddingHorizontal: 28, paddingVertical: 12, borderRadius: 20 },
+  radarOffBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  groupCard: { backgroundColor: '#fff', borderRadius: 14, borderWidth: 0.5, borderColor: '#E0DED8', padding: 14 },
+  groupCardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
+  groupDot: { width: 8, height: 8, borderRadius: 4, marginTop: 6 },
   dotOpen: { backgroundColor: GREEN },
   dotLobby: { backgroundColor: PURPLE },
   groupInfo: { flex: 1 },
   groupName: { fontSize: 15, fontWeight: '600', color: '#2C2C2A', marginBottom: 3 },
-  groupLoc: { fontSize: 12, color: GRAY },
+  groupLoc: { fontSize: 12, color: GRAY, marginBottom: 3 },
+  groupLastMsg: { fontSize: 12, color: GRAY, fontStyle: 'italic' },
   groupRight: { alignItems: 'center' },
-  groupCount: { fontSize: 20, fontWeight: '700', color: '#2C2C2A' },
+  groupCount: { fontSize: 22, fontWeight: '700', color: '#2C2C2A' },
   groupLabel: { fontSize: 10, color: GRAY },
+  groupStatus: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  openLabel: { fontSize: 12, color: GREEN, fontWeight: '600' },
+  lobbyLabel: { fontSize: 12, color: PURPLE, fontWeight: '600' },
+  distLabel: { fontSize: 11, color: GRAY },
+  userCard: { backgroundColor: '#fff', borderRadius: 14, borderWidth: 0.5, borderColor: '#E0DED8', padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  userAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#EEEDFE', alignItems: 'center', justifyContent: 'center' },
+  userAvatarAgent: { backgroundColor: '#FFF0EB', borderWidth: 2, borderColor: '#FF6B35' },
+  userInfo: { flex: 1 },
+  userNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  userName: { fontSize: 15, fontWeight: '600', color: '#2C2C2A' },
+  agentBadge: { backgroundColor: '#FF6B35', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  agentBadgeText: { fontSize: 10, fontWeight: '700', color: '#fff' },
+  ghostBadge: { backgroundColor: '#F1EFE8', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  ghostBadgeText: { fontSize: 10, color: GRAY },
+  userDist: { fontSize: 12, color: GRAY },
+  userActions: { flexDirection: 'row', gap: 8 },
+  actionBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
+  actionBtnGroup: { backgroundColor: '#EEEDFE' },
+  actionBtnText: { fontSize: 18 },
 })
