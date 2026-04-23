@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  SafeAreaView, StatusBar, Pressable, RefreshControl,
+  StatusBar, Pressable, RefreshControl, ActivityIndicator,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
 
@@ -18,11 +19,11 @@ type Group = {
   last_message?: string | null
   last_message_at?: string | null
   message_count?: number
-  unread?: number
 }
 
 export default function DiscoverScreen() {
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const [groups, setGroups] = useState<Group[]>([])
   const [joined, setJoined] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -35,36 +36,24 @@ export default function DiscoverScreen() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       setUserId(user.id)
-
       const { data: profile } = await supabase.from('profiles').select('display_name, username').eq('id', user.id).single()
       if (profile) setUserName(profile.display_name || profile.username || '')
-
       const { data, error } = await supabase.from('groups').select('*').neq('status', 'archived')
       if (error) throw error
-
       const enriched = await Promise.all((data || []).map(async (g: Group) => {
         const { data: msgs } = await supabase
           .from('messages').select('content, created_at').eq('group_id', g.id)
           .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
         const { count } = await supabase
           .from('messages').select('id', { count: 'exact', head: true }).eq('group_id', g.id)
-        return {
-          ...g,
-          last_message: msgs?.[0]?.content || null,
-          last_message_at: msgs?.[0]?.created_at || null,
-          message_count: count || 0,
-        }
+        return { ...g, last_message: msgs?.[0]?.content || null, last_message_at: msgs?.[0]?.created_at || null, message_count: count || 0 }
       }))
-
-      // Sort by last message time (most recent first) — like WhatsApp
       enriched.sort((a, b) => {
         const aTime = a.last_message_at || a.created_at
         const bTime = b.last_message_at || b.created_at
         return new Date(bTime).getTime() - new Date(aTime).getTime()
       })
-
       setGroups(enriched)
-
       const { data: memberData } = await supabase.from('group_members').select('group_id').eq('user_id', user.id)
       if (memberData) setJoined(memberData.map((m: any) => m.group_id))
     } catch (err: any) { console.error(err.message) }
@@ -97,17 +86,15 @@ export default function DiscoverScreen() {
   }
 
   const formatLastMsg = (ts: string) => {
-    const d = new Date(ts)
-    const now = new Date()
-    const diff = now.getTime() - d.getTime()
+    const diff = Date.now() - new Date(ts).getTime()
     if (diff < 60000) return 'now'
-    if (diff < 3600000) return `${Math.floor(diff/60000)}m`
-    if (diff < 86400000) return `${Math.floor(diff/3600000)}h`
-    return d.toLocaleDateString('en', { day: 'numeric', month: 'short' })
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`
+    return new Date(ts).toLocaleDateString('en', { day: 'numeric', month: 'short' })
   }
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <Text style={s.logo}>tryber</Text>
@@ -118,73 +105,69 @@ export default function DiscoverScreen() {
 
       {userName ? <View style={s.welcomeBanner}><Text style={s.welcomeText}>Hey {userName} 👋</Text></View> : null}
 
-      <FlatList
-        data={groups}
-        keyExtractor={g => g.id}
-        contentContainerStyle={[s.list, groups.length === 0 && s.listEmpty]}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadGroups() }} tintColor={GREEN} />}
-        ListEmptyComponent={!loading ? (
-          <View style={s.emptyState}>
-            <Text style={s.emptyEmoji}>⚡️</Text>
-            <Text style={s.emptyTitle}>No trybes yet</Text>
-            <Text style={s.emptySub}>Drop the first trybe and get the party started</Text>
-            <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}>
-              <Text style={s.emptyBtnText}>+ Drop Trybe</Text>
-            </TouchableOpacity>
-          </View>
-        ) : null}
-        renderItem={({ item }) => {
-          const isOpen = item.status === 'open'
-          const pct = Math.min(100, Math.round((item.member_count / item.min_members) * 100))
-          const isJoined = joined.includes(item.id)
-
-          return (
-            <Pressable style={s.card} onPress={() => openGroup(item)}>
-              <View style={s.cardTop}>
-                <View style={[s.dot, isOpen ? s.dotOpen : s.dotLobby]} />
-                <View style={s.cardInfo}>
-                  <View style={s.cardNameRow}>
-                    <Text style={s.cardName} numberOfLines={1}>{item.name}</Text>
-                    {item.is_private && <Text style={s.privateBadge}>🔒</Text>}
+      {loading ? (
+        <View style={s.center}><ActivityIndicator color={GREEN} size="large" /></View>
+      ) : (
+        <FlatList
+          data={groups}
+          keyExtractor={g => g.id}
+          contentContainerStyle={[s.list, groups.length === 0 && s.listEmpty]}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadGroups() }} tintColor={GREEN} />}
+          ListEmptyComponent={
+            <View style={s.emptyState}>
+              <Text style={s.emptyEmoji}>⚡️</Text>
+              <Text style={s.emptyTitle}>No trybes yet</Text>
+              <Text style={s.emptySub}>Drop the first trybe and get the party started</Text>
+              <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}>
+                <Text style={s.emptyBtnText}>+ Drop Trybe</Text>
+              </TouchableOpacity>
+            </View>
+          }
+          renderItem={({ item }) => {
+            const isOpen = item.status === 'open'
+            const pct = Math.min(100, Math.round((item.member_count / Math.max(item.min_members, 1)) * 100))
+            const isJoined = joined.includes(item.id)
+            return (
+              <Pressable style={s.card} onPress={() => openGroup(item)}>
+                <View style={s.cardTop}>
+                  <View style={[s.dot, isOpen ? s.dotOpen : s.dotLobby]} />
+                  <View style={s.cardInfo}>
+                    <View style={s.cardNameRow}>
+                      <Text style={s.cardName} numberOfLines={1}>{item.name}</Text>
+                      <View style={[s.privacyTag, item.is_private ? s.privacyTagPrivate : s.privacyTagPublic]}>
+                        <Text style={s.privacyTagText}>{item.is_private ? '🔒 Private' : '🌐 Public'}</Text>
+                      </View>
+                    </View>
+                    {item.location_name && <Text style={s.cardLocation}>📍 {item.location_name}</Text>}
+                    {item.last_message && <Text style={s.lastMsg} numberOfLines={1}>{item.last_message}</Text>}
                   </View>
-                  {item.location_name && <Text style={s.cardLocation}>📍 {item.location_name}</Text>}
-                  {item.last_message && (
-                    <Text style={s.lastMsg} numberOfLines={1}>{item.last_message}</Text>
-                  )}
-                </View>
-                <View style={s.cardRight}>
-                  {item.last_message_at && (
-                    <Text style={s.lastTime}>{formatLastMsg(item.last_message_at)}</Text>
-                  )}
-                  <Text style={s.memberNum}>{item.member_count}</Text>
-                  <Text style={s.memberLabel}>people</Text>
-                </View>
-              </View>
-
-              {!isOpen && (
-                <View style={s.progressSection}>
-                  <View style={s.progressBg}>
-                    <View style={[s.progressFill, { width: `${pct}%` as any }]} />
+                  <View style={s.cardRight}>
+                    {item.last_message_at && <Text style={s.lastTime}>{formatLastMsg(item.last_message_at)}</Text>}
+                    <Text style={s.memberNum}>{item.member_count}</Text>
+                    <Text style={s.memberLabel}>people</Text>
                   </View>
-                  <Text style={s.progressLabel}>{item.member_count}/{item.min_members} to unlock</Text>
                 </View>
-              )}
-
-              {isOpen && <Text style={s.openLabel}>🟢 Chat is LIVE — tap to join</Text>}
-
-              {!isOpen && !isJoined && (
-                <TouchableOpacity style={s.joinBtn} onPress={() => joinGroup(item.id)}>
-                  <Text style={s.joinBtnText}>Join Lobby</Text>
-                </TouchableOpacity>
-              )}
-              {!isOpen && isJoined && (
-                <Text style={s.inLobby}>✓ In the lobby</Text>
-              )}
-            </Pressable>
-          )
-        }}
-      />
-    </SafeAreaView>
+                {!isOpen && (
+                  <View style={s.progressSection}>
+                    <View style={s.progressBg}>
+                      <View style={[s.progressFill, { width: `${pct}%` as any }]} />
+                    </View>
+                    <Text style={s.progressLabel}>{item.member_count}/{item.min_members} to unlock</Text>
+                  </View>
+                )}
+                {isOpen && <Text style={s.openLabel}>🟢 Chat is LIVE — tap to join</Text>}
+                {!isOpen && !isJoined && (
+                  <TouchableOpacity style={s.joinBtn} onPress={() => joinGroup(item.id)}>
+                    <Text style={s.joinBtnText}>Join Lobby</Text>
+                  </TouchableOpacity>
+                )}
+                {!isOpen && isJoined && <Text style={s.inLobby}>✓ In the lobby</Text>}
+              </Pressable>
+            )
+          }}
+        />
+      )}
+    </View>
   )
 }
 
@@ -194,7 +177,8 @@ const GRAY = '#888780'
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAF8' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   logo: { fontSize: 26, fontWeight: '800', color: GREEN, letterSpacing: -1 },
   createBtn: { backgroundColor: GREEN, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
   createBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
@@ -214,9 +198,12 @@ const s = StyleSheet.create({
   dotOpen: { backgroundColor: GREEN },
   dotLobby: { backgroundColor: PURPLE },
   cardInfo: { flex: 1 },
-  cardNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+  cardNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3, flexWrap: 'wrap' },
   cardName: { fontSize: 15, fontWeight: '600', color: '#2C2C2A', flex: 1 },
-  privateBadge: { fontSize: 13 },
+  privacyTag: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8 },
+  privacyTagPublic: { backgroundColor: '#E1F5EE' },
+  privacyTagPrivate: { backgroundColor: '#EEEDFE' },
+  privacyTagText: { fontSize: 10, fontWeight: '700', color: '#2C2C2A' },
   cardLocation: { fontSize: 12, color: GRAY, marginBottom: 3 },
   lastMsg: { fontSize: 12, color: GRAY, fontStyle: 'italic' },
   cardRight: { alignItems: 'flex-end', gap: 2 },

@@ -1,21 +1,22 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity, SafeAreaView,
+  View, Text, StyleSheet, FlatList, TouchableOpacity,
   StatusBar, Image, RefreshControl, Pressable, TextInput, Alert,
   Modal, ScrollView, Linking, ActivityIndicator, KeyboardAvoidingView, Platform,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as ImagePicker from 'expo-image-picker'
 import * as Location from 'expo-location'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+
 const ANTHROPIC_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_KEY || ''
 
 const DELIVERY_SERVICES = [
-  { name: 'iShip', url: 'https://www.iship.co.il', emoji: '🚚' },
-  { name: 'Shippify', url: 'https://shippify.co.il', emoji: '📦' },
-  { name: 'Lalamove', url: 'https://www.lalamove.com/il', emoji: '🛵' },
-  { name: 'Yango Delivery', url: 'https://delivery.yango.com/il', emoji: '⚡' },
+  { name: 'iShip', url: 'https://www.iship.co.il', emoji: '📦' },
+  { name: 'Shippify', url: 'https://shippify.co.il', emoji: '🚚' },
+  { name: 'Lalamove', url: 'https://www.lalamove.com/il', emoji: '🏍️' },
+  { name: 'Yango Delivery', url: 'https://delivery.yango.com/il', emoji: '🚗' },
 ]
 
 type Listing = {
@@ -45,11 +46,11 @@ type Offer = {
   counter_amount: number | null
   created_at: string
   buyer_profile?: { display_name: string | null; username: string }
-}const insets = useSafeAreaInsets()
+}
 
 export default function MarketplaceScreen() {
-
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const [listings, setListings] = useState<Listing[]>([])
   const [refreshing, setRefreshing] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
@@ -61,8 +62,6 @@ export default function MarketplaceScreen() {
   const [showOfferInput, setShowOfferInput] = useState(false)
   const [counterAmount, setCounterAmount] = useState('')
   const [showCounter, setShowCounter] = useState<string | null>(null)
-
-  // Form
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [price, setPrice] = useState('')
@@ -106,7 +105,7 @@ export default function MarketplaceScreen() {
     finally { setRefreshing(false) }
   }, [])
 
-  const loadOffers = async (listingId: string, sellerId: string) => {
+  const loadOffers = async (listingId: string) => {
     const { data } = await supabase.from('listing_offers').select('*').eq('listing_id', listingId)
     if (!data) return
     const enriched = await Promise.all(data.map(async (o: Offer) => {
@@ -119,35 +118,29 @@ export default function MarketplaceScreen() {
 
   const openListing = async (listing: Listing) => {
     setSelectedListing(listing)
-    await loadOffers(listing.id, listing.user_id)
+    await loadOffers(listing.id)
   }
 
   const sendOffer = async () => {
     if (!offerAmount || !userId || !selectedListing) return
     const amount = parseFloat(offerAmount)
     if (isNaN(amount) || amount <= 0) { Alert.alert('Invalid amount'); return }
-
     await supabase.from('listing_offers').insert({
-      listing_id: selectedListing.id,
-      buyer_id: userId,
-      seller_id: selectedListing.user_id,
-      amount,
-      status: 'pending',
+      listing_id: selectedListing.id, buyer_id: userId,
+      seller_id: selectedListing.user_id, amount, status: 'pending',
     })
-    setOfferAmount('')
-    setShowOfferInput(false)
-    await loadOffers(selectedListing.id, selectedListing.user_id)
-    Alert.alert('✓ Offer sent!', `Your offer of ₪${amount} was sent to the seller.`)
+    setOfferAmount(''); setShowOfferInput(false)
+    await loadOffers(selectedListing.id)
+    Alert.alert('✓ Offer sent!', `Your offer of ₪${amount} was sent.`)
   }
 
   const respondToOffer = async (offerId: string, action: 'accepted' | 'rejected') => {
     await supabase.from('listing_offers').update({ status: action }).eq('id', offerId)
-    if (selectedListing) await loadOffers(selectedListing.id, selectedListing.user_id)
+    if (selectedListing) await loadOffers(selectedListing.id)
     if (action === 'accepted') {
       await supabase.from('listings').update({ status: 'sold' }).eq('id', selectedListing?.id)
-      setSelectedListing(null)
-      loadListings()
-      Alert.alert('🎉 Deal closed!', 'The offer was accepted. Item is now sold.')
+      setSelectedListing(null); loadListings()
+      Alert.alert('🤝 Deal closed!', 'The offer was accepted. Item is now sold.')
     }
   }
 
@@ -156,35 +149,24 @@ export default function MarketplaceScreen() {
     const amount = parseFloat(counterAmount)
     if (isNaN(amount)) return
     await supabase.from('listing_offers').update({ status: 'countered', counter_amount: amount }).eq('id', offerId)
-    setShowCounter(null)
-    setCounterAmount('')
-    if (selectedListing) await loadOffers(selectedListing.id, selectedListing.user_id)
+    setShowCounter(null); setCounterAmount('')
+    if (selectedListing) await loadOffers(selectedListing.id)
   }
 
   const openDMWithSeller = (listing: Listing) => {
     if (!listing.profile) return
     router.push({
       pathname: '/dm',
-      params: {
-        userId: listing.user_id,
-        userName: listing.profile.display_name || listing.profile.username,
-        myMode: 'lit',
-        myAvatar: '🦊',
-        isAgent: '0',
-      }
+      params: { userId: listing.user_id, userName: listing.profile.display_name || listing.profile.username, myMode: 'lit', myAvatar: '🛍️', isAgent: '0' }
     })
   }
 
   const pickImage = async (fromCamera: boolean) => {
-    const perm = fromCamera
-      ? await ImagePicker.requestCameraPermissionsAsync()
-      : await ImagePicker.requestMediaLibraryPermissionsAsync()
+    const perm = fromCamera ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync()
     if (!perm.granted) { Alert.alert('Permission needed'); return }
-
     const result = fromCamera
       ? await ImagePicker.launchCameraAsync({ quality: 0.8, base64: true })
       : await ImagePicker.launchImageLibraryAsync({ quality: 0.8, base64: true })
-
     if (result.canceled || !result.assets?.[0]) return
     const asset = result.assets[0]
     setUploading(true)
@@ -196,7 +178,6 @@ export default function MarketplaceScreen() {
       await supabase.storage.from('chat-media').upload(`listings/${filename}`, formData)
       const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl(`listings/${filename}`)
       setMediaUrl(publicUrl)
-
       if (asset.base64) {
         setAnalyzing(true)
         try {
@@ -204,17 +185,16 @@ export default function MarketplaceScreen() {
             method: 'POST',
             headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
             body: JSON.stringify({
-              model: 'claude-haiku-4-5-20251001',
-              max_tokens: 200,
+              model: 'claude-haiku-4-5-20251001', max_tokens: 200,
               messages: [{ role: 'user', content: [
                 { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: asset.base64 } },
-                { type: 'text', text: 'Look at this item. What is it, what condition is it in, and what price range (₪) would you suggest for selling it second-hand in Israel? Be specific. Reply in Hebrew.' }
+                { type: 'text', text: 'What is this item, what condition is it in, and what price (₪) would you suggest for selling it second-hand? Reply in Hebrew.' }
               ]}]
             }),
           })
           const data = await res.json()
           const suggestion = data.content?.[0]?.text?.trim()
-          if (suggestion) Alert.alert('🤖 הצעת מחיר', suggestion)
+          if (suggestion) Alert.alert('🤖 AI Price Suggestion', suggestion)
         } catch {}
         finally { setAnalyzing(false) }
       }
@@ -237,16 +217,11 @@ export default function MarketplaceScreen() {
     setPosting(true)
     try {
       await supabase.from('listings').insert({
-        user_id: userId,
-        title: title.trim(),
-        description: description.trim() || null,
-        price: parseFloat(price),
-        currency: 'ILS',
-        media_url: mediaUrl,
+        user_id: userId, title: title.trim(), description: description.trim() || null,
+        price: parseFloat(price), currency: 'ILS', media_url: mediaUrl,
         location_name: locationName || null,
         location: coords ? `POINT(${coords.lon} ${coords.lat})` : null,
-        payment_bit: paymentBit.trim() || null,
-        payment_paybox: paymentPaybox.trim() || null,
+        payment_bit: paymentBit.trim() || null, payment_paybox: paymentPaybox.trim() || null,
         payment_paypal: paymentPaypal.trim() || null,
       })
       setTitle(''); setDescription(''); setPrice(''); setMediaUrl(null)
@@ -260,7 +235,7 @@ export default function MarketplaceScreen() {
   const isOwner = selectedListing?.user_id === userId
 
   return (
-    <View style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <Text style={s.title}>Marketplace 🛍️</Text>
@@ -275,7 +250,7 @@ export default function MarketplaceScreen() {
         numColumns={2}
         columnWrapperStyle={s.row}
         contentContainerStyle={s.list}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadListings() }} tintColor="#1D9E75" />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadListings() }} tintColor={GREEN} />}
         ListEmptyComponent={
           <View style={s.emptyState}>
             <Text style={s.emptyEmoji}>🛍️</Text>
@@ -289,7 +264,7 @@ export default function MarketplaceScreen() {
           <Pressable style={s.card} onPress={() => openListing(item)}>
             {item.media_url
               ? <Image source={{ uri: item.media_url }} style={s.cardImage} resizeMode="cover" />
-              : <View style={s.cardImagePlaceholder}><Text style={{ fontSize: 36 }}>📦</Text></View>
+              : <View style={s.cardImagePlaceholder}><Text style={{ fontSize: 36 }}>🛒</Text></View>
             }
             <View style={s.cardBody}>
               <Text style={s.cardTitle} numberOfLines={2}>{item.title}</Text>
@@ -303,7 +278,7 @@ export default function MarketplaceScreen() {
       {/* Detail Modal */}
       <Modal visible={!!selectedListing} animationType="slide" onRequestClose={() => setSelectedListing(null)}>
         {selectedListing && (
-          <SafeAreaView style={s.detailContainer}>
+          <View style={[s.detailContainer, { paddingTop: insets.top }]}>
             <View style={s.detailHeader}>
               <TouchableOpacity onPress={() => setSelectedListing(null)}>
                 <Text style={s.detailBack}>‹ Back</Text>
@@ -320,7 +295,7 @@ export default function MarketplaceScreen() {
             <ScrollView>
               {selectedListing.media_url
                 ? <Image source={{ uri: selectedListing.media_url }} style={s.detailImage} resizeMode="cover" />
-                : <View style={s.detailImagePlaceholder}><Text style={{ fontSize: 64 }}>📦</Text></View>
+                : <View style={s.detailImagePlaceholder}><Text style={{ fontSize: 64 }}>🛒</Text></View>
               }
               <View style={s.detailBody}>
                 <Text style={s.detailTitle}>{selectedListing.title}</Text>
@@ -328,7 +303,6 @@ export default function MarketplaceScreen() {
                 {selectedListing.location_name && <Text style={s.detailLocation}>📍 {selectedListing.location_name}</Text>}
                 {selectedListing.description && <Text style={s.detailDesc}>{selectedListing.description}</Text>}
 
-                {/* Contact seller */}
                 {!isOwner && (
                   <>
                     <Text style={s.sectionTitle}>CONTACT SELLER</Text>
@@ -346,7 +320,7 @@ export default function MarketplaceScreen() {
                         <View key={offer.id} style={s.offerCard}>
                           <Text style={s.offerText}>Your offer: {formatPrice(offer.amount)}</Text>
                           {offer.status === 'pending' && <Text style={s.offerStatus}>⏳ Waiting for seller</Text>}
-                          {offer.status === 'accepted' && <Text style={[s.offerStatus, { color: '#1D9E75' }]}>✓ Accepted!</Text>}
+                          {offer.status === 'accepted' && <Text style={[s.offerStatus, { color: GREEN }]}>✓ Accepted!</Text>}
                           {offer.status === 'rejected' && <Text style={[s.offerStatus, { color: '#E24B4A' }]}>✗ Rejected</Text>}
                           {offer.status === 'countered' && offer.counter_amount && (
                             <>
@@ -378,7 +352,6 @@ export default function MarketplaceScreen() {
                   </>
                 )}
 
-                {/* Seller sees offers */}
                 {isOwner && offers.length > 0 && (
                   <>
                     <Text style={s.sectionTitle}>OFFERS RECEIVED ({offers.length})</Text>
@@ -409,70 +382,65 @@ export default function MarketplaceScreen() {
                             )}
                           </>
                         )}
-                        {offer.status === 'accepted' && <Text style={[s.offerStatus, { color: '#1D9E75' }]}>✓ Accepted</Text>}
+                        {offer.status === 'accepted' && <Text style={[s.offerStatus, { color: GREEN }]}>✓ Accepted</Text>}
                         {offer.status === 'countered' && <Text style={[s.offerStatus, { color: '#FF6B35' }]}>Counter sent: {formatPrice(offer.counter_amount || 0)}</Text>}
                       </View>
                     ))}
                   </>
                 )}
 
-                {/* Payment */}
                 <Text style={s.sectionTitle}>PAY WITH</Text>
                 <View style={s.paymentBtns}>
                   {selectedListing.payment_bit && (
                     <TouchableOpacity style={[s.payBtn, { backgroundColor: '#E8F4FD' }]} onPress={() => Linking.openURL(`https://www.bitpay.co.il/app/payment-page/${selectedListing.payment_bit}`)}>
-                      <Text style={s.payBtnEmoji}>💙</Text><Text style={s.payBtnText}>Bit</Text>
+                      <Text style={s.payBtnEmoji}>💸</Text><Text style={s.payBtnText}>Bit</Text>
                     </TouchableOpacity>
                   )}
                   {selectedListing.payment_paybox && (
                     <TouchableOpacity style={[s.payBtn, { backgroundColor: '#FFF0E6' }]} onPress={() => Linking.openURL(`https://payboxapp.page.link/pay/${selectedListing.payment_paybox}`)}>
-                      <Text style={s.payBtnEmoji}>🟠</Text><Text style={s.payBtnText}>Paybox</Text>
+                      <Text style={s.payBtnEmoji}>📱</Text><Text style={s.payBtnText}>Paybox</Text>
                     </TouchableOpacity>
                   )}
                   {selectedListing.payment_paypal && (
                     <TouchableOpacity style={[s.payBtn, { backgroundColor: '#E6F0FA' }]} onPress={() => Linking.openURL(`https://paypal.me/${selectedListing.payment_paypal}`)}>
-                      <Text style={s.payBtnEmoji}>💛</Text><Text style={s.payBtnText}>PayPal</Text>
+                      <Text style={s.payBtnEmoji}>💳</Text><Text style={s.payBtnText}>PayPal</Text>
                     </TouchableOpacity>
                   )}
-                  <TouchableOpacity style={[s.payBtn, { backgroundColor: '#E8F8F0' }]} onPress={() => Linking.openURL('https://pay.google.com')}>
-                    <Text style={s.payBtnEmoji}>🟢</Text><Text style={s.payBtnText}>Google Pay</Text>
-                  </TouchableOpacity>
                 </View>
 
-                {/* Delivery */}
                 <Text style={s.sectionTitle}>DELIVERY SERVICES</Text>
                 {DELIVERY_SERVICES.map(d => (
                   <TouchableOpacity key={d.name} style={s.deliveryBtn} onPress={() => Linking.openURL(d.url)}>
                     <Text style={s.deliveryEmoji}>{d.emoji}</Text>
-                    <View>
+                    <View style={{ flex: 1 }}>
                       <Text style={s.deliveryName}>{d.name}</Text>
-                      <Text style={s.deliverySub}>Tap to open website</Text>
+                      <Text style={s.deliverySub}>Tap to open</Text>
                     </View>
                     <Text style={s.deliveryArrow}>›</Text>
                   </TouchableOpacity>
                 ))}
               </View>
             </ScrollView>
-          </SafeAreaView>
+          </View>
         )}
       </Modal>
 
       {/* Add Modal */}
       <Modal visible={showAdd} animationType="slide" onRequestClose={() => setShowAdd(false)}>
-        <SafeAreaView style={s.addContainer}>
+        <View style={[s.addContainer, { paddingTop: insets.top }]}>
           <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
             <View style={s.addHeader}>
               <TouchableOpacity onPress={() => setShowAdd(false)}><Text style={s.addCancel}>Cancel</Text></TouchableOpacity>
               <Text style={s.addTitle}>List an Item</Text>
               <TouchableOpacity onPress={createListing} disabled={posting}>
-                {posting ? <ActivityIndicator color="#1D9E75" /> : <Text style={s.addPost}>Post</Text>}
+                {posting ? <ActivityIndicator color={GREEN} /> : <Text style={s.addPost}>Post</Text>}
               </TouchableOpacity>
             </View>
             <ScrollView contentContainerStyle={s.addForm} keyboardShouldPersistTaps="handled">
               <TouchableOpacity style={s.imagePickerBtn} onPress={showImageOptions} disabled={uploading || analyzing}>
                 {uploading || analyzing ? (
                   <View style={s.imagePickerPlaceholder}>
-                    <ActivityIndicator color="#1D9E75" size="large" />
+                    <ActivityIndicator color={GREEN} size="large" />
                     <Text style={s.imagePickerText}>{analyzing ? '🤖 Analyzing price...' : 'Uploading...'}</Text>
                   </View>
                 ) : mediaUrl ? (
@@ -498,16 +466,16 @@ export default function MarketplaceScreen() {
               <Text style={s.formLabel}>LOCATION</Text>
               <TextInput style={s.formInput} value={locationName} onChangeText={setLocationName} placeholder="Your city / neighborhood" placeholderTextColor="#B4B2A9" />
 
-              <Text style={s.formLabel}>PAYMENT HANDLES (optional)</Text>
-              <TextInput style={s.formInput} value={paymentBit} onChangeText={setPaymentBit} placeholder="💙 Bit phone number" placeholderTextColor="#B4B2A9" keyboardType="phone-pad" />
-              <TextInput style={[s.formInput, { marginTop: 8 }]} value={paymentPaybox} onChangeText={setPaymentPaybox} placeholder="🟠 Paybox phone number" placeholderTextColor="#B4B2A9" keyboardType="phone-pad" />
-              <TextInput style={[s.formInput, { marginTop: 8 }]} value={paymentPaypal} onChangeText={setPaymentPaypal} placeholder="💛 PayPal username" placeholderTextColor="#B4B2A9" autoCapitalize="none" />
-              <View style={{ height: 40 }} />
+              <Text style={s.formLabel}>PAYMENT (optional)</Text>
+              <TextInput style={s.formInput} value={paymentBit} onChangeText={setPaymentBit} placeholder="💸 Bit phone number" placeholderTextColor="#B4B2A9" keyboardType="phone-pad" />
+              <TextInput style={[s.formInput, { marginTop: 8 }]} value={paymentPaybox} onChangeText={setPaymentPaybox} placeholder="📱 Paybox phone number" placeholderTextColor="#B4B2A9" keyboardType="phone-pad" />
+              <TextInput style={[s.formInput, { marginTop: 8 }]} value={paymentPaypal} onChangeText={setPaymentPaypal} placeholder="💳 PayPal username" placeholderTextColor="#B4B2A9" autoCapitalize="none" />
+              <View style={{ height: 60 }} />
             </ScrollView>
           </KeyboardAvoidingView>
-        </SafeAreaView>
+        </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   )
 }
 
@@ -516,7 +484,7 @@ const GRAY = '#888780'
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAF8' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   title: { fontSize: 20, fontWeight: '700', color: '#2C2C2A' },
   addBtn: { backgroundColor: GREEN, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20 },
   addBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
@@ -572,7 +540,7 @@ const s = StyleSheet.create({
   deliveryEmoji: { fontSize: 24 },
   deliveryName: { fontSize: 14, fontWeight: '600', color: '#2C2C2A' },
   deliverySub: { fontSize: 12, color: GRAY },
-  deliveryArrow: { marginLeft: 'auto', fontSize: 20, color: GRAY },
+  deliveryArrow: { fontSize: 20, color: GRAY },
   addContainer: { flex: 1, backgroundColor: '#fff' },
   addHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   addCancel: { fontSize: 16, color: GRAY },

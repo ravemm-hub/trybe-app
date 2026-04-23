@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  View, Text, StyleSheet, TouchableOpacity, SafeAreaView,
+  View, Text, StyleSheet, TouchableOpacity,
   StatusBar, ActivityIndicator, Alert, ScrollView, TextInput, Modal, FlatList,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { supabase } from '../lib/supabase'
 
@@ -25,6 +26,7 @@ type JoinRequest = {
 export default function LobbyScreen() {
   const { id, name } = useLocalSearchParams<{ id: string; name: string }>()
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const [group, setGroup] = useState<any>(null)
   const [members, setMembers] = useState<Member[]>([])
   const [userId, setUserId] = useState<string | null>(null)
@@ -42,21 +44,15 @@ export default function LobbyScreen() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     setUserId(user.id)
-
     const { data: groupData } = await supabase.from('groups').select('*').eq('id', id).single()
     if (groupData) setGroup(groupData)
-
-    const { data: membersData } = await supabase
-      .from('group_members').select('*, profile:profiles(display_name, username, avatar_char)').eq('group_id', id)
+    const { data: membersData } = await supabase.from('group_members').select('*, profile:profiles(display_name, username, avatar_char)').eq('group_id', id)
     if (membersData) {
       setMembers(membersData as Member[])
       const me = membersData.find((m: Member) => m.user_id === user.id)
       if (me) { setIsMember(true); if (me.role === 'admin') setIsAdmin(true) }
     }
-
-    // Load join requests (admin only)
-    const { data: requests } = await supabase
-      .from('join_requests').select('*').eq('group_id', id)
+    const { data: requests } = await supabase.from('join_requests').select('*').eq('group_id', id)
     if (requests) {
       const enriched = await Promise.all(requests.map(async (r: JoinRequest) => {
         const { data: profile } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', r.user_id).single()
@@ -66,7 +62,6 @@ export default function LobbyScreen() {
       const myReq = enriched.find((r: JoinRequest) => r.user_id === user.id)
       if (myReq) setMyRequest(myReq)
     }
-
     setLoading(false)
   }, [id])
 
@@ -74,13 +69,12 @@ export default function LobbyScreen() {
 
   useEffect(() => {
     const channel = supabase.channel(`lobby:${id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'groups', filter: `id=eq.${id}` },
-        (payload) => {
-          setGroup(payload.new)
-          if (payload.new.status === 'open') {
-            router.replace({ pathname: '/chat', params: { id, name: payload.new.name, members: payload.new.member_count.toString() } })
-          }
-        })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'groups', filter: `id=eq.${id}` }, (payload) => {
+        setGroup(payload.new)
+        if (payload.new.status === 'open') {
+          router.replace({ pathname: '/chat', params: { id, name: payload.new.name, members: payload.new.member_count.toString() } })
+        }
+      })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'group_members', filter: `group_id=eq.${id}` }, () => load())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'join_requests', filter: `group_id=eq.${id}` }, () => load())
       .subscribe()
@@ -99,11 +93,8 @@ export default function LobbyScreen() {
   const sendJoinRequest = async () => {
     if (!userId) return
     setJoining(true)
-    await supabase.from('join_requests').insert({
-      group_id: id, user_id: userId, answers: answers.trim() || null
-    })
-    setShowRequestForm(false)
-    setAnswers('')
+    await supabase.from('join_requests').insert({ group_id: id, user_id: userId, answers: answers.trim() || null })
+    setShowRequestForm(false); setAnswers('')
     await load()
     setJoining(false)
   }
@@ -120,18 +111,29 @@ export default function LobbyScreen() {
     await load()
   }
 
+  const togglePrivacy = async () => {
+    const newValue = !group?.is_private
+    await supabase.from('groups').update({ is_private: newValue }).eq('id', id)
+    setGroup((prev: any) => ({ ...prev, is_private: newValue }))
+    Alert.alert(newValue ? '🔒 Now Private' : '🌐 Now Public', newValue ? 'New members need approval.' : 'Anyone can join instantly.')
+  }
+
   const openChat = () => {
     router.replace({ pathname: '/chat', params: { id, name: group?.name || name, members: group?.member_count?.toString() || '0' } })
   }
 
-  if (loading) return <SafeAreaView style={s.container}><ActivityIndicator color={GREEN} style={{ marginTop: 60 }} /></SafeAreaView>
+  if (loading) return (
+    <View style={[s.container, { paddingTop: insets.top }]}>
+      <ActivityIndicator color={GREEN} style={{ marginTop: 60 }} />
+    </View>
+  )
 
   const isPrivate = group?.is_private
   const pct = Math.min(100, Math.round(((group?.member_count || 0) / (group?.min_members || 20)) * 100))
   const pendingRequests = joinRequests.filter(r => r.status === 'pending')
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()}>
@@ -149,9 +151,7 @@ export default function LobbyScreen() {
         <View style={s.statusCard}>
           <Text style={s.statusEmoji}>{isPrivate ? '🔒' : '🌐'}</Text>
           <Text style={s.statusTitle}>{isPrivate ? 'Private Trybe' : 'Public Trybe'}</Text>
-          <Text style={s.statusSub}>
-            {group?.status === 'open' ? 'Chat is LIVE! 🟢' : `Waiting for ${group?.min_members} people to unlock`}
-          </Text>
+          <Text style={s.statusSub}>{group?.status === 'open' ? 'Chat is LIVE! 🟢' : `Waiting for ${group?.min_members} people to unlock`}</Text>
         </View>
 
         {group?.status === 'open' ? (
@@ -167,7 +167,12 @@ export default function LobbyScreen() {
           </View>
         )}
 
-        {/* Join section */}
+        {isAdmin && (
+          <TouchableOpacity style={s.privacyToggleBtn} onPress={togglePrivacy}>
+            <Text style={s.privacyToggleBtnText}>{isPrivate ? '🔒 Private — tap to make Public' : '🌐 Public — tap to make Private'}</Text>
+          </TouchableOpacity>
+        )}
+
         {!isMember && !myRequest && (
           <View style={s.joinSection}>
             {isPrivate ? (
@@ -186,23 +191,20 @@ export default function LobbyScreen() {
           </View>
         )}
 
-        {/* My request status */}
         {myRequest && !isMember && (
           <View style={s.requestStatus}>
             {myRequest.status === 'pending' && <Text style={s.requestStatusText}>⏳ Your request is pending approval</Text>}
-            {myRequest.status === 'approved' && <Text style={[s.requestStatusText, { color: GREEN }]}>✓ Approved! You can now join</Text>}
+            {myRequest.status === 'approved' && <Text style={[s.requestStatusText, { color: GREEN }]}>✓ Approved!</Text>}
             {myRequest.status === 'rejected' && <Text style={[s.requestStatusText, { color: '#E24B4A' }]}>✗ Request was declined</Text>}
           </View>
         )}
 
-        {/* Admin: pending requests */}
         {isAdmin && pendingRequests.length > 0 && (
           <TouchableOpacity style={s.adminAlert} onPress={() => setShowRequests(true)}>
-            <Text style={s.adminAlertText}>📨 {pendingRequests.length} pending join request{pendingRequests.length > 1 ? 's' : ''} — tap to review</Text>
+            <Text style={s.adminAlertText}>📨 {pendingRequests.length} pending request{pendingRequests.length > 1 ? 's' : ''} — tap to review</Text>
           </TouchableOpacity>
         )}
 
-        {/* Members list */}
         <Text style={s.membersTitle}>In the lobby ({members.length})</Text>
         {members.map(m => (
           <View key={m.user_id} style={s.memberRow}>
@@ -215,13 +217,10 @@ export default function LobbyScreen() {
         ))}
       </ScrollView>
 
-      {/* Join Request Form */}
       <Modal visible={showRequestForm} animationType="slide" onRequestClose={() => setShowRequestForm(false)}>
-        <SafeAreaView style={s.modalContainer}>
+        <View style={[s.modalContainer, { paddingTop: insets.top }]}>
           <View style={s.modalHeader}>
-            <TouchableOpacity onPress={() => setShowRequestForm(false)}>
-              <Text style={s.modalCancel}>Cancel</Text>
-            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowRequestForm(false)}><Text style={s.modalCancel}>Cancel</Text></TouchableOpacity>
             <Text style={s.modalTitle}>Join Request</Text>
             <TouchableOpacity onPress={sendJoinRequest} disabled={joining}>
               {joining ? <ActivityIndicator color={GREEN} /> : <Text style={s.modalSend}>Send</Text>}
@@ -230,27 +229,15 @@ export default function LobbyScreen() {
           <View style={s.modalBody}>
             <Text style={s.modalLabel}>WHY DO YOU WANT TO JOIN?</Text>
             <Text style={s.modalSub}>Introduce yourself briefly (optional)</Text>
-            <TextInput
-              style={s.modalInput}
-              value={answers}
-              onChangeText={setAnswers}
-              placeholder="e.g. I live in this neighborhood and want to connect..."
-              placeholderTextColor="#B4B2A9"
-              multiline
-              maxLength={200}
-              autoFocus
-            />
+            <TextInput style={s.modalInput} value={answers} onChangeText={setAnswers} placeholder="e.g. I live in this neighborhood..." placeholderTextColor="#B4B2A9" multiline maxLength={200} autoFocus />
           </View>
-        </SafeAreaView>
+        </View>
       </Modal>
 
-      {/* Admin: Review Requests */}
       <Modal visible={showRequests} animationType="slide" onRequestClose={() => setShowRequests(false)}>
-        <SafeAreaView style={s.modalContainer}>
+        <View style={[s.modalContainer, { paddingTop: insets.top }]}>
           <View style={s.modalHeader}>
-            <TouchableOpacity onPress={() => setShowRequests(false)}>
-              <Text style={s.modalCancel}>Close</Text>
-            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowRequests(false)}><Text style={s.modalCancel}>Close</Text></TouchableOpacity>
             <Text style={s.modalTitle}>Join Requests</Text>
             <View style={{ width: 60 }} />
           </View>
@@ -262,9 +249,7 @@ export default function LobbyScreen() {
             renderItem={({ item }) => (
               <View style={s.requestCard}>
                 <View style={s.requestHeader}>
-                  <View style={s.memberAvatar}>
-                    <Text style={s.memberAvatarText}>{item.profile?.avatar_char || item.profile?.display_name?.[0] || '?'}</Text>
-                  </View>
+                  <View style={s.memberAvatar}><Text style={s.memberAvatarText}>{item.profile?.avatar_char || item.profile?.display_name?.[0] || '?'}</Text></View>
                   <Text style={s.memberName}>{item.profile?.display_name || item.profile?.username || 'Unknown'}</Text>
                 </View>
                 {item.answers && <Text style={s.requestAnswers}>"{item.answers}"</Text>}
@@ -279,9 +264,9 @@ export default function LobbyScreen() {
               </View>
             )}
           />
-        </SafeAreaView>
+        </View>
       </Modal>
-    </SafeAreaView>
+    </View>
   )
 }
 
@@ -307,6 +292,8 @@ const s = StyleSheet.create({
   progressBg: { height: 8, backgroundColor: '#F1EFE8', borderRadius: 4, marginBottom: 8 },
   progressFill: { height: 8, backgroundColor: PURPLE, borderRadius: 4, minWidth: 8 },
   progressText: { fontSize: 13, color: PURPLE, fontWeight: '600', textAlign: 'center' },
+  privacyToggleBtn: { backgroundColor: '#F1EFE8', borderRadius: 12, padding: 14, alignItems: 'center', borderWidth: 1, borderColor: '#E0DED8' },
+  privacyToggleBtnText: { fontSize: 14, fontWeight: '600', color: '#2C2C2A' },
   joinSection: { backgroundColor: '#fff', borderRadius: 14, padding: 16, alignItems: 'center', borderWidth: 0.5, borderColor: '#E0DED8', gap: 8 },
   joinTitle: { fontSize: 16, fontWeight: '700', color: '#2C2C2A' },
   joinSub: { fontSize: 13, color: GRAY, textAlign: 'center' },

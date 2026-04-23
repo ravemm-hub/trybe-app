@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  SafeAreaView, ScrollView, Alert, ActivityIndicator,
-  KeyboardAvoidingView, Platform,
+  ScrollView, Alert, ActivityIndicator,
+  KeyboardAvoidingView, Platform, StatusBar,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import DateTimePicker from '@react-native-community/datetimepicker'
@@ -19,6 +20,7 @@ const RADIUS_OPTIONS = [
 
 export default function CreateScreen() {
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const [groupType, setGroupType] = useState<'live' | 'event'>('live')
   const [name, setName] = useState('')
   const [locationName, setLocationName] = useState('')
@@ -60,51 +62,37 @@ export default function CreateScreen() {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error('Not signed in')
-
       const lat = coords?.lat ?? 32.0853
       const lon = coords?.lon ?? 34.7818
-
       const { data, error } = await supabase.from('groups').insert({
-        name: name.trim(),
-        location_name: locationName.trim() || null,
-        location: `POINT(${lon} ${lat})`,
-        radius_meters: radius,
+        name: name.trim(), location_name: locationName.trim() || null,
+        location: `POINT(${lon} ${lat})`, radius_meters: radius,
         min_members: groupType === 'event' ? 0 : minMembers,
-        member_count: 1,
-        status: groupType === 'event' ? 'open' : 'lobby',
-        type: 'manual',
-        group_type: groupType,
-        is_private: isPrivate,
+        member_count: 1, status: groupType === 'event' ? 'open' : 'lobby',
+        type: 'manual', group_type: groupType, is_private: isPrivate,
         event_date: groupType === 'event' ? eventDate.toISOString() : null,
         event_description: groupType === 'event' ? description.trim() || null : null,
         created_by: user.id,
       }).select().single()
-
       if (error) throw error
-
       await supabase.from('group_members').insert({ group_id: data.id, user_id: user.id, role: 'admin' })
       await supabase.from('group_agents').insert({ group_id: data.id, enabled: true })
-
       const systemMsg = groupType === 'event'
-        ? `"${data.name}" event created 🎉 on ${eventDate.toLocaleDateString('he-IL')} — invite your people!`
+        ? `"${data.name}" event created 🎉 — invite your people!`
         : `"${data.name}" trybe created${isPrivate ? ' 🔒' : ' 🌐'} — waiting for ${minMembers} people`
-
       await supabase.from('messages').insert({ group_id: data.id, type: 'system', content: systemMsg })
-
       if (groupType === 'event') {
         router.replace({ pathname: '/chat', params: { id: data.id, name: data.name, members: '1' } })
       } else {
         router.replace({ pathname: '/lobby', params: { id: data.id, name: data.name } })
       }
-    } catch (err: any) {
-      Alert.alert('Error', err.message)
-    } finally {
-      setLoading(false)
-    }
+    } catch (err: any) { Alert.alert('Error', err.message) }
+    finally { setLoading(false) }
   }
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
+      <StatusBar barStyle="dark-content" />
       <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={s.header}>
           <TouchableOpacity onPress={() => router.back()}>
@@ -115,22 +103,14 @@ export default function CreateScreen() {
         </View>
 
         <ScrollView contentContainerStyle={s.form} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-
-          {/* Type selector */}
           <Text style={s.label}>TYPE</Text>
           <View style={s.typeRow}>
-            <TouchableOpacity
-              style={[s.typeBtn, groupType === 'live' && s.typeBtnActive]}
-              onPress={() => setGroupType('live')}
-            >
+            <TouchableOpacity style={[s.typeBtn, groupType === 'live' && s.typeBtnActive]} onPress={() => setGroupType('live')}>
               <Text style={s.typeEmoji}>⚡️</Text>
               <Text style={[s.typeBtnText, groupType === 'live' && s.typeBtnTextActive]}>Live Trybe</Text>
               <Text style={s.typeBtnSub}>Right now, nearby</Text>
             </TouchableOpacity>
-            <TouchableOpacity
-              style={[s.typeBtn, groupType === 'event' && s.typeBtnActiveEvent]}
-              onPress={() => setGroupType('event')}
-            >
+            <TouchableOpacity style={[s.typeBtn, groupType === 'event' && s.typeBtnActiveEvent]} onPress={() => setGroupType('event')}>
               <Text style={s.typeEmoji}>📅</Text>
               <Text style={[s.typeBtnText, groupType === 'event' && s.typeBtnTextActive]}>Event Trybe</Text>
               <Text style={s.typeBtnSub}>Future date</Text>
@@ -154,28 +134,13 @@ export default function CreateScreen() {
             <>
               <Text style={s.label}>EVENT DATE & TIME</Text>
               <TouchableOpacity style={s.dateBtn} onPress={() => setShowDatePicker(true)}>
-                <Text style={s.dateBtnText}>📅 {eventDate.toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} at {eventDate.toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })}</Text>
+                <Text style={s.dateBtnText}>📅 {eventDate.toLocaleDateString('en', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} at {eventDate.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}</Text>
               </TouchableOpacity>
               {showDatePicker && (
-                <DateTimePicker
-                  value={eventDate}
-                  mode="datetime"
-                  display="default"
-                  minimumDate={new Date()}
-                  onChange={(e, date) => { setShowDatePicker(false); if (date) setEventDate(date) }}
-                />
+                <DateTimePicker value={eventDate} mode="datetime" display="default" minimumDate={new Date()} onChange={(e, date) => { setShowDatePicker(false); if (date) setEventDate(date) }} />
               )}
-
               <Text style={s.label}>DESCRIPTION</Text>
-              <TextInput
-                style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]}
-                value={description}
-                onChangeText={setDescription}
-                placeholder="Tell people what this event is about..."
-                placeholderTextColor="#B4B2A9"
-                multiline
-                maxLength={300}
-              />
+              <TextInput style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]} value={description} onChangeText={setDescription} placeholder="Tell people what this event is about..." placeholderTextColor="#B4B2A9" multiline maxLength={300} />
             </>
           )}
 
@@ -203,7 +168,6 @@ export default function CreateScreen() {
                   </TouchableOpacity>
                 ))}
               </View>
-
               <Text style={s.label}>MIN CREW SIZE</Text>
               <View style={s.optionRow}>
                 {MIN_OPTIONS.map(n => (
@@ -215,21 +179,14 @@ export default function CreateScreen() {
             </>
           )}
 
-          <TouchableOpacity
-            style={[s.submitBtn, (loading || locLoading) && s.submitBtnDisabled]}
-            onPress={handleCreate}
-            disabled={loading || locLoading}
-          >
-            {loading
-              ? <ActivityIndicator color="#fff" />
-              : <Text style={s.submitBtnText}>{groupType === 'event' ? '📅 Create Event Trybe' : '⚡ Drop the Trybe'}</Text>
-            }
+          <TouchableOpacity style={[s.submitBtn, (loading || locLoading) && s.submitBtnDisabled]} onPress={handleCreate} disabled={loading || locLoading}>
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>{groupType === 'event' ? '📅 Create Event Trybe' : '⚡ Drop the Trybe'}</Text>}
           </TouchableOpacity>
 
           <View style={{ height: 60 }} />
         </ScrollView>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   )
 }
 

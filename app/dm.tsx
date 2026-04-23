@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, SafeAreaView, StatusBar, ActivityIndicator,
+  KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { supabase } from '../lib/supabase'
 
@@ -21,6 +22,7 @@ const ANTHROPIC_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_KEY || ''
 type DmMessage = {
   id: string
   sender_id: string
+  receiver_id?: string
   content: string
   created_at: string
   sender_mode: string
@@ -31,6 +33,7 @@ export default function DMScreen() {
     userId: string; userName: string; myMode: string; myAvatar: string; isAgent: string
   }>()
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const [messages, setMessages] = useState<DmMessage[]>([])
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(true)
@@ -43,14 +46,10 @@ export default function DMScreen() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     setMyId(user.id)
-
     const { data } = await supabase
-      .from('dm_messages')
-      .select('*')
+      .from('dm_messages').select('*')
       .or(`and(sender_id.eq.${user.id},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${user.id})`)
-      .order('created_at', { ascending: true })
-      .limit(100)
-
+      .order('created_at', { ascending: true }).limit(100)
     if (data) setMessages(data as DmMessage[])
     setLoading(false)
     setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 100)
@@ -60,17 +59,15 @@ export default function DMScreen() {
 
   useEffect(() => {
     if (!myId) return
-    const channel = supabase
-      .channel(`dm:${myId}:${otherUserId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' },
-        (payload) => {
-          const msg = payload.new as DmMessage
-          if ((msg.sender_id === myId && msg.receiver_id === otherUserId) ||
-              (msg.sender_id === otherUserId && msg.receiver_id === myId)) {
-            setMessages(prev => [...prev, msg])
-            setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
-          }
-        })
+    const channel = supabase.channel(`dm:${myId}:${otherUserId}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, (payload) => {
+        const msg = payload.new as DmMessage
+        if ((msg.sender_id === myId && msg.receiver_id === otherUserId) ||
+            (msg.sender_id === otherUserId && msg.receiver_id === myId)) {
+          setMessages(prev => [...prev, msg])
+          setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
+        }
+      })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [myId, otherUserId])
@@ -81,26 +78,17 @@ export default function DMScreen() {
       await new Promise(r => setTimeout(r, 1500 + Math.random() * 2000))
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
-        headers: {
-          'x-api-key': ANTHROPIC_KEY,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json',
-        },
+        headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 150,
-          messages: [{ role: 'user', content: `You are ${userName}, a friendly AI agent in the Trybe social app. Someone sent you: "${userMessage}". Reply naturally and conversationally in the same language they used (Hebrew or English). Max 2 sentences. Be warm and engaging.` }],
+          model: 'claude-haiku-4-5-20251001', max_tokens: 150,
+          messages: [{ role: 'user', content: `You are ${userName}, a friendly AI agent in the Tryber social app. Someone sent you: "${userMessage}". Reply naturally in the same language (Hebrew or English). Max 2 sentences. Be warm and engaging.` }],
         }),
       })
       const data = await res.json()
       const reply = data.content?.[0]?.text?.trim()
       if (reply && myId) {
         await supabase.from('dm_messages').insert({
-          sender_id: otherUserId,
-          receiver_id: myId,
-          content: reply,
-          sender_mode: 'lit',
-          receiver_mode: myMode || 'lit',
+          sender_id: otherUserId, receiver_id: myId, content: reply, sender_mode: 'lit', receiver_mode: myMode || 'lit',
         })
       }
     } catch (e) { console.log(e) }
@@ -111,57 +99,40 @@ export default function DMScreen() {
     if (!draft.trim() || !myId) return
     const text = draft.trim()
     setDraft('')
-
     await supabase.from('dm_messages').insert({
-      sender_id: myId,
-      receiver_id: otherUserId,
-      content: text,
-      sender_mode: myMode || 'lit',
-      receiver_mode: 'lit',
+      sender_id: myId, receiver_id: otherUserId, content: text, sender_mode: myMode || 'lit', receiver_mode: 'lit',
     })
-
-    if (talkingToAgent) {
-      getAgentReply(text)
-    }
+    if (talkingToAgent) getAgentReply(text)
   }
 
   const formatTime = (ts: string) => new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
-
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <Text style={s.backText}>‹</Text>
         </TouchableOpacity>
-        <View style={s.headerAvatar}>
+        <View style={[s.headerAvatar, talkingToAgent && s.headerAvatarAgent]}>
           <Text style={s.headerAvatarText}>{userName?.[0] || '?'}</Text>
         </View>
         <View style={s.headerInfo}>
           <View style={s.headerNameRow}>
             <Text style={s.headerName} numberOfLines={1}>{userName}</Text>
-            {talkingToAgent && (
-              <View style={s.agentBadge}>
-                <Text style={s.agentBadgeText}>AI Agent</Text>
-              </View>
-            )}
+            {talkingToAgent && <View style={s.agentBadge}><Text style={s.agentBadgeText}>AI Agent</Text></View>}
           </View>
-          {talkingToAgent && (
-            <Text style={s.headerSub}>Powered by Claude · Always available</Text>
-          )}
+          {talkingToAgent && <Text style={s.headerSub}>Powered by Claude · Always available</Text>}
         </View>
       </View>
 
       {talkingToAgent && (
         <View style={s.agentBanner}>
-          <Text style={s.agentBannerText}>
-            🤖 You're chatting with an AI agent. It knows about Trybe and can help you explore the app.
-          </Text>
+          <Text style={s.agentBannerText}>🤖 You're chatting with an AI agent in Tryber.</Text>
         </View>
       )}
 
-      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={90}>
+      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 56}>
         {loading ? (
           <View style={s.center}><ActivityIndicator color={GREEN} size="large" /></View>
         ) : (
@@ -170,12 +141,11 @@ export default function DMScreen() {
             data={messages}
             keyExtractor={m => m.id}
             contentContainerStyle={s.messageList}
+            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
             ListEmptyComponent={
               <View style={s.center}>
                 <Text style={s.emptyEmoji}>{talkingToAgent ? '🤖' : '💬'}</Text>
-                <Text style={s.emptyText}>
-                  {talkingToAgent ? `Say hi to ${userName}!` : 'Start the conversation'}
-                </Text>
+                <Text style={s.emptyText}>{talkingToAgent ? `Say hi to ${userName}!` : 'Start the conversation'}</Text>
               </View>
             }
             renderItem={({ item }) => {
@@ -189,9 +159,7 @@ export default function DMScreen() {
                   )}
                   <View style={s.bubbleCol}>
                     <View style={[s.bubble, isMe ? s.bubbleMe : talkingToAgent ? s.bubbleAgent : s.bubbleThem]}>
-                      <Text style={[s.bubbleText, isMe ? s.bubbleTextMe : s.bubbleTextThem]}>
-                        {item.content}
-                      </Text>
+                      <Text style={[s.bubbleText, isMe ? s.bubbleTextMe : s.bubbleTextThem]}>{item.content}</Text>
                     </View>
                     <Text style={[s.timeText, isMe && s.timeTextMe]}>{formatTime(item.created_at)}</Text>
                   </View>
@@ -206,13 +174,13 @@ export default function DMScreen() {
             <View style={[s.avatar, s.avatarAgent]}>
               <Text style={s.avatarText}>{userName?.[0] || '?'}</Text>
             </View>
-            <View style={[s.bubble, s.bubbleAgent, s.typingBubble]}>
+            <View style={[s.bubble, s.bubbleAgent, { paddingVertical: 12 }]}>
               <Text style={s.typingDots}>• • •</Text>
             </View>
           </View>
         )}
 
-        <View style={s.inputRow}>
+        <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           <TextInput
             style={s.input}
             value={draft}
@@ -222,16 +190,12 @@ export default function DMScreen() {
             multiline
             maxLength={500}
           />
-          <TouchableOpacity
-            style={[s.sendBtn, !draft.trim() && s.sendBtnOff]}
-            onPress={sendMessage}
-            disabled={!draft.trim()}
-          >
+          <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={sendMessage} disabled={!draft.trim()}>
             <Text style={s.sendIcon}>↑</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   )
 }
 
@@ -248,8 +212,9 @@ const s = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8', gap: 10 },
   backBtn: { padding: 4 },
   backText: { fontSize: 32, color: GREEN, lineHeight: 36, marginTop: -4 },
-  headerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#FFF0EB', borderWidth: 2, borderColor: ORANGE, alignItems: 'center', justifyContent: 'center' },
-  headerAvatarText: { fontSize: 16, fontWeight: '600', color: ORANGE },
+  headerAvatar: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#EEEDFE', alignItems: 'center', justifyContent: 'center' },
+  headerAvatarAgent: { backgroundColor: '#FFF0EB', borderWidth: 2, borderColor: ORANGE },
+  headerAvatarText: { fontSize: 16, fontWeight: '600' },
   headerInfo: { flex: 1 },
   headerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerName: { fontSize: 15, fontWeight: '700', color: '#2C2C2A' },
@@ -275,9 +240,8 @@ const s = StyleSheet.create({
   timeText: { fontSize: 10, color: GRAY, marginTop: 3, marginLeft: 4 },
   timeTextMe: { textAlign: 'right', marginRight: 4 },
   typingRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
-  typingBubble: { paddingVertical: 12 },
   typingDots: { fontSize: 16, color: ORANGE, letterSpacing: 4 },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', padding: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8' },
+  inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 10, paddingTop: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8' },
   input: { flex: 1, minHeight: 40, maxHeight: 100, backgroundColor: '#F1EFE8', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#2C2C2A' },
   sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' },
   sendBtnOff: { opacity: 0.4 },

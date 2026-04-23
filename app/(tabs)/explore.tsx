@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
-  SafeAreaView, StatusBar, TouchableOpacity, Switch, ActivityIndicator, Alert,
+  StatusBar, TouchableOpacity, Switch, ActivityIndicator, Alert,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Location from 'expo-location'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
@@ -42,6 +43,7 @@ type Group = {
 
 export default function ExploreScreen() {
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const [tab, setTab] = useState<'people' | 'trybes'>('trybes')
   const [radarOn, setRadarOn] = useState(false)
   const [myMode, setMyMode] = useState<'lit' | 'ghost'>('lit')
@@ -66,17 +68,9 @@ export default function ExploreScreen() {
   const loadAllGroups = useCallback(async () => {
     setLoading(true)
     try {
-      const { data } = await supabase
-        .from('groups')
-        .select('*')
-        .neq('status', 'archived')
-        .order('member_count', { ascending: false })
-        .limit(50)
-
+      const { data } = await supabase.from('groups').select('*').neq('status', 'archived').order('member_count', { ascending: false }).limit(50)
       const enriched = await Promise.all((data || []).map(async (g: Group) => {
-        const { data: msgs } = await supabase
-          .from('messages').select('content').eq('group_id', g.id)
-          .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
+        const { data: msgs } = await supabase.from('messages').select('content').eq('group_id', g.id).eq('type', 'text').order('created_at', { ascending: false }).limit(1)
         return { ...g, last_message: msgs?.[0]?.content || null }
       }))
       setGroups(enriched)
@@ -91,15 +85,12 @@ export default function ExploreScreen() {
       const { data } = await supabase.rpc('nearby_groups', { lat, lon, radius_m: r })
       if (data?.length) {
         const enriched = await Promise.all(data.map(async (g: Group) => {
-          const { data: msgs } = await supabase
-            .from('messages').select('content').eq('group_id', g.id)
-            .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
+          const { data: msgs } = await supabase.from('messages').select('content').eq('group_id', g.id).eq('type', 'text').order('created_at', { ascending: false }).limit(1)
           return { ...g, last_message: msgs?.[0]?.content || null }
         }))
         setGroups(enriched)
         setShowAllGroups(false)
       } else {
-        // No nearby groups — show all
         await loadAllGroups()
       }
     } catch { await loadAllGroups() }
@@ -109,9 +100,7 @@ export default function ExploreScreen() {
   const loadNearbyUsers = async (lat: number, lon: number) => {
     try {
       const { data } = await supabase.rpc('nearby_users', { lat, lon, radius_m: 2000 })
-      const users = ((data || []) as NearbyUser[])
-        .filter((u) => u.id !== userId)
-        .map((u) => ({ ...u, is_agent: AGENT_IDS.includes(u.id) }))
+      const users = ((data || []) as NearbyUser[]).filter((u) => u.id !== userId).map((u) => ({ ...u, is_agent: AGENT_IDS.includes(u.id) }))
       setNearbyUsers(users)
     } catch (e) { console.log(e) }
   }
@@ -122,25 +111,18 @@ export default function ExploreScreen() {
     const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
     const { latitude, longitude } = loc.coords
     setCoords({ lat: latitude, lon: longitude })
-
     await supabase.from('user_locations').upsert({
-      user_id: userId,
-      location: `POINT(${longitude} ${latitude})`,
-      radar_on: true,
-      identity_mode: myMode,
-      avatar_char: myAvatar,
-      updated_at: new Date().toISOString(),
+      user_id: userId, location: `POINT(${longitude} ${latitude})`,
+      radar_on: true, identity_mode: myMode, avatar_char: myAvatar, updated_at: new Date().toISOString(),
     })
-
     await loadNearbyUsers(latitude, longitude)
     await loadNearbyGroups(latitude, longitude, radius)
   }
 
   const toggleRadar = async (val: boolean) => {
     setRadarOn(val)
-    if (val) {
-      await activateRadar()
-    } else {
+    if (val) { await activateRadar() }
+    else {
       if (userId) await supabase.from('user_locations').update({ radar_on: false }).eq('user_id', userId)
       setNearbyUsers([])
       await loadAllGroups()
@@ -152,8 +134,7 @@ export default function ExploreScreen() {
     if (radarOn && coords) {
       await supabase.from('user_locations').upsert({
         user_id: userId, location: `POINT(${coords.lon} ${coords.lat})`,
-        radar_on: true, identity_mode: mode, avatar_char: myAvatar,
-        updated_at: new Date().toISOString(),
+        radar_on: true, identity_mode: mode, avatar_char: myAvatar, updated_at: new Date().toISOString(),
       })
     }
   }
@@ -166,11 +147,7 @@ export default function ExploreScreen() {
   const openDM = (user: NearbyUser) => {
     router.push({
       pathname: '/dm',
-      params: {
-        userId: user.id,
-        userName: user.identity_mode === 'ghost' ? (user.avatar_char || '👻') : (user.display_name || user.username),
-        myMode, myAvatar, isAgent: user.is_agent ? '1' : '0',
-      }
+      params: { userId: user.id, userName: user.identity_mode === 'ghost' ? (user.avatar_char || '👻') : (user.display_name || user.username), myMode, myAvatar, isAgent: user.is_agent ? '1' : '0' }
     })
   }
 
@@ -179,8 +156,7 @@ export default function ExploreScreen() {
     const myName = myMode === 'ghost' ? myAvatar : 'You'
     const otherName = user.identity_mode === 'ghost' ? (user.avatar_char || '👻') : (user.display_name || user.username)
     const { data, error } = await supabase.from('groups').insert({
-      name: `${myName} & ${otherName}`,
-      location: `POINT(${coords.lon} ${coords.lat})`,
+      name: `${myName} & ${otherName}`, location: `POINT(${coords.lon} ${coords.lat})`,
       status: 'open', type: 'manual', min_members: 2, member_count: 2, created_by: userId,
     }).select().single()
     if (error) { Alert.alert('Error', error.message); return }
@@ -197,7 +173,7 @@ export default function ExploreScreen() {
   )
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
 
       <View style={s.header}>
@@ -208,21 +184,20 @@ export default function ExploreScreen() {
         </View>
       </View>
 
-      {/* Mode bar — only when radar on */}
       {radarOn && (
         <View style={s.modeBar}>
           <TouchableOpacity style={[s.modeBtn, myMode === 'lit' && s.modeBtnLit]} onPress={() => switchMode('lit')}>
-            <Text style={s.modeBtnText}>🔥 Lit — מזוהה</Text>
+            <Text style={s.modeBtnText}>🔥 Lit — Visible</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[s.modeBtn, myMode === 'ghost' && s.modeBtnGhost]} onPress={() => switchMode('ghost')}>
-            <Text style={s.modeBtnText}>👻 Ghost — אנונימי</Text>
+            <Text style={s.modeBtnText}>👻 Ghost — Anonymous</Text>
           </TouchableOpacity>
         </View>
       )}
 
       {radarOn && myMode === 'ghost' && (
         <TouchableOpacity style={s.avatarBtn} onPress={() => setShowAvatarPicker(!showAvatarPicker)}>
-          <Text style={s.avatarBtnText}>האווטאר שלך: {myAvatar} — לחץ לשינוי</Text>
+          <Text style={s.avatarBtnText}>Your avatar: {myAvatar} — tap to change</Text>
         </TouchableOpacity>
       )}
 
@@ -236,46 +211,35 @@ export default function ExploreScreen() {
         </View>
       )}
 
-      {/* Tabs */}
       <View style={s.tabRow}>
         <TouchableOpacity style={[s.tabBtn, tab === 'trybes' && s.tabBtnActive]} onPress={() => setTab('trybes')}>
-          <Text style={[s.tabBtnText, tab === 'trybes' && s.tabBtnTextActive]}>
-            ⚡ Trybes {groups.length > 0 ? `(${groups.length})` : ''}
-          </Text>
+          <Text style={[s.tabBtnText, tab === 'trybes' && s.tabBtnTextActive]}>⚡ Trybes {groups.length > 0 ? `(${groups.length})` : ''}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[s.tabBtn, tab === 'people' && s.tabBtnActive]} onPress={() => setTab('people')}>
-          <Text style={[s.tabBtnText, tab === 'people' && s.tabBtnTextActive]}>
-            👥 People {nearbyUsers.length > 0 ? `(${nearbyUsers.length})` : ''}
-          </Text>
+          <Text style={[s.tabBtnText, tab === 'people' && s.tabBtnTextActive]}>👥 People {nearbyUsers.length > 0 ? `(${nearbyUsers.length})` : ''}</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Radius selector for trybes */}
       {tab === 'trybes' && radarOn && (
         <View style={s.radiusRow}>
-          <Text style={s.radiusLabel}>טווח:</Text>
+          <Text style={s.radiusLabel}>Radius:</Text>
           {[1000, 5000, 10000, 50000].map(r => (
             <TouchableOpacity key={r} style={[s.radiusBtn, radius === r && s.radiusBtnActive]} onPress={() => changeRadius(r)}>
-              <Text style={[s.radiusBtnText, radius === r && s.radiusBtnTextActive]}>
-                {r < 1000 ? `${r}m` : `${r/1000}km`}
-              </Text>
+              <Text style={[s.radiusBtnText, radius === r && s.radiusBtnTextActive]}>{r < 1000 ? `${r}m` : `${r / 1000}km`}</Text>
             </TouchableOpacity>
           ))}
         </View>
       )}
 
-      {/* Search */}
       {tab === 'trybes' && (
         <View style={s.searchRow}>
-          <TextInput style={s.searchInput} value={search} onChangeText={setSearch} placeholder="חפש קבוצות..." placeholderTextColor="#B4B2A9" />
+          <TextInput style={s.searchInput} value={search} onChangeText={setSearch} placeholder="Search groups..." placeholderTextColor="#B4B2A9" />
         </View>
       )}
 
       {showAllGroups && tab === 'trybes' && (
         <View style={s.allGroupsBanner}>
-          <Text style={s.allGroupsBannerText}>
-            {radarOn ? '📍 לא נמצאו קבוצות קרובות — מציג את כל הקבוצות' : '⚡ כל הקבוצות הפעילות באפליקציה'}
-          </Text>
+          <Text style={s.allGroupsBannerText}>{radarOn ? '📍 No nearby groups — showing all' : '⚡ All active groups'}</Text>
         </View>
       )}
 
@@ -288,18 +252,12 @@ export default function ExploreScreen() {
           onRefresh={radarOn && coords ? () => loadNearbyGroups(coords.lat, coords.lon, radius) : loadAllGroups}
           ListEmptyComponent={
             <View style={s.emptySmall}>
-              {loading
-                ? <ActivityIndicator color={GREEN} />
-                : <Text style={s.emptySmallText}>אין קבוצות כרגע</Text>
-              }
+              {loading ? <ActivityIndicator color={GREEN} /> : <Text style={s.emptySmallText}>No groups yet</Text>}
             </View>
           }
           renderItem={({ item }) => (
             <Pressable style={s.groupCard} onPress={() =>
-              router.push({
-                pathname: item.status === 'open' ? '/chat' : '/lobby',
-                params: { id: item.id, name: item.name, members: item.member_count.toString() }
-              })
+              router.push({ pathname: item.status === 'open' ? '/chat' : '/lobby', params: { id: item.id, name: item.name, members: item.member_count.toString() } })
             }>
               <View style={s.groupCardTop}>
                 <View style={[s.groupDot, item.status === 'open' ? s.dotOpen : s.dotLobby]} />
@@ -310,18 +268,16 @@ export default function ExploreScreen() {
                 </View>
                 <View style={s.groupRight}>
                   <Text style={s.groupCount}>{item.member_count}</Text>
-                  <Text style={s.groupLabel}>אנשים</Text>
+                  <Text style={s.groupLabel}>people</Text>
                 </View>
               </View>
               <View style={s.groupStatus}>
                 {item.status === 'open'
-                  ? <Text style={s.openLabel}>🟢 צ'אט פעיל</Text>
-                  : <Text style={s.lobbyLabel}>🟣 לובי — {item.member_count}/{item.min_members}</Text>
+                  ? <Text style={s.openLabel}>🟢 Chat is LIVE</Text>
+                  : <Text style={s.lobbyLabel}>🟣 Lobby — {item.member_count}/{item.min_members}</Text>
                 }
                 {item.distance_m && (
-                  <Text style={s.distLabel}>
-                    {item.distance_m < 1000 ? `${Math.round(item.distance_m)}מ` : `${(item.distance_m/1000).toFixed(1)}ק"מ`}
-                  </Text>
+                  <Text style={s.distLabel}>{item.distance_m < 1000 ? `${Math.round(item.distance_m)}m` : `${(item.distance_m / 1000).toFixed(1)}km`}</Text>
                 )}
               </View>
             </Pressable>
@@ -334,17 +290,18 @@ export default function ExploreScreen() {
           contentContainerStyle={s.list}
           ListEmptyComponent={
             <View style={s.emptySmall}>
-              {!radarOn
-                ? <View style={s.radarOffMsg}>
-                    <Text style={s.radarOffEmoji}>📡</Text>
-                    <Text style={s.radarOffTitle}>הפעל Radar</Text>
-                    <Text style={s.radarOffSub}>כדי לראות אנשים קרובים, הפעל את הRadar למעלה</Text>
-                    <TouchableOpacity style={s.radarOffBtn} onPress={() => toggleRadar(true)}>
-                      <Text style={s.radarOffBtnText}>הפעל Radar</Text>
-                    </TouchableOpacity>
-                  </View>
-                : <Text style={s.emptySmallText}>אין אנשים קרובים עם Radar פעיל</Text>
-              }
+              {!radarOn ? (
+                <View style={s.radarOffMsg}>
+                  <Text style={s.radarOffEmoji}>📡</Text>
+                  <Text style={s.radarOffTitle}>Enable Radar</Text>
+                  <Text style={s.radarOffSub}>Turn on Radar to see nearby people</Text>
+                  <TouchableOpacity style={s.radarOffBtn} onPress={() => toggleRadar(true)}>
+                    <Text style={s.radarOffBtnText}>Enable Radar</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Text style={s.emptySmallText}>No people nearby with Radar on</Text>
+              )}
             </View>
           }
           renderItem={({ item }) => {
@@ -359,26 +316,20 @@ export default function ExploreScreen() {
                   <View style={s.userNameRow}>
                     <Text style={s.userName}>{displayName}</Text>
                     {item.is_agent && <View style={s.agentBadge}><Text style={s.agentBadgeText}>AI</Text></View>}
-                    {item.identity_mode === 'ghost' && !item.is_agent && <View style={s.ghostBadge}><Text style={s.ghostBadgeText}>👻 אנונימי</Text></View>}
+                    {item.identity_mode === 'ghost' && !item.is_agent && <View style={s.ghostBadge}><Text style={s.ghostBadgeText}>👻 anon</Text></View>}
                   </View>
-                  <Text style={s.userDist}>
-                    {item.distance_m < 1000 ? `${Math.round(item.distance_m)}מ` : `${(item.distance_m/1000).toFixed(1)}ק"מ`} ממך
-                  </Text>
+                  <Text style={s.userDist}>{item.distance_m < 1000 ? `${Math.round(item.distance_m)}m` : `${(item.distance_m / 1000).toFixed(1)}km`} away</Text>
                 </View>
                 <View style={s.userActions}>
-                  <TouchableOpacity style={s.actionBtn} onPress={() => openDM(item)}>
-                    <Text style={s.actionBtnText}>💬</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={[s.actionBtn, s.actionBtnGroup]} onPress={() => createGroupWithUser(item)}>
-                    <Text style={s.actionBtnText}>⚡</Text>
-                  </TouchableOpacity>
+                  <TouchableOpacity style={s.actionBtn} onPress={() => openDM(item)}><Text style={s.actionBtnText}>💬</Text></TouchableOpacity>
+                  <TouchableOpacity style={[s.actionBtn, s.actionBtnGroup]} onPress={() => createGroupWithUser(item)}><Text style={s.actionBtnText}>⚡</Text></TouchableOpacity>
                 </View>
               </View>
             )
           }}
         />
       )}
-    </SafeAreaView>
+    </View>
   )
 }
 
@@ -388,7 +339,7 @@ const GRAY = '#888780'
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAF8' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   title: { fontSize: 22, fontWeight: '700', color: '#2C2C2A' },
   radarToggle: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   radarLabel: { fontSize: 13, fontWeight: '600', color: GRAY },

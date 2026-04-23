@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import {
-  View, Text, StyleSheet, TouchableOpacity, SafeAreaView,
+  View, Text, StyleSheet, TouchableOpacity,
   StatusBar, ScrollView, TextInput, Alert, ActivityIndicator, Image,
 } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
@@ -11,6 +12,7 @@ const AVATARS = ['🦊','🐺','🦁','🐯','🐻','🦝','🐼','🦄','🐲',
 
 export default function ProfileScreen() {
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const [userId, setUserId] = useState<string | null>(null)
   const [displayName, setDisplayName] = useState('')
   const [username, setUsername] = useState('')
@@ -30,7 +32,6 @@ export default function ProfileScreen() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     setUserId(user.id)
-
     const { data: profile } = await supabase.from('profiles').select('*').eq('id', user.id).single()
     if (profile) {
       setDisplayName(profile.display_name || '')
@@ -39,13 +40,10 @@ export default function ProfileScreen() {
       setAvatarChar(profile.avatar_char || '🦊')
       setAvatarUrl(profile.avatar_url || null)
     }
-
     const { data: groups } = await supabase.from('group_members').select('group_id, groups(name, status)').eq('user_id', user.id).limit(10)
     if (groups) setMyGroups(groups)
-
     const { data: posts } = await supabase.from('posts').select('*').eq('user_id', user.id).order('created_at', { ascending: false }).limit(6)
     if (posts) setMyPosts(posts)
-
     const { count: msgCount } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('user_id', user.id)
     setStats({ groups: groups?.length || 0, posts: posts?.length || 0, messages: msgCount || 0 })
   }
@@ -53,11 +51,7 @@ export default function ProfileScreen() {
   const saveProfile = async () => {
     if (!userId) return
     setSaving(true)
-    await supabase.from('profiles').update({
-      display_name: displayName.trim(),
-      bio: bio.trim() || null,
-      avatar_char: avatarChar,
-    }).eq('id', userId)
+    await supabase.from('profiles').update({ display_name: displayName.trim(), bio: bio.trim() || null, avatar_char: avatarChar }).eq('id', userId)
     setSaving(false)
     Alert.alert('✓ Saved', 'Profile updated!')
   }
@@ -85,16 +79,14 @@ export default function ProfileScreen() {
   const signOut = async () => {
     Alert.alert('Sign out', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: async () => {
-        await supabase.auth.signOut()
-      }}
+      { text: 'Sign out', style: 'destructive', onPress: async () => { await supabase.auth.signOut() } }
     ])
   }
 
-  const formatTime = (ts: string) => new Date(ts).toLocaleDateString('he-IL', { day: 'numeric', month: 'short' })
+  const formatTime = (ts: string) => new Date(ts).toLocaleDateString('en', { day: 'numeric', month: 'short' })
 
   return (
-    <SafeAreaView style={s.container}>
+    <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <Text style={s.title}>My Profile</Text>
@@ -104,8 +96,6 @@ export default function ProfileScreen() {
       </View>
 
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
-
-        {/* Avatar */}
         <View style={s.avatarSection}>
           <TouchableOpacity onPress={pickAvatar} disabled={uploading}>
             {uploading ? (
@@ -113,17 +103,13 @@ export default function ProfileScreen() {
             ) : avatarUrl ? (
               <Image source={{ uri: avatarUrl }} style={s.avatarImage} />
             ) : (
-              <View style={s.avatarCircle}>
-                <Text style={s.avatarEmoji}>{avatarChar}</Text>
-              </View>
+              <View style={s.avatarCircle}><Text style={s.avatarEmoji}>{avatarChar}</Text></View>
             )}
             <View style={s.avatarEditBadge}><Text style={s.avatarEditText}>✏️</Text></View>
           </TouchableOpacity>
-
           <TouchableOpacity style={s.emojiPickerBtn} onPress={() => setShowAvatarPicker(!showAvatarPicker)}>
             <Text style={s.emojiPickerText}>Change emoji avatar</Text>
           </TouchableOpacity>
-
           {showAvatarPicker && (
             <View style={s.emojiGrid}>
               {AVATARS.map(a => (
@@ -135,25 +121,14 @@ export default function ProfileScreen() {
           )}
         </View>
 
-        {/* Stats */}
         <View style={s.statsRow}>
-          <View style={s.stat}>
-            <Text style={s.statNum}>{stats.groups}</Text>
-            <Text style={s.statLabel}>Trybes</Text>
-          </View>
+          <View style={s.stat}><Text style={s.statNum}>{stats.groups}</Text><Text style={s.statLabel}>Trybes</Text></View>
           <View style={s.statDivider} />
-          <View style={s.stat}>
-            <Text style={s.statNum}>{stats.posts}</Text>
-            <Text style={s.statLabel}>Posts</Text>
-          </View>
+          <View style={s.stat}><Text style={s.statNum}>{stats.posts}</Text><Text style={s.statLabel}>Posts</Text></View>
           <View style={s.statDivider} />
-          <View style={s.stat}>
-            <Text style={s.statNum}>{stats.messages}</Text>
-            <Text style={s.statLabel}>Messages</Text>
-          </View>
+          <View style={s.stat}><Text style={s.statNum}>{stats.messages}</Text><Text style={s.statLabel}>Messages</Text></View>
         </View>
 
-        {/* Edit profile */}
         <Text style={s.sectionLabel}>DISPLAY NAME</Text>
         <TextInput style={s.input} value={displayName} onChangeText={setDisplayName} placeholder="Your name" placeholderTextColor="#B4B2A9" maxLength={30} />
 
@@ -161,21 +136,12 @@ export default function ProfileScreen() {
         <TextInput style={[s.input, { color: '#888' }]} value={`@${username}`} editable={false} />
 
         <Text style={s.sectionLabel}>BIO</Text>
-        <TextInput
-          style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]}
-          value={bio}
-          onChangeText={setBio}
-          placeholder="Tell people about yourself..."
-          placeholderTextColor="#B4B2A9"
-          multiline
-          maxLength={150}
-        />
+        <TextInput style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]} value={bio} onChangeText={setBio} placeholder="Tell people about yourself..." placeholderTextColor="#B4B2A9" multiline maxLength={150} />
 
         <TouchableOpacity style={[s.saveBtn, saving && { opacity: 0.6 }]} onPress={saveProfile} disabled={saving}>
           {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnText}>Save Profile</Text>}
         </TouchableOpacity>
 
-        {/* My Trybes */}
         {myGroups.length > 0 && (
           <>
             <Text style={s.sectionLabel}>MY TRYBES ({myGroups.length})</Text>
@@ -192,7 +158,6 @@ export default function ProfileScreen() {
           </>
         )}
 
-        {/* My Posts */}
         {myPosts.length > 0 && (
           <>
             <Text style={s.sectionLabel}>MY POSTS ({myPosts.length})</Text>
@@ -212,7 +177,7 @@ export default function ProfileScreen() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
-    </SafeAreaView>
+    </View>
   )
 }
 
@@ -222,7 +187,7 @@ const GRAY = '#888780'
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAF8' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 12, paddingBottom: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   title: { fontSize: 20, fontWeight: '700', color: '#2C2C2A' },
   signOutBtn: { fontSize: 14, color: '#E24B4A', fontWeight: '500' },
   content: { padding: 20 },
