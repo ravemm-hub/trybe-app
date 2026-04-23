@@ -38,12 +38,70 @@ export default function RootLayout() {
   const segments = useSegments()
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+    if (session?.user) registerForPushNotifications(session.user.id)
+checkTeebyProactive(session.user.id)
+    })
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
       setSession(session)
       if (session?.user) registerForPushNotifications(session.user.id)
     })
-    return () => subscription.unsubscribe()
+  async function checkTeebyProactive(userId: string) {
+  try {
+    const { data: lastMsg } = await supabase
+      .from('agent_messages')
+      .select('created_at')
+      .eq('user_id', userId)
+      .eq('role', 'assistant')
+      .order('created_at', { ascending: false })
+      .limit(1)
+    
+    const lastTime = lastMsg?.[0] ? new Date(lastMsg[0].created_at).getTime() : 0
+    const oneHourAgo = Date.now() - 60 * 60 * 1000
+    
+    if (lastTime < oneHourAgo) {
+      // Get user name
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('display_name, teeby_name')
+        .eq('id', userId)
+        .single()
+      
+      const teebyName = profile?.teeby_name || 'Teeby'
+      const userName = profile?.display_name || ''
+
+      // Get active groups
+      const { data: groups } = await supabase
+        .from('groups')
+        .select('id, name, member_count, status')
+        .eq('status', 'open')
+        .order('member_count', { ascending: false })
+        .limit(3)
+
+      let text = `Hey${userName ? ` ${userName}` : ''}! 👋 `
+      
+      if (groups?.length) {
+        text += `There are ${groups.length} active groups right now:\n`
+        groups.forEach((g: any) => {
+          text += `⚡ ${g.name} — ${g.member_count} people\n`
+        })
+        text += '\nWant me to find something near you?'
+      } else {
+        text += `I'm here whenever you need me. Ask me anything! ✦`
+      }
+
+      await supabase.from('agent_messages').insert({
+        user_id: userId,
+        role: 'assistant',
+        content: text,
+      })
+    }
+  } catch (err) {
+    console.log('Teeby proactive error:', err)
+  }
+}
+  return () => subscription.unsubscribe()
   }, [])
 
   useEffect(() => {
