@@ -145,10 +145,7 @@ export default function DiscoverScreen() {
                 <View style={s.cardInfo}>
                   <View style={s.cardNameRow}>
                     <Text style={s.cardName} numberOfLines={1}>{item.name}</Text>
-                   <View style={[s.privacyTag, item.is_private ? s.privacyTagPrivate : s.privacyTagPublic]}>
-  <Text style={s.privacyTagText}>{item.is_private ? '🔒 Private' : '🌐 Public'}</Text>
-</View>
-
+                    {item.is_private && <Text style={s.privateBadge}>🔒</Text>}
                   </View>
                   {item.location_name && <Text style={s.cardLocation}>📍 {item.location_name}</Text>}
                   {item.last_message && (
@@ -235,7 +232,3 @@ const s = StyleSheet.create({
   joinBtnText: { fontSize: 13, fontWeight: '600', color: PURPLE },
   inLobby: { fontSize: 12, color: GREEN, fontWeight: '500', textAlign: 'center', marginTop: 6 },
 })
-privacyTag: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
-privacyTagPublic: { backgroundColor: '#E1F5EE' },
-privacyTagPrivate: { backgroundColor: '#EEEDFE' },
-privacyTagText: { fontSize: 10, fontWeight: '700', color: '#2C2C2A' },
