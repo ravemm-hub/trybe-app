@@ -27,7 +27,7 @@ type Action = {
 }
 
 const QUICK_PROMPTS = [
- const QUICK_PROMPTS = [
+ 
   '📬 סכם מה פספסתי בקבוצות',
   '📍 מה קורה סביבי עכשיו?',
   '⚡ מצא לי קבוצות פעילות',
