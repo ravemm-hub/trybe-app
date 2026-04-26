@@ -36,7 +36,8 @@ type Message = {
 }
 
 export default function ChatScreen() {
-  const { id, name, members } = useLocalSearchParams<{ id: string; name: string; members: string }>()
+  const { id, name, members, readOnly } = useLocalSearchParams<{ id: string; name: string; members: string; readOnly?: string }>()
+const isReadOnly = readOnly === '1'<{ id: string; name: string; members: string }>()
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const [messages, setMessages] = useState<Message[]>([])
@@ -380,8 +381,19 @@ export default function ChatScreen() {
             <TouchableOpacity onPress={() => setReplyTo(null)}><Text style={s.replyBarClose}>✕</Text></TouchableOpacity>
           </View>
         )}
-
-        {editingMsg ? (
+readOnlyBar: { backgroundColor: '#EEEDFE', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10, borderTopWidth: 0.5, borderColor: '#E0DED8' },
+readOnlyText: { fontSize: 13, color: PURPLE, fontWeight: '500' },
+readOnlyJoinBtn: { backgroundColor: PURPLE, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
+readOnlyJoinText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+{isReadOnly && (
+  <View style={s.readOnlyBar}>
+    <Text style={s.readOnlyText}>👁️ Viewing only — join to participate</Text>
+    <TouchableOpacity style={s.readOnlyJoinBtn} onPress={() => router.back()}>
+      <Text style={s.readOnlyJoinText}>← Back</Text>
+    </TouchableOpacity>
+  </View>
+)}
+        {isReadOnly ? null : editingMsg ? (
           <View style={[s.editBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
             <Text style={s.editBarLabel}>✏️ Editing</Text>
             <TextInput style={s.editInput} value={editDraft} onChangeText={setEditDraft} autoFocus multiline />

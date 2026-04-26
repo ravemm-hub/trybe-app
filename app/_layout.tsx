@@ -134,6 +134,7 @@ checkTeebyProactive(session.user.id)
        
  <Stack.Screen name="dm" options={{ animation: 'slide_from_right' }} />
 <Stack.Screen name="contacts" options={{ animation: 'slide_from_right' }} />
+<Stack.Screen name="radar" options={{ animation: 'slide_from_right' }} />
       </Stack>
  
   </SafeAreaProvider>

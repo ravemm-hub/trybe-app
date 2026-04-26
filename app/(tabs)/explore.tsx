@@ -111,15 +111,17 @@ export default function ExploreScreen() {
     } catch (e: any) { Alert.alert('Error', e.message) }
     finally { setJoiningId(null) }
   }
-
-  const openGroup = (group: Group) => {
-    if (group.memberStatus !== 'member') return
+const openGroup = (group: Group) => {
+  if (group.memberStatus === 'member') {
     if (group.status === 'open') {
       router.push({ pathname: '/chat', params: { id: group.id, name: group.name, members: group.member_count.toString() } })
     } else {
       router.push({ pathname: '/lobby', params: { id: group.id, name: group.name } })
     }
+  } else {
+    router.push({ pathname: '/chat', params: { id: group.id, name: group.name, members: group.member_count.toString(), readOnly: '1' } })
   }
+}
 
   const loadNearbyUsers = async (lat: number, lon: number) => {
     try {
