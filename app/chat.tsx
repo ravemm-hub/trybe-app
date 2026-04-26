@@ -5,6 +5,7 @@ import {
   Pressable, Image, Alert, Modal, StatusBar,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { Swipeable } from 'react-native-gesture-handler'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import * as ImagePicker from 'expo-image-picker'
 import { supabase } from '../lib/supabase'
@@ -57,6 +58,7 @@ export default function ChatScreen() {
   const [senderMode, setSenderMode] = useState<'lit' | 'ghost'>('lit')
   const [blockedUsers, setBlockedUsers] = useState<string[]>([])
   const listRef = useRef<FlatList>(null)
+  const swipeableRefs = useRef<Map<string, Swipeable>>(new Map())
 
   const loadMessages = useCallback(async () => {
     const { data } = await supabase
@@ -126,6 +128,11 @@ export default function ChatScreen() {
     setReplyTo(null)
   }
 
+  const handleSwipeReply = (item: Message) => {
+    setReplyTo(item)
+    swipeableRefs.current.get(item.id)?.close()
+  }
+
   const reportMessage = async (msg: Message) => {
     if (!userId) return
     const { error } = await supabase.from('message_reports').insert({ message_id: msg.id, reporter_id: userId, group_id: id, reason: 'inappropriate' })
@@ -189,6 +196,14 @@ export default function ChatScreen() {
   const isAgentMsg = (uid: string | null) => uid && AGENT_IDS.includes(uid)
   const canEdit = (msg: Message) => msg.user_id === userId && Date.now() - new Date(msg.created_at).getTime() < 15 * 60 * 1000 && !msg.deleted
 
+  const renderSwipeAction = (item: Message, isMe: boolean) => {
+    return (
+      <View style={[s.swipeAction, isMe ? s.swipeActionMe : s.swipeActionThem]}>
+        <Text style={s.swipeActionText}>↩</Text>
+      </View>
+    )
+  }
+
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
@@ -209,7 +224,6 @@ export default function ChatScreen() {
         <View style={s.liveDot} />
       </View>
 
-      {/* Agent Settings Modal */}
       <Modal visible={showAgentSettings} animationType="slide" onRequestClose={() => setShowAgentSettings(false)}>
         <View style={[s.agentModal, { paddingTop: insets.top }]}>
           <View style={s.agentModalHeader}>
@@ -246,7 +260,6 @@ export default function ChatScreen() {
         </View>
       </Modal>
 
-      {/* Message action menu */}
       <Modal visible={showMenu} transparent animationType="fade" onRequestClose={() => setShowMenu(false)}>
         <Pressable style={s.menuOverlay} onPress={() => setShowMenu(false)}>
           <View style={[s.menu, { paddingBottom: insets.bottom + 16 }]}>
@@ -313,38 +326,48 @@ export default function ChatScreen() {
               )
 
               return (
-                <Pressable onLongPress={() => { setSelectedMsg(item); setShowMenu(true) }} style={[s.bubbleRow, isMe && s.bubbleRowMe]}>
-                  {!isMe && (
-                    <View style={[s.avatar, agent && s.avatarAgent, isGhost && s.avatarGhost]}>
-                      <Text style={s.avatarText}>{avatarChar}</Text>
-                    </View>
-                  )}
-                  <View style={s.bubbleCol}>
+                <Swipeable
+                  ref={ref => { if (ref) swipeableRefs.current.set(item.id, ref) }}
+                  renderLeftActions={!isMe ? () => renderSwipeAction(item, false) : undefined}
+                  renderRightActions={isMe ? () => renderSwipeAction(item, true) : undefined}
+                  onSwipeableOpen={() => handleSwipeReply(item)}
+                  friction={2}
+                  overshootLeft={false}
+                  overshootRight={false}
+                >
+                  <Pressable onLongPress={() => { setSelectedMsg(item); setShowMenu(true) }} style={[s.bubbleRow, isMe && s.bubbleRowMe]}>
                     {!isMe && (
-                      <View style={s.senderRow}>
-                        <Text style={[s.senderName, isGhost && s.senderNameGhost]}>{displayName}</Text>
-                        {agent && <View style={s.agentBadge}><Text style={s.agentBadgeText}>AI</Text></View>}
-                        {isGhost && !agent && <View style={s.ghostBadge}><Text style={s.ghostBadgeText}>anon</Text></View>}
+                      <View style={[s.avatar, agent && s.avatarAgent, isGhost && s.avatarGhost]}>
+                        <Text style={s.avatarText}>{avatarChar}</Text>
                       </View>
                     )}
-                    {isMe && isGhost && <Text style={s.myGhostLabel}>👻 sent anonymously</Text>}
-                    {item.reply_preview && (
-                      <View style={[s.replyPreview, isMe && s.replyPreviewMe]}>
-                        <Text style={s.replyPreviewText} numberOfLines={1}>↩ {item.reply_preview}</Text>
+                    <View style={s.bubbleCol}>
+                      {!isMe && (
+                        <View style={s.senderRow}>
+                          <Text style={[s.senderName, isGhost && s.senderNameGhost]}>{displayName}</Text>
+                          {agent && <View style={s.agentBadge}><Text style={s.agentBadgeText}>AI</Text></View>}
+                          {isGhost && !agent && <View style={s.ghostBadge}><Text style={s.ghostBadgeText}>anon</Text></View>}
+                        </View>
+                      )}
+                      {isMe && isGhost && <Text style={s.myGhostLabel}>👻 sent anonymously</Text>}
+                      {item.reply_preview && (
+                        <View style={[s.replyPreview, isMe && s.replyPreviewMe]}>
+                          <Text style={s.replyPreviewText} numberOfLines={1}>↩ {item.reply_preview}</Text>
+                        </View>
+                      )}
+                      <View style={[s.bubble, isMe ? (isGhost ? s.bubbleMeGhost : s.bubbleMe) : agent ? s.bubbleAgent : s.bubbleThem]}>
+                        {item.type === 'image' && item.media_url
+                          ? <Image source={{ uri: item.media_url }} style={s.msgImage} resizeMode="cover" />
+                          : <Text style={[s.bubbleText, isMe ? s.bubbleTextMe : s.bubbleTextThem]}>{item.content}</Text>
+                        }
                       </View>
-                    )}
-                    <View style={[s.bubble, isMe ? (isGhost ? s.bubbleMeGhost : s.bubbleMe) : agent ? s.bubbleAgent : s.bubbleThem]}>
-                      {item.type === 'image' && item.media_url
-                        ? <Image source={{ uri: item.media_url }} style={s.msgImage} resizeMode="cover" />
-                        : <Text style={[s.bubbleText, isMe ? s.bubbleTextMe : s.bubbleTextThem]}>{item.content}</Text>
-                      }
+                      <View style={[s.msgMeta, isMe && s.msgMetaMe]}>
+                        <Text style={s.timeText}>{formatTime(item.created_at)}</Text>
+                        {item.edited && <Text style={s.editedTag}>· edited</Text>}
+                      </View>
                     </View>
-                    <View style={[s.msgMeta, isMe && s.msgMetaMe]}>
-                      <Text style={s.timeText}>{formatTime(item.created_at)}</Text>
-                      {item.edited && <Text style={s.editedTag}>· edited</Text>}
-                    </View>
-                  </View>
-                </Pressable>
+                  </Pressable>
+                </Swipeable>
               )
             }}
           />
@@ -352,7 +375,8 @@ export default function ChatScreen() {
 
         {replyTo && (
           <View style={s.replyBar}>
-            <Text style={s.replyBarText} numberOfLines={1}>↩ {replyTo.content}</Text>
+            <Text style={s.replyBarLabel}>↩ Replying to</Text>
+            <Text style={s.replyBarText} numberOfLines={1}>{replyTo.content}</Text>
             <TouchableOpacity onPress={() => setReplyTo(null)}><Text style={s.replyBarClose}>✕</Text></TouchableOpacity>
           </View>
         )}
@@ -437,8 +461,12 @@ const s = StyleSheet.create({
   menu: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 8 },
   menuItem: { paddingHorizontal: 24, paddingVertical: 16, borderBottomWidth: 0.5, borderColor: '#F1EFE8' },
   menuItemText: { fontSize: 16, color: '#2C2C2A' },
+  swipeAction: { justifyContent: 'center', alignItems: 'center', width: 60, marginVertical: 4 },
+  swipeActionMe: { alignItems: 'flex-end', paddingRight: 12 },
+  swipeActionThem: { alignItems: 'flex-start', paddingLeft: 12 },
+  swipeActionText: { fontSize: 22, color: PURPLE },
   messageList: { padding: 16, gap: 10, flexGrow: 1 },
-  bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, backgroundColor: '#FAFAF8' },
   bubbleRowMe: { flexDirection: 'row-reverse' },
   avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#EEEDFE', alignItems: 'center', justifyContent: 'center' },
   avatarAgent: { backgroundColor: '#FFF0EB', borderWidth: 1.5, borderColor: ORANGE },
@@ -473,8 +501,9 @@ const s = StyleSheet.create({
   systemText: { fontSize: 12, color: GRAY, backgroundColor: '#F1EFE8', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 10 },
   deletedMsg: { paddingHorizontal: 12, paddingVertical: 8 },
   deletedText: { fontSize: 13, color: GRAY, fontStyle: 'italic' },
-  replyBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#F1EFE8', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 0.5, borderColor: '#E0DED8' },
-  replyBarText: { flex: 1, fontSize: 12, color: PURPLE },
+  replyBar: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#EEEDFE', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 0.5, borderColor: '#E0DED8', gap: 6 },
+  replyBarLabel: { fontSize: 11, color: PURPLE, fontWeight: '700' },
+  replyBarText: { flex: 1, fontSize: 12, color: '#2C2C2A' },
   replyBarClose: { fontSize: 16, color: GRAY, paddingLeft: 8 },
   editBar: { backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8', padding: 12 },
   editBarLabel: { fontSize: 11, color: GRAY, marginBottom: 6 },

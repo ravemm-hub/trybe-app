@@ -3,6 +3,7 @@ import { Stack, useRouter, useSegments } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as Notifications from 'expo-notifications'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
+import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { supabase } from '../lib/supabase'
 import type { Session } from '@supabase/supabase-js'
 
@@ -121,7 +122,8 @@ checkTeebyProactive(session.user.id)
   }, [session, segments, router])
 
   return (
-    <SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+<SafeAreaProvider>
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="onboarding" options={{ animation: 'fade' }} />
         <Stack.Screen name="(auth)/login" />
@@ -129,7 +131,8 @@ checkTeebyProactive(session.user.id)
         <Stack.Screen name="chat" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="create" options={{ animation: 'slide_from_right' }} />
         <Stack.Screen name="lobby" options={{ animation: 'slide_from_right' }} />
-        <Stack.Screen name="dm" options={{ animation: 'slide_from_right' }} />
+   <Stack.Screen name="contacts" options={{ animation: 'slide_from_right' }} />    
+ <Stack.Screen name="dm" options={{ animation: 'slide_from_right' }} />
 <Stack.Screen name="contacts" options={{ animation: 'slide_from_right' }} />
       </Stack>
     </SafeAreaProvider>
