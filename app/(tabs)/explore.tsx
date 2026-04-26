@@ -37,14 +37,16 @@ type Group = {
   member_count: number
   min_members: number
   status: string
+  is_private: boolean
   distance_m?: number
   last_message?: string | null
+  memberStatus?: 'member' | 'pending' | 'invited' | null
 }
 
 export default function ExploreScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const [tab, setTab] = useState<'people' | 'trybes'>('trybes')
+  const [tab, setTab] = useState<'trybes' | 'people'>('trybes')
   const [radarOn, setRadarOn] = useState(false)
   const [myMode, setMyMode] = useState<'lit' | 'ghost'>('lit')
   const [myAvatar, setMyAvatar] = useState('🦊')
@@ -55,59 +57,81 @@ export default function ExploreScreen() {
   const [userId, setUserId] = useState<string | null>(null)
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
   const [loading, setLoading] = useState(false)
-  const [radius, setRadius] = useState(5000)
-  const [showAllGroups, setShowAllGroups] = useState(false)
+  const [joiningId, setJoiningId] = useState<string | null>(null)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) setUserId(user.id)
+      if (user) { setUserId(user.id); loadGroups(user.id) }
     })
-    loadAllGroups()
   }, [])
 
-  const loadAllGroups = useCallback(async () => {
+  const loadGroups = useCallback(async (uid?: string) => {
     setLoading(true)
     try {
       const { data } = await supabase.from('groups').select('*').neq('status', 'archived').order('member_count', { ascending: false }).limit(50)
+
+      const myId = uid || userId
+      const { data: myMemberships } = await supabase.from('group_members').select('group_id').eq('user_id', myId || '')
+      const { data: myRequests } = await supabase.from('join_requests').select('group_id, status').eq('user_id', myId || '')
+
+      const memberSet = new Set((myMemberships || []).map((m: any) => m.group_id))
+      const requestMap = new Map((myRequests || []).map((r: any) => [r.group_id, r.status]))
+
       const enriched = await Promise.all((data || []).map(async (g: Group) => {
         const { data: msgs } = await supabase.from('messages').select('content').eq('group_id', g.id).eq('type', 'text').order('created_at', { ascending: false }).limit(1)
-        return { ...g, last_message: msgs?.[0]?.content || null }
+
+        let memberStatus: Group['memberStatus'] = null
+        if (memberSet.has(g.id)) memberStatus = 'member'
+        else if (requestMap.has(g.id)) memberStatus = requestMap.get(g.id) === 'pending' ? 'pending' : null
+
+        return { ...g, last_message: msgs?.[0]?.content || null, memberStatus }
       }))
+
       setGroups(enriched)
-      setShowAllGroups(true)
     } catch (e: any) { console.error(e) }
     finally { setLoading(false) }
-  }, [])
+  }, [userId])
 
-  const loadNearbyGroups = async (lat: number, lon: number, r: number) => {
-    setLoading(true)
+  const joinGroup = async (group: Group) => {
+    if (!userId || joiningId) return
+    setJoiningId(group.id)
     try {
-      const { data } = await supabase.rpc('nearby_groups', { lat, lon, radius_m: r })
-      if (data?.length) {
-        const enriched = await Promise.all(data.map(async (g: Group) => {
-          const { data: msgs } = await supabase.from('messages').select('content').eq('group_id', g.id).eq('type', 'text').order('created_at', { ascending: false }).limit(1)
-          return { ...g, last_message: msgs?.[0]?.content || null }
-        }))
-        setGroups(enriched)
-        setShowAllGroups(false)
+      if (group.is_private) {
+        const { error } = await supabase.from('join_requests').insert({ group_id: group.id, user_id: userId })
+        if (error?.code === '23505') { Alert.alert('Already requested'); return }
+        Alert.alert('✓ Request sent', 'The admin will review your request.')
       } else {
-        await loadAllGroups()
+        await supabase.from('group_members').insert({ group_id: group.id, user_id: userId, role: 'member' })
+        await supabase.from('groups').update({ member_count: group.member_count + 1 }).eq('id', group.id)
+        if (group.status === 'open') {
+          router.push({ pathname: '/chat', params: { id: group.id, name: group.name, members: (group.member_count + 1).toString() } })
+        }
       }
-    } catch { await loadAllGroups() }
-    finally { setLoading(false) }
+      await loadGroups()
+    } catch (e: any) { Alert.alert('Error', e.message) }
+    finally { setJoiningId(null) }
+  }
+
+  const openGroup = (group: Group) => {
+    if (group.memberStatus !== 'member') return
+    if (group.status === 'open') {
+      router.push({ pathname: '/chat', params: { id: group.id, name: group.name, members: group.member_count.toString() } })
+    } else {
+      router.push({ pathname: '/lobby', params: { id: group.id, name: group.name } })
+    }
   }
 
   const loadNearbyUsers = async (lat: number, lon: number) => {
     try {
       const { data } = await supabase.rpc('nearby_users', { lat, lon, radius_m: 2000 })
-      const users = ((data || []) as NearbyUser[]).filter((u) => u.id !== userId).map((u) => ({ ...u, is_agent: AGENT_IDS.includes(u.id) }))
+      const users = ((data || []) as NearbyUser[]).filter(u => u.id !== userId).map(u => ({ ...u, is_agent: AGENT_IDS.includes(u.id) }))
       setNearbyUsers(users)
-    } catch (e) { console.log(e) }
+    } catch {}
   }
 
   const activateRadar = async () => {
     const { status } = await Location.requestForegroundPermissionsAsync()
-    if (status !== 'granted') { Alert.alert('Location needed', 'Radar needs your location'); return }
+    if (status !== 'granted') { Alert.alert('Location needed'); return }
     const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
     const { latitude, longitude } = loc.coords
     setCoords({ lat: latitude, lon: longitude })
@@ -116,7 +140,6 @@ export default function ExploreScreen() {
       radar_on: true, identity_mode: myMode, avatar_char: myAvatar, updated_at: new Date().toISOString(),
     })
     await loadNearbyUsers(latitude, longitude)
-    await loadNearbyGroups(latitude, longitude, radius)
   }
 
   const toggleRadar = async (val: boolean) => {
@@ -125,23 +148,7 @@ export default function ExploreScreen() {
     else {
       if (userId) await supabase.from('user_locations').update({ radar_on: false }).eq('user_id', userId)
       setNearbyUsers([])
-      await loadAllGroups()
     }
-  }
-
-  const switchMode = async (mode: 'lit' | 'ghost') => {
-    setMyMode(mode)
-    if (radarOn && coords) {
-      await supabase.from('user_locations').upsert({
-        user_id: userId, location: `POINT(${coords.lon} ${coords.lat})`,
-        radar_on: true, identity_mode: mode, avatar_char: myAvatar, updated_at: new Date().toISOString(),
-      })
-    }
-  }
-
-  const changeRadius = async (r: number) => {
-    setRadius(r)
-    if (radarOn && coords) await loadNearbyGroups(coords.lat, coords.lon, r)
   }
 
   const openDM = (user: NearbyUser) => {
@@ -149,22 +156,6 @@ export default function ExploreScreen() {
       pathname: '/dm',
       params: { userId: user.id, userName: user.identity_mode === 'ghost' ? (user.avatar_char || '👻') : (user.display_name || user.username), myMode, myAvatar, isAgent: user.is_agent ? '1' : '0' }
     })
-  }
-
-  const createGroupWithUser = async (user: NearbyUser) => {
-    if (!userId || !coords) return
-    const myName = myMode === 'ghost' ? myAvatar : 'You'
-    const otherName = user.identity_mode === 'ghost' ? (user.avatar_char || '👻') : (user.display_name || user.username)
-    const { data, error } = await supabase.from('groups').insert({
-      name: `${myName} & ${otherName}`, location: `POINT(${coords.lon} ${coords.lat})`,
-      status: 'open', type: 'manual', min_members: 2, member_count: 2, created_by: userId,
-    }).select().single()
-    if (error) { Alert.alert('Error', error.message); return }
-    await supabase.from('group_members').insert([
-      { group_id: data.id, user_id: userId, role: 'admin' },
-      { group_id: data.id, user_id: user.id, role: 'member' },
-    ])
-    router.push({ pathname: '/chat', params: { id: data.id, name: data.name, members: '2' } })
   }
 
   const filteredGroups = groups.filter(g =>
@@ -178,68 +169,40 @@ export default function ExploreScreen() {
 
       <View style={s.header}>
         <Text style={s.title}>Explore</Text>
-        <View style={s.radarToggle}>
-          <Text style={s.radarLabel}>📡 Radar</Text>
-          <Switch value={radarOn} onValueChange={toggleRadar} trackColor={{ true: GREEN }} thumbColor="#fff" />
+        <View style={s.headerRight}>
+          <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
+            <Text style={s.createBtnText}>+ Trybe</Text>
+          </TouchableOpacity>
+          <View style={s.radarToggle}>
+            <Text style={s.radarLabel}>📡</Text>
+            <Switch value={radarOn} onValueChange={toggleRadar} trackColor={{ true: GREEN }} thumbColor="#fff" />
+          </View>
         </View>
       </View>
 
       {radarOn && (
         <View style={s.modeBar}>
-          <TouchableOpacity style={[s.modeBtn, myMode === 'lit' && s.modeBtnLit]} onPress={() => switchMode('lit')}>
-            <Text style={s.modeBtnText}>🔥 Lit — Visible</Text>
+          <TouchableOpacity style={[s.modeBtn, myMode === 'lit' && s.modeBtnLit]} onPress={() => setMyMode('lit')}>
+            <Text style={s.modeBtnText}>🔥 Visible</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[s.modeBtn, myMode === 'ghost' && s.modeBtnGhost]} onPress={() => switchMode('ghost')}>
-            <Text style={s.modeBtnText}>👻 Ghost — Anonymous</Text>
+          <TouchableOpacity style={[s.modeBtn, myMode === 'ghost' && s.modeBtnGhost]} onPress={() => setMyMode('ghost')}>
+            <Text style={s.modeBtnText}>👻 Ghost</Text>
           </TouchableOpacity>
-        </View>
-      )}
-
-      {radarOn && myMode === 'ghost' && (
-        <TouchableOpacity style={s.avatarBtn} onPress={() => setShowAvatarPicker(!showAvatarPicker)}>
-          <Text style={s.avatarBtnText}>Your avatar: {myAvatar} — tap to change</Text>
-        </TouchableOpacity>
-      )}
-
-      {showAvatarPicker && (
-        <View style={s.avatarGrid}>
-          {AVATARS.map(a => (
-            <TouchableOpacity key={a} style={[s.avatarOpt, myAvatar === a && s.avatarOptSel]} onPress={() => { setMyAvatar(a); setShowAvatarPicker(false) }}>
-              <Text style={{ fontSize: 24 }}>{a}</Text>
-            </TouchableOpacity>
-          ))}
         </View>
       )}
 
       <View style={s.tabRow}>
         <TouchableOpacity style={[s.tabBtn, tab === 'trybes' && s.tabBtnActive]} onPress={() => setTab('trybes')}>
-          <Text style={[s.tabBtnText, tab === 'trybes' && s.tabBtnTextActive]}>⚡ Trybes {groups.length > 0 ? `(${groups.length})` : ''}</Text>
+          <Text style={[s.tabBtnText, tab === 'trybes' && s.tabBtnTextActive]}>⚡ Trybes ({groups.length})</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[s.tabBtn, tab === 'people' && s.tabBtnActive]} onPress={() => setTab('people')}>
           <Text style={[s.tabBtnText, tab === 'people' && s.tabBtnTextActive]}>👥 People {nearbyUsers.length > 0 ? `(${nearbyUsers.length})` : ''}</Text>
         </TouchableOpacity>
       </View>
 
-      {tab === 'trybes' && radarOn && (
-        <View style={s.radiusRow}>
-          <Text style={s.radiusLabel}>Radius:</Text>
-          {[1000, 5000, 10000, 50000].map(r => (
-            <TouchableOpacity key={r} style={[s.radiusBtn, radius === r && s.radiusBtnActive]} onPress={() => changeRadius(r)}>
-              <Text style={[s.radiusBtnText, radius === r && s.radiusBtnTextActive]}>{r < 1000 ? `${r}m` : `${r / 1000}km`}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-
       {tab === 'trybes' && (
         <View style={s.searchRow}>
           <TextInput style={s.searchInput} value={search} onChangeText={setSearch} placeholder="Search groups..." placeholderTextColor="#B4B2A9" />
-        </View>
-      )}
-
-      {showAllGroups && tab === 'trybes' && (
-        <View style={s.allGroupsBanner}>
-          <Text style={s.allGroupsBannerText}>{radarOn ? '📍 No nearby groups — showing all' : '⚡ All active groups'}</Text>
         </View>
       )}
 
@@ -249,39 +212,72 @@ export default function ExploreScreen() {
           keyExtractor={g => g.id}
           contentContainerStyle={s.list}
           refreshing={loading}
-          onRefresh={radarOn && coords ? () => loadNearbyGroups(coords.lat, coords.lon, radius) : loadAllGroups}
+          onRefresh={() => loadGroups()}
           ListEmptyComponent={
             <View style={s.emptySmall}>
-              {loading ? <ActivityIndicator color={GREEN} /> : <Text style={s.emptySmallText}>No groups yet</Text>}
+              {loading ? <ActivityIndicator color={GREEN} /> : <Text style={s.emptySmallText}>No groups yet — be the first!</Text>}
             </View>
           }
-          renderItem={({ item }) => (
-            <Pressable style={s.groupCard} onPress={() =>
-              router.push({ pathname: item.status === 'open' ? '/chat' : '/lobby', params: { id: item.id, name: item.name, members: item.member_count.toString() } })
-            }>
-              <View style={s.groupCardTop}>
-                <View style={[s.groupDot, item.status === 'open' ? s.dotOpen : s.dotLobby]} />
-                <View style={s.groupInfo}>
-                  <Text style={s.groupName} numberOfLines={1}>{item.name}</Text>
-                  {item.location_name && <Text style={s.groupLoc}>📍 {item.location_name}</Text>}
-                  {item.last_message && <Text style={s.groupLastMsg} numberOfLines={1}>💬 "{item.last_message}"</Text>}
+          renderItem={({ item }) => {
+            const isMember = item.memberStatus === 'member'
+            const isPending = item.memberStatus === 'pending'
+            const isOpen = item.status === 'open'
+            const pct = Math.min(100, Math.round((item.member_count / Math.max(item.min_members, 1)) * 100))
+
+            return (
+              <Pressable style={s.groupCard} onPress={() => isMember ? openGroup(item) : null}>
+                <View style={s.groupCardTop}>
+                  <View style={[s.groupDot, isOpen ? s.dotOpen : s.dotLobby]} />
+                  <View style={s.groupInfo}>
+                    <View style={s.groupNameRow}>
+                      <Text style={s.groupName} numberOfLines={1}>{item.name}</Text>
+                      {item.is_private && <Text style={s.privateBadge}>🔒</Text>}
+                    </View>
+                    {item.location_name && <Text style={s.groupLoc}>📍 {item.location_name}</Text>}
+                    {item.last_message && <Text style={s.groupLastMsg} numberOfLines={1}>"{item.last_message}"</Text>}
+                  </View>
+                  <View style={s.groupRight}>
+                    <Text style={s.groupCount}>{item.member_count}</Text>
+                    <Text style={s.groupLabel}>people</Text>
+                  </View>
                 </View>
-                <View style={s.groupRight}>
-                  <Text style={s.groupCount}>{item.member_count}</Text>
-                  <Text style={s.groupLabel}>people</Text>
-                </View>
-              </View>
-              <View style={s.groupStatus}>
-                {item.status === 'open'
-                  ? <Text style={s.openLabel}>🟢 Chat is LIVE</Text>
-                  : <Text style={s.lobbyLabel}>🟣 Lobby — {item.member_count}/{item.min_members}</Text>
-                }
-                {item.distance_m && (
-                  <Text style={s.distLabel}>{item.distance_m < 1000 ? `${Math.round(item.distance_m)}m` : `${(item.distance_m / 1000).toFixed(1)}km`}</Text>
+
+                {!isOpen && (
+                  <View style={s.progressWrap}>
+                    <View style={s.progressBg}><View style={[s.progressFill, { width: `${pct}%` as any }]} /></View>
+                    <Text style={s.progressLabel}>{item.member_count}/{item.min_members} to unlock</Text>
+                  </View>
                 )}
-              </View>
-            </Pressable>
-          )}
+
+                <View style={s.groupFooter}>
+                  <Text style={[s.statusLabel, isOpen ? s.statusOpen : s.statusLobby]}>
+                    {isOpen ? '🟢 LIVE' : '🟣 Lobby'}
+                  </Text>
+
+                  {isMember ? (
+                    <TouchableOpacity style={s.enterBtn} onPress={() => openGroup(item)}>
+                      <Text style={s.enterBtnText}>Enter →</Text>
+                    </TouchableOpacity>
+                  ) : isPending ? (
+                    <View style={s.pendingBtn}>
+                      <Text style={s.pendingBtnText}>⏳ Pending</Text>
+                    </View>
+                  ) : (
+                    <TouchableOpacity
+                      style={[s.joinBtn, item.is_private && s.joinBtnPrivate]}
+                      onPress={() => joinGroup(item)}
+                      disabled={joiningId === item.id}
+                    >
+                      {joiningId === item.id
+                        ? <ActivityIndicator color="#fff" size="small" />
+                        : <Text style={s.joinBtnText}>{item.is_private ? '📨 Request' : '⚡ Join'}</Text>
+                      }
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </Pressable>
+            )
+          }}
         />
       ) : (
         <FlatList
@@ -320,10 +316,9 @@ export default function ExploreScreen() {
                   </View>
                   <Text style={s.userDist}>{item.distance_m < 1000 ? `${Math.round(item.distance_m)}m` : `${(item.distance_m / 1000).toFixed(1)}km`} away</Text>
                 </View>
-                <View style={s.userActions}>
-                  <TouchableOpacity style={s.actionBtn} onPress={() => openDM(item)}><Text style={s.actionBtnText}>💬</Text></TouchableOpacity>
-                  <TouchableOpacity style={[s.actionBtn, s.actionBtnGroup]} onPress={() => createGroupWithUser(item)}><Text style={s.actionBtnText}>⚡</Text></TouchableOpacity>
-                </View>
+                <TouchableOpacity style={s.dmBtn} onPress={() => openDM(item)}>
+                  <Text style={s.dmBtnText}>💬</Text>
+                </TouchableOpacity>
               </View>
             )
           }}
@@ -339,73 +334,74 @@ const GRAY = '#888780'
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAF8' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   title: { fontSize: 22, fontWeight: '700', color: '#2C2C2A' },
-  radarToggle: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  radarLabel: { fontSize: 13, fontWeight: '600', color: GRAY },
-  modeBar: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  modeBtn: { flex: 1, paddingVertical: 10, borderRadius: 12, backgroundColor: '#F1EFE8', alignItems: 'center' },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  createBtn: { backgroundColor: GREEN, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 },
+  createBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  radarToggle: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  radarLabel: { fontSize: 16 },
+  modeBar: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  modeBtn: { flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#F1EFE8', alignItems: 'center' },
   modeBtnLit: { backgroundColor: '#E1F5EE', borderWidth: 1.5, borderColor: GREEN },
   modeBtnGhost: { backgroundColor: '#EEEDFE', borderWidth: 1.5, borderColor: PURPLE },
   modeBtnText: { fontSize: 13, fontWeight: '600', color: '#2C2C2A' },
-  avatarBtn: { backgroundColor: '#EEEDFE', paddingHorizontal: 16, paddingVertical: 8, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  avatarBtnText: { fontSize: 13, color: PURPLE, fontWeight: '500' },
-  avatarGrid: { flexDirection: 'row', flexWrap: 'wrap', padding: 12, backgroundColor: '#fff', gap: 8, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  avatarOpt: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
-  avatarOptSel: { backgroundColor: '#EEEDFE', borderWidth: 2, borderColor: PURPLE },
   tabRow: { flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  tabBtn: { flex: 1, paddingVertical: 9, borderRadius: 10, backgroundColor: '#F1EFE8', alignItems: 'center' },
+  tabBtn: { flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#F1EFE8', alignItems: 'center' },
   tabBtnActive: { backgroundColor: GREEN },
   tabBtnText: { fontSize: 13, fontWeight: '600', color: GRAY },
   tabBtnTextActive: { color: '#fff' },
-  radiusRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  radiusLabel: { fontSize: 12, color: GRAY, fontWeight: '600' },
-  radiusBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, backgroundColor: '#F1EFE8' },
-  radiusBtnActive: { backgroundColor: PURPLE },
-  radiusBtnText: { fontSize: 12, color: GRAY, fontWeight: '600' },
-  radiusBtnTextActive: { color: '#fff' },
   searchRow: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
   searchInput: { backgroundColor: '#F1EFE8', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: '#2C2C2A' },
-  allGroupsBanner: { backgroundColor: '#E1F5EE', paddingHorizontal: 16, paddingVertical: 8 },
-  allGroupsBannerText: { fontSize: 12, color: '#0F6E56', fontWeight: '500' },
   list: { padding: 12, gap: 10, paddingBottom: 20 },
-  emptySmall: { paddingTop: 40, alignItems: 'center' },
+  emptySmall: { paddingTop: 60, alignItems: 'center' },
   emptySmallText: { fontSize: 14, color: GRAY },
-  radarOffMsg: { alignItems: 'center', paddingTop: 60, paddingHorizontal: 32 },
-  radarOffEmoji: { fontSize: 56, marginBottom: 16 },
-  radarOffTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A', marginBottom: 8 },
-  radarOffSub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 24, lineHeight: 22 },
-  radarOffBtn: { backgroundColor: GREEN, paddingHorizontal: 28, paddingVertical: 12, borderRadius: 20 },
-  radarOffBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  radarOffMsg: { alignItems: 'center', paddingTop: 40, paddingHorizontal: 32 },
+  radarOffEmoji: { fontSize: 48, marginBottom: 12 },
+  radarOffTitle: { fontSize: 18, fontWeight: '700', color: '#2C2C2A', marginBottom: 6 },
+  radarOffSub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 20 },
+  radarOffBtn: { backgroundColor: GREEN, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20 },
+  radarOffBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   groupCard: { backgroundColor: '#fff', borderRadius: 14, borderWidth: 0.5, borderColor: '#E0DED8', padding: 14 },
-  groupCardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 8 },
+  groupCardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 10 },
   groupDot: { width: 8, height: 8, borderRadius: 4, marginTop: 6 },
   dotOpen: { backgroundColor: GREEN },
   dotLobby: { backgroundColor: PURPLE },
   groupInfo: { flex: 1 },
-  groupName: { fontSize: 15, fontWeight: '600', color: '#2C2C2A', marginBottom: 3 },
-  groupLoc: { fontSize: 12, color: GRAY, marginBottom: 3 },
+  groupNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
+  groupName: { fontSize: 15, fontWeight: '600', color: '#2C2C2A', flex: 1 },
+  privateBadge: { fontSize: 13 },
+  groupLoc: { fontSize: 12, color: GRAY, marginBottom: 2 },
   groupLastMsg: { fontSize: 12, color: GRAY, fontStyle: 'italic' },
   groupRight: { alignItems: 'center' },
   groupCount: { fontSize: 22, fontWeight: '700', color: '#2C2C2A' },
   groupLabel: { fontSize: 10, color: GRAY },
-  groupStatus: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  openLabel: { fontSize: 12, color: GREEN, fontWeight: '600' },
-  lobbyLabel: { fontSize: 12, color: PURPLE, fontWeight: '600' },
-  distLabel: { fontSize: 11, color: GRAY },
+  progressWrap: { marginBottom: 10 },
+  progressBg: { height: 4, backgroundColor: '#F1EFE8', borderRadius: 2, marginBottom: 4 },
+  progressFill: { height: 4, backgroundColor: PURPLE, borderRadius: 2, minWidth: 4 },
+  progressLabel: { fontSize: 11, color: PURPLE, fontWeight: '600' },
+  groupFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  statusLabel: { fontSize: 12, fontWeight: '600' },
+  statusOpen: { color: GREEN },
+  statusLobby: { color: PURPLE },
+  enterBtn: { backgroundColor: GREEN, paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20 },
+  enterBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  joinBtn: { backgroundColor: GREEN, paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20, minWidth: 80, alignItems: 'center' },
+  joinBtnPrivate: { backgroundColor: PURPLE },
+  joinBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  pendingBtn: { backgroundColor: '#F1EFE8', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 },
+  pendingBtnText: { color: GRAY, fontSize: 12, fontWeight: '600' },
   userCard: { backgroundColor: '#fff', borderRadius: 14, borderWidth: 0.5, borderColor: '#E0DED8', padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  userAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#EEEDFE', alignItems: 'center', justifyContent: 'center' },
+  userAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#EEEDFE', alignItems: 'center', justifyContent: 'center' },
   userAvatarAgent: { backgroundColor: '#FFF0EB', borderWidth: 2, borderColor: '#FF6B35' },
   userInfo: { flex: 1 },
-  userNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 },
+  userNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 3 },
   userName: { fontSize: 15, fontWeight: '600', color: '#2C2C2A' },
   agentBadge: { backgroundColor: '#FF6B35', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   agentBadgeText: { fontSize: 10, fontWeight: '700', color: '#fff' },
   ghostBadge: { backgroundColor: '#F1EFE8', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   ghostBadgeText: { fontSize: 10, color: GRAY },
   userDist: { fontSize: 12, color: GRAY },
-  userActions: { flexDirection: 'row', gap: 8 },
-  actionBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
-  actionBtnGroup: { backgroundColor: '#EEEDFE' },
-  actionBtnText: { fontSize: 18 },
+  dmBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
+  dmBtnText: { fontSize: 20 },
 })

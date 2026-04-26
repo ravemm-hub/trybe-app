@@ -1,13 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  StatusBar, Pressable, RefreshControl, ActivityIndicator,
-  Alert, Linking,
+  StatusBar, Pressable, RefreshControl, ActivityIndicator, Alert, Linking,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useRouter } from 'expo-router'
-import * as Contacts from 'expo-contacts'
 import * as SMS from 'expo-sms'
+import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
 
 const INVITE_MSG = `Hey! Join me on Tryber — The Next Generation of SocialAIsing 🚀\nDownload: https://ravemm-hub.github.io/trybe-app`
@@ -43,7 +41,7 @@ export default function ChatsScreen() {
 
       const results: ChatItem[] = []
 
-      // Load groups
+      // Only groups I'm a member of
       const { data: memberData } = await supabase
         .from('group_members')
         .select('group_id, last_read_at, groups(*)')
@@ -81,10 +79,9 @@ export default function ChatsScreen() {
         })
       }
 
-      // Load DMs
+      // DMs
       const { data: dms } = await supabase
-        .from('dm_messages')
-        .select('*')
+        .from('dm_messages').select('*')
         .or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`)
         .order('created_at', { ascending: false })
 
@@ -99,16 +96,10 @@ export default function ChatsScreen() {
           .from('profiles').select('display_name, username, avatar_char').eq('id', otherId).single()
         const name = otherProfile?.display_name || otherProfile?.username || 'Unknown'
         const avatar = otherProfile?.avatar_char || name[0] || '?'
-
         results.push({
-          id: `dm_${otherId}`,
-          type: 'dm',
-          name,
-          avatar,
-          last_message: lastDm.content,
-          last_message_at: lastDm.created_at,
-          unread: 0,
-          other_user_id: otherId,
+          id: `dm_${otherId}`, type: 'dm', name, avatar,
+          last_message: lastDm.content, last_message_at: lastDm.created_at,
+          unread: 0, other_user_id: otherId,
         })
       }
 
@@ -135,9 +126,18 @@ export default function ChatsScreen() {
 
   const markGroupRead = async (groupId: string) => {
     if (!userId) return
-    await supabase.from('group_members')
-      .update({ last_read_at: new Date().toISOString() })
-      .eq('group_id', groupId).eq('user_id', userId)
+    await supabase.from('group_members').update({ last_read_at: new Date().toISOString() }).eq('group_id', groupId).eq('user_id', userId)
+  }
+
+  const leaveGroup = async (item: ChatItem) => {
+    Alert.alert('Leave group', `Leave "${item.name}"?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Leave', style: 'destructive', onPress: async () => {
+        await supabase.from('group_members').delete().eq('group_id', item.id).eq('user_id', userId)
+        await supabase.from('groups').update({ member_count: (item.member_count || 1) - 1 }).eq('id', item.id)
+        setItems(prev => prev.filter(i => i.id !== item.id))
+      }}
+    ])
   }
 
   const openItem = (item: ChatItem) => {
@@ -149,17 +149,11 @@ export default function ChatsScreen() {
         router.push({ pathname: '/lobby', params: { id: item.id, name: item.name } })
       }
     } else {
-      router.push({
-        pathname: '/dm',
-        params: { userId: item.other_user_id, userName: item.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' }
-      })
+      router.push({ pathname: '/dm', params: { userId: item.other_user_id, userName: item.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })
     }
   }
 
-  const inviteFriends = () => {
-    router.push('/contacts')
-  }
-    
+  const inviteFriends = () => router.push('/contacts')
 
   const formatTime = (ts: string) => {
     const diff = Date.now() - new Date(ts).getTime()
@@ -178,9 +172,7 @@ export default function ChatsScreen() {
         <View style={s.headerLeft}>
           <Text style={s.logo}>tryber</Text>
           {totalUnread > 0 && (
-            <View style={s.totalUnread}>
-              <Text style={s.totalUnreadText}>{totalUnread > 99 ? '99+' : totalUnread}</Text>
-            </View>
+            <View style={s.totalUnread}><Text style={s.totalUnreadText}>{totalUnread > 99 ? '99+' : totalUnread}</Text></View>
           )}
         </View>
         <View style={s.headerRight}>
@@ -205,9 +197,9 @@ export default function ChatsScreen() {
             <View style={s.emptyState}>
               <Text style={s.emptyEmoji}>💬</Text>
               <Text style={s.emptyTitle}>No chats yet</Text>
-              <Text style={s.emptySub}>Drop a Trybe or invite friends to join</Text>
-              <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}>
-                <Text style={s.emptyBtnText}>+ Drop Trybe</Text>
+              <Text style={s.emptySub}>Join a Trybe on Explore or invite friends</Text>
+              <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/(tabs)/explore')}>
+                <Text style={s.emptyBtnText}>📡 Explore Trybes</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[s.emptyBtn, s.emptyBtnInvite]} onPress={inviteFriends}>
                 <Text style={[s.emptyBtnText, { color: PURPLE }]}>👥 Invite Friends</Text>
@@ -220,7 +212,18 @@ export default function ChatsScreen() {
             const isOpen = item.status === 'open'
 
             return (
-              <Pressable style={s.row} onPress={() => openItem(item)}>
+              <Pressable
+                style={s.row}
+                onPress={() => openItem(item)}
+                onLongPress={() => {
+                  if (isGroup) {
+                    Alert.alert(item.name, '', [
+                      { text: '🚪 Leave group', style: 'destructive', onPress: () => leaveGroup(item) },
+                      { text: 'Cancel', style: 'cancel' },
+                    ])
+                  }
+                }}
+              >
                 <View style={[s.avatar, isGroup ? s.avatarGroup : s.avatarDM]}>
                   <Text style={s.avatarText}>{item.avatar}</Text>
                 </View>
@@ -265,12 +268,12 @@ const s = StyleSheet.create({
   totalUnread: { backgroundColor: '#E24B4A', borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
   totalUnreadText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   headerRight: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  inviteBtn: { backgroundColor: '#EEEDFE', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
+  inviteBtn: { backgroundColor: '#EEEDFE', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 16 },
   inviteBtnText: { color: PURPLE, fontSize: 12, fontWeight: '700' },
-  createBtn: { backgroundColor: GREEN, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20 },
+  createBtn: { backgroundColor: GREEN, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 16 },
   createBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   listEmpty: { flex: 1 },
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32, gap: 12 },
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60, paddingHorizontal: 32, gap: 12 },
   emptyEmoji: { fontSize: 56, marginBottom: 8 },
   emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A' },
   emptySub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 8 },

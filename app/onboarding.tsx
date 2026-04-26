@@ -114,7 +114,7 @@ export default function OnboardingScreen() {
 
     if (currentStep === 'features') {
       setStep(5)
-      await typeMessage(`מעולה ${userName}! 🎉\n\nאני אהיה כאן בכל עת — פשוט לחץ על ✦ Agent בתחתית המסך.\n\n
+     await typeMessage(`מעולה ${userName}! 🎉 תתחיל לחקור את האפליקציה.`)
       return
     }
 
