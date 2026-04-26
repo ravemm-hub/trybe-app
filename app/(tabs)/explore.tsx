@@ -170,6 +170,9 @@ export default function ExploreScreen() {
       <View style={s.header}>
         <Text style={s.title}>Explore</Text>
         <View style={s.headerRight}>
+<TouchableOpacity style={s.radarMapBtn} onPress={() => router.push('/radar')}>
+  <Text style={s.radarMapBtnText}>🗺️</Text>
+</TouchableOpacity>
           <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
             <Text style={s.createBtnText}>+ Trybe</Text>
           </TouchableOpacity>
@@ -339,6 +342,8 @@ const s = StyleSheet.create({
   headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   createBtn: { backgroundColor: GREEN, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 },
   createBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+radarMapBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E1F5EE', alignItems: 'center', justifyContent: 'center' },
+radarMapBtnText: { fontSize: 18 },
   radarToggle: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   radarLabel: { fontSize: 16 },
   modeBar: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
