@@ -98,7 +98,7 @@ export default function AgentScreen() {
       }
       const { data: mem } = await supabase.from('teeby_memory').select('facts').eq('user_id', user.id).single()
       if (mem?.facts) setMemoryFacts(mem.facts)
-      const { data: history } = await supabase.from('agent_messages').select('*').eq('user_id', user.id).order('created_at', { ascending: true }).limit(50)
+       const { data: history } = await supabase.from('agent_messages').select('*').eq('user_id', user.id).gte('created_at', new Date(new Date().setHours(0,0,0,0)).toISOString()).order('created_at', { ascending: true }).limit(50)
       if (history?.length) {
         setMessages(history as Message[])
         setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 200)
