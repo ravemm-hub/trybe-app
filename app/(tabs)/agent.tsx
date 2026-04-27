@@ -232,7 +232,17 @@ Rules:
       if (needsCalendar) {
         context += '\nFor calendar requests: if the user gave a title and time, add [CALENDAR:title|YYYY-MM-DDTHH:mm] at the end of your reply. Be smart about parsing dates from natural language.\n\n'
       }
+// Send DM intent
+const needsDM = lower.includes('send message') || lower.includes('שלח הודעה') || lower.includes('write to') || lower.includes('כתוב ל') || lower.includes('tell') && lower.includes('that')
+if (needsDM) {
+  context += '\nFor sending DMs: if user wants to send a message to someone, include [DM:username|message content] at the end.\n\n'
+}
 
+// Create group intent
+const needsCreateGroup = lower.includes('create group') || lower.includes('צור קבוצה') || lower.includes('open group') || lower.includes('פתח קבוצה') || lower.includes('start a group')
+if (needsCreateGroup) {
+  context += '\nFor creating groups: if user wants to create a group, include [CREATE_GROUP:group name] at the end.\n\n'
+}
       // Post intent
       const needsPost = lower.includes('post') || lower.includes('פרסם') || lower.includes('publish') || lower.includes('share on feed')
       if (needsPost) {
@@ -269,7 +279,37 @@ Rules:
           ? `\n\n✅ Added "${calMatch[1].trim()}" to your calendar!`
           : `\n\n⚠️ Couldn't add to calendar. Check permissions in Settings.`
       }
+// Handle DM action
+const dmMatch = reply.match(/\[DM:([^\|]+)\|([^\]]+)\]/)
+if (dmMatch) {
+  reply = reply.replace(dmMatch[0], '').trim()
+  const targetName = dmMatch[1].trim()
+  const dmContent = dmMatch[2].trim()
+  const { data: targetProfile } = await supabase.from('profiles').select('id, display_name').ilike('username', `%${targetName}%`).limit(1).single()
+  if (targetProfile) {
+    await supabase.from('dm_messages').insert({ sender_id: userId, receiver_id: targetProfile.id, content: dmContent, sender_mode: 'lit', receiver_mode: 'lit' })
+    reply += `\n\n✅ Message sent to ${targetProfile.display_name || targetName}!`
+  } else {
+    reply += `\n\n⚠️ Couldn't find user "${targetName}" on Tryber.`
+  }
+}
 
+// Handle create group action
+const createGroupMatch = reply.match(/\[CREATE_GROUP:([^\]]+)\]/)
+if (createGroupMatch) {
+  reply = reply.replace(createGroupMatch[0], '').trim()
+  const groupName = createGroupMatch[1].trim()
+  const { data: newGroup } = await supabase.from('groups').insert({
+    name: groupName, status: 'open', type: 'manual', group_type: 'live',
+    min_members: 1, member_count: 1, created_by: userId,
+  }).select().single()
+  if (newGroup) {
+    await supabase.from('group_members').insert({ group_id: newGroup.id, user_id: userId, role: 'admin' })
+    await supabase.from('group_agents').insert({ group_id: newGroup.id, enabled: true })
+    reply += `\n\n✅ Group "${groupName}" created! `
+    reply += `[Open group →](tryber://chat/${newGroup.id})`
+  }
+}
       // Handle post action
       const postMatch = reply.match(/\[POST:([^\]]+)\]/)
       if (postMatch) {
