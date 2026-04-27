@@ -45,6 +45,7 @@ export default function FeedScreen() {
   const [selectedPost, setSelectedPost] = useState<Post | null>(null)
   const [comments, setComments] = useState<Comment[]>([])
   const [commentDraft, setCommentDraft] = useState('')
+  const [commentAnon, setCommentAnon] = useState(false)
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
@@ -104,7 +105,7 @@ export default function FeedScreen() {
     if (!commentDraft.trim() || !userId || !selectedPost) return
     const text = commentDraft.trim()
     setCommentDraft('')
-    await supabase.from('post_comments').insert({ post_id: selectedPost.id, user_id: userId, content: text })
+    await supabase.from('post_comments').insert({ post_id: selectedPost.id, user_id: userId, content: text, is_anonymous: commentAnon })
     await supabase.from('posts').update({ comment_count: (selectedPost.comment_count || 0) + 1 }).eq('id', selectedPost.id)
     await openComments(selectedPost)
     setPosts(prev => prev.map(p => p.id === selectedPost.id ? { ...p, comment_count: (p.comment_count || 0) + 1 } : p))
@@ -289,6 +290,9 @@ export default function FeedScreen() {
               )}
             />
             <View style={[s.commentInput, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+              <TouchableOpacity style={[s.anonToggle, commentAnon && s.anonToggleOn]} onPress={() => setCommentAnon(!commentAnon)}>
+                <Text style={s.anonToggleText}>{commentAnon ? '👻' : '🔥'}</Text>
+              </TouchableOpacity>
               <TextInput
                 style={s.commentTextInput}
                 value={commentDraft}
@@ -365,6 +369,9 @@ const s = StyleSheet.create({
   commentText: { fontSize: 14, color: '#2C2C2A', lineHeight: 20 },
   commentInput: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, padding: 12, borderTopWidth: 0.5, borderColor: '#E0DED8', backgroundColor: '#fff' },
   commentTextInput: { flex: 1, backgroundColor: '#F5F5F5', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#1A1A2E', maxHeight: 80 },
+  anonToggle: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
+  anonToggleOn: { backgroundColor: '#EEEDFE' },
+  anonToggleText: { fontSize: 18 },
   commentSendBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' },
   commentSendText: { color: '#fff', fontSize: 18, fontWeight: '700' },
 })
