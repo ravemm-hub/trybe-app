@@ -146,7 +146,7 @@ export default function AgentScreen() {
 
     try {
       const lower = msg.toLowerCase()
-      let context = `You are ${teebyName}, a helpful AI assistant in the Tryber social app. User's name: ${userName}. Location: ${locationCtx || 'unknown'}. Today: ${new Date().toLocaleDateString('en')}.\n\nYou can help with: group chats, finding people nearby, shopping lists, calendar events, posting on the feed, and summarizing missed messages.\n\nAlways reply in the same language as the user (Hebrew or English). Be concise, warm, and helpful. Max 3 sentences unless listing items.\n\n`
+      let context = `You are ${teebyName}, a helpful AI assistant in the Tryber social app. User's name: ${userName}. Location: ${locationCtx || 'unknown'}.Today: ${new Date().toLocaleDateString('en', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}. Current time: ${new Date().toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}. .\n\nYou can help with: group chats, finding people nearby, shopping lists, calendar events, posting on the feed, and summarizing missed messages.\n\nAlways reply in the same language as the user (Hebrew or English). Be concise, warm, and helpful. Max 3 sentences unless listing items.\n\n`
 
       // Calendar intent
       const needsCalendar = lower.includes('calendar') || lower.includes('קלנדר') || lower.includes('add event') || lower.includes('remind') || lower.includes('תזכורת') || lower.includes('הוסף') || lower.includes('schedule')
