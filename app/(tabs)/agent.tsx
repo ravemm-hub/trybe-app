@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator,
@@ -21,11 +21,11 @@ type Message = {
 }
 
 const QUICK_PROMPTS = [
-  '📬 Summarize what I missed',
-  '📍 What\'s happening nearby?',
-  '🛒 Create a shopping list',
+  '📬 What did I miss?',
+  '🍕 Find food near me',
   '📅 Add to my calendar',
-  '⚡ Find active groups',
+  '⚡ Active groups nearby',
+  '🌐 Search the web for me',
 ]
 
 export default function AgentScreen() {
@@ -39,11 +39,10 @@ export default function AgentScreen() {
   const [teebyName, setTeebyName] = useState('Teeby')
   const [memoryFacts, setMemoryFacts] = useState<any>({})
   const [locationCtx, setLocationCtx] = useState('')
+  const [coords, setCoords] = useState<{lat: number, lon: number} | null>(null)
   const listRef = useRef<FlatList>(null)
 
-  useEffect(() => {
-    init()
-  }, [])
+  useEffect(() => { init() }, [])
 
   const init = async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -64,29 +63,60 @@ export default function AgentScreen() {
       .select('*').eq('user_id', user.id)
       .gte('created_at', new Date(new Date().setHours(0,0,0,0)).toISOString())
       .order('created_at', { ascending: true }).limit(50)
+
     if (history?.length) {
       setMessages(history as Message[])
       setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 200)
     } else {
       const greeting: Message = {
         id: 'greeting', role: 'assistant',
-        content: `Hey ${name}! 👋 I'm ${pa?.name || 'Teeby'}, your personal AI.\n\nI can help you:\n• 📬 Summarize missed messages\n• 📅 Add events to your calendar\n• 🛒 Create shared shopping lists\n• 📍 Find people & groups nearby\n• ✦ Post on your behalf\n\nWhat can I do for you?`,
+        content: `Hey ${name}! ✦\n\nI'm ${pa?.name || 'Teeby'} — your personal AI on Tryber.\n\nHere's what I can do for you:\n🍕 Find restaurants & places nearby\n📅 Add events to your calendar\n📬 Summarize missed messages\n🌐 Search the web for anything\n✦ Post on the feed for you\n\nWhat do you need?`,
         created_at: new Date().toISOString()
       }
       setMessages([greeting])
     }
 
+    // Get location
     try {
       const { status } = await Location.requestForegroundPermissionsAsync()
       if (status === 'granted') {
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        setCoords({ lat: loc.coords.latitude, lon: loc.coords.longitude })
         const [place] = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude })
-        if (place) setLocationCtx(`${place.city || ''}, ${place.country || ''}`)
+        if (place) {
+          const locStr = [place.name, place.street, place.city, place.country].filter(Boolean).join(', ')
+          setLocationCtx(locStr)
+        }
       }
     } catch {}
   }
 
-  const addToCalendar = async (title: string, dateStr: string) => {
+  const webSearch = async (query: string): Promise<string> => {
+    try {
+      const res = await fetch('https://api.tavily.com/search', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          api_key: TAVILY_KEY,
+          query,
+          max_results: 5,
+          search_depth: 'advanced',
+          include_answer: true,
+        }),
+      })
+      const data = await res.json()
+      let result = ''
+      if (data.answer) result += `Answer: ${data.answer}\n\n`
+      if (data.results?.length) {
+        result += data.results.slice(0, 4).map((r: any) =>
+          `• ${r.title}: ${r.content?.slice(0, 300)}`
+        ).join('\n\n')
+      }
+      return result || ''
+    } catch { return '' }
+  }
+
+  const addToCalendar = async (title: string, dateStr: string, notes?: string): Promise<boolean> => {
     try {
       const { status } = await Calendar.requestCalendarPermissionsAsync()
       if (status !== 'granted') {
@@ -96,41 +126,24 @@ export default function AgentScreen() {
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
       const defaultCal = calendars.find(c => c.allowsModifications) || calendars[0]
       if (!defaultCal) return false
-
       const date = new Date(dateStr)
+      if (isNaN(date.getTime())) return false
       await Calendar.createEventAsync(defaultCal.id, {
         title,
         startDate: date,
         endDate: new Date(date.getTime() + 60 * 60 * 1000),
-        notes: 'Added by Teeby on Tryber',
-      })
-      return true
-    } catch (e) { return false }
-  }
-
-  const publishPost = async (content: string) => {
-    if (!userId) return false
-    try {
-      await supabase.from('posts').insert({
-        user_id: userId,
-        content,
-        likes: 0,
-        is_anonymous: false,
+        notes: notes || 'Added by Teeby on Tryber',
       })
       return true
     } catch { return false }
   }
 
-  const webSearch = async (query: string): Promise<string> => {
+  const publishPost = async (content: string): Promise<boolean> => {
+    if (!userId) return false
     try {
-      const res = await fetch('https://api.tavily.com/search', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ api_key: TAVILY_KEY, query, max_results: 3, search_depth: 'basic' }),
-      })
-      const data = await res.json()
-      return data.results?.map((r: any) => `${r.title}: ${r.content?.slice(0, 200)}`).join('\n') || ''
-    } catch { return '' }
+      await supabase.from('posts').insert({ user_id: userId, content, likes: 0, is_anonymous: false })
+      return true
+    } catch { return false }
   }
 
   const send = async (text?: string) => {
@@ -146,119 +159,144 @@ export default function AgentScreen() {
 
     try {
       const lower = msg.toLowerCase()
-      let context = `You are ${teebyName}, a helpful AI assistant in the Tryber social app. User's name: ${userName}. Location: ${locationCtx || 'unknown'}. Today: ${new Date().toLocaleDateString('en')}.\n\nYou can help with: group chats, finding people nearby, shopping lists, calendar events, posting on the feed, and summarizing missed messages.\n\nAlways reply in the same language as the user (Hebrew or English). Be concise, warm, and helpful. Max 3 sentences unless listing items.\n\n`
+      const now = new Date()
+      const timeStr = now.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })
+      const dateStr = now.toLocaleDateString('en', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
 
-      // Calendar intent
-      const needsCalendar = lower.includes('calendar') || lower.includes('קלנדר') || lower.includes('add event') || lower.includes('remind') || lower.includes('תזכורת') || lower.includes('הוסף') || lower.includes('schedule')
-      if (needsCalendar) {
-        context += 'User wants to add something to their calendar. If they gave a title and date, confirm you\'ll add it. If not, ask for details. Format: respond with [CALENDAR:title|date] at the end of your message when ready to add.\n\n'
+      let context = `You are ${teebyName}, a smart and proactive AI assistant in the Tryber social app.
+User: ${userName} | Location: ${locationCtx || 'unknown'} | Coordinates: ${coords ? `${coords.lat.toFixed(4)},${coords.lon.toFixed(4)}` : 'unknown'}
+Current time: ${timeStr} | Date: ${dateStr}
+
+You have access to:
+- Web search results (provided below when relevant)
+- User's unread messages summary (provided below when relevant)
+- Nearby groups on Tryber
+
+Rules:
+- Always reply in the same language as the user (Hebrew or English)
+- Be direct, helpful, and proactive
+- When you have search results, summarize them clearly with bullet points
+- For food/places: give specific names, ratings if available, and why you recommend them
+- For calendar: confirm what you'll add, then include [CALENDAR:title|ISO-date] at the end
+- For posting: include [POST:content] at the end when user confirms
+- Keep responses under 150 words unless listing items
+
+`
+      // Web search for location-based queries
+      const needsSearch = lower.includes('food') || lower.includes('restaurant') || lower.includes('eat') ||
+        lower.includes('אוכל') || lower.includes('מסעדה') || lower.includes('cafe') || lower.includes('קפה') ||
+        lower.includes('find') || lower.includes('search') || lower.includes('חפש') || lower.includes('מה זה') ||
+        lower.includes('what is') || lower.includes('news') || lower.includes('חדשות') || lower.includes('open') ||
+        lower.includes('activity') || lower.includes('פעילות') || lower.includes('recommend') || lower.includes('המלץ')
+
+      if (needsSearch) {
+        const searchQuery = locationCtx ? `${msg} near ${locationCtx}` : msg
+        const searchResult = await webSearch(searchQuery)
+        if (searchResult) context += `\n🌐 Web search results for "${msg}":\n${searchResult}\n\n`
       }
 
-      // Shopping list intent  
-      const needsShopping = lower.includes('shopping') || lower.includes('רשימת קניות') || lower.includes('קניות') || lower.includes('buy') || lower.includes('list') || lower.includes('רשימה')
-      if (needsShopping) {
-        context += 'User wants a shopping list. Help them create or manage it. Be practical.\n\n'
-      }
-
-      // Post intent
-      const needsPost = lower.includes('post') || lower.includes('פרסם') || lower.includes('publish') || lower.includes('share') || lower.includes('שתף')
-      if (needsPost) {
-        context += 'User wants to post something on the feed. If they gave content, confirm with [POST:content] at end. If not, ask what to post.\n\n'
-      }
-
-      // Summary intent
-      const needsSummary = lower.includes('missed') || lower.includes('פספסתי') || lower.includes('summary') || lower.includes('סכם') || lower.includes('unread')
+      // Summary of unread
+      const needsSummary = lower.includes('missed') || lower.includes('פספסתי') || lower.includes('summary') ||
+        lower.includes('סכם') || lower.includes('unread') || lower.includes('לא קראתי')
       if (needsSummary) {
         const { data: myGroups } = await supabase.from('group_members').select('group_id, last_read_at, groups(name)').eq('user_id', userId)
         if (myGroups?.length) {
-          let summaryCtx = 'Unread messages from groups:\n'
+          let summaryCtx = '\n📬 Unread messages:\n'
+          let hasUnread = false
           for (const m of myGroups) {
             if (!m.last_read_at) continue
             const { data: msgs } = await supabase.from('messages').select('content').eq('group_id', m.group_id).neq('user_id', userId).gt('created_at', m.last_read_at).limit(5)
             if (msgs?.length) {
               summaryCtx += `\n${(m as any).groups?.name}: ${msgs.map((x: any) => x.content).join(' | ')}`
+              hasUnread = true
             }
           }
-          context += summaryCtx + '\n\n'
+          if (hasUnread) context += summaryCtx + '\n\n'
+          else context += '\n📬 No unread messages.\n\n'
         }
       }
 
-      // Web search
-      const needsSearch = lower.includes('what is') || lower.includes('מה זה') || lower.includes('news') || lower.includes('חדשות') || lower.includes('find') || lower.includes('search') || lower.includes('חפש')
-      if (needsSearch) {
-        const searchResult = await webSearch(msg)
-        if (searchResult) context += `Web search results:\n${searchResult}\n\n`
-      }
-
-      // Groups context
-      const needsGroups = lower.includes('group') || lower.includes('קבוצה') || lower.includes('nearby') || lower.includes('קרוב') || lower.includes('people')
+      // Nearby groups
+      const needsGroups = lower.includes('group') || lower.includes('קבוצה') || lower.includes('nearby') ||
+        lower.includes('קרוב') || lower.includes('active') || lower.includes('פעיל')
       if (needsGroups) {
-        const { data: groups } = await supabase.from('groups').select('name, status, member_count').eq('status', 'open').order('member_count', { ascending: false }).limit(5)
+        const { data: groups } = await supabase.from('groups').select('name, status, member_count, location_name').eq('status', 'open').order('member_count', { ascending: false }).limit(5)
         if (groups?.length) {
-          context += `Active groups nearby: ${groups.map((g: any) => `${g.name} (${g.member_count} people)`).join(', ')}\n\n`
+          context += `\n⚡ Active Trybes:\n${groups.map((g: any) => `• ${g.name} — ${g.member_count} people${g.location_name ? ` @ ${g.location_name}` : ''}`).join('\n')}\n\n`
         }
       }
 
-      // Memory context
-      if (Object.keys(memoryFacts).length > 0) {
-        context += `What I know about ${userName}: ${JSON.stringify(memoryFacts)}\n\n`
+      // Calendar intent
+      const needsCalendar = lower.includes('calendar') || lower.includes('קלנדר') || lower.includes('remind') ||
+        lower.includes('תזכורת') || lower.includes('schedule') || lower.includes('event') || lower.includes('אירוע') || lower.includes('add')
+      if (needsCalendar) {
+        context += '\nFor calendar requests: if the user gave a title and time, add [CALENDAR:title|YYYY-MM-DDTHH:mm] at the end of your reply. Be smart about parsing dates from natural language.\n\n'
       }
 
-      // Chat history
-      const recentMessages = messages.slice(-8).map(m => ({ role: m.role, content: m.content }))
+      // Post intent
+      const needsPost = lower.includes('post') || lower.includes('פרסם') || lower.includes('publish') || lower.includes('share on feed')
+      if (needsPost) {
+        context += '\nFor posting: if ready to post, include [POST:exact content to post] at the end.\n\n'
+      }
+
+      // Memory
+      if (Object.keys(memoryFacts).length > 0) {
+        context += `\nWhat I know about ${userName}: ${JSON.stringify(memoryFacts)}\n`
+      }
+
+      const recentMessages = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
 
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: 400,
+          max_tokens: 600,
           system: context,
           messages: [...recentMessages, { role: 'user', content: msg }],
         }),
       })
 
       const data = await res.json()
-      let reply = data.content?.[0]?.text?.trim() || 'Sorry, I had trouble understanding that.'
+      let reply = data.content?.[0]?.text?.trim() || 'Something went wrong. Try again!'
 
       // Handle calendar action
-      const calMatch = reply.match(/\[CALENDAR:(.+?)\|(.+?)\]/)
+      const calMatch = reply.match(/\[CALENDAR:([^\|]+)\|([^\]]+)\]/)
       if (calMatch) {
         reply = reply.replace(calMatch[0], '').trim()
-        const added = await addToCalendar(calMatch[1], calMatch[2])
-        reply += added ? `\n\n✅ Added "${calMatch[1]}" to your calendar!` : '\n\n⚠️ Couldn\'t access calendar. Check permissions.'
+        const added = await addToCalendar(calMatch[1].trim(), calMatch[2].trim())
+        reply += added
+          ? `\n\n✅ Added "${calMatch[1].trim()}" to your calendar!`
+          : `\n\n⚠️ Couldn't add to calendar. Check permissions in Settings.`
       }
 
       // Handle post action
-      const postMatch = reply.match(/\[POST:(.+?)\]/)
+      const postMatch = reply.match(/\[POST:([^\]]+)\]/)
       if (postMatch) {
         reply = reply.replace(postMatch[0], '').trim()
-        Alert.alert(
-          'Post to Feed?',
-          postMatch[1],
-          [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Post ✓', onPress: async () => {
-              const posted = await publishPost(postMatch[1])
-              if (posted) Alert.alert('✅ Posted!', 'Your post is now live on the feed.')
-            }}
-          ]
-        )
-        reply += '\n\n📝 I\'ve prepared your post — tap Post to publish it.'
+        const postContent = postMatch[1].trim()
+        Alert.alert('Post to Feed?', postContent, [
+          { text: 'Cancel', style: 'cancel' },
+          { text: '✓ Post it!', onPress: async () => {
+            const posted = await publishPost(postContent)
+            if (posted) Alert.alert('✅ Posted!', 'Your post is live on the feed.')
+          }}
+        ])
+        reply += '\n\n📝 Tap "Post it!" to publish.'
       }
 
-      // Save memory facts mentioned
+      // Save facts to memory
       const factPatterns = [
-        { key: 'name', regex: /my name is (\w+)|אני (\w+)/i },
-        { key: 'job', regex: /i work (at|as|in) (.+)|אני עובד ב(.+)/i },
-        { key: 'interests', regex: /i (like|love|enjoy) (.+)|אני אוהב (.+)/i },
+        { key: 'job', regex: /i (work|am) (at|as|a|an) (.+?)(?:\.|,|$)/i },
+        { key: 'likes', regex: /i (like|love|enjoy) (.+?)(?:\.|,|$)/i },
+        { key: 'lives', regex: /i (live|am) in (.+?)(?:\.|,|$)/i },
       ]
       const newFacts: any = { ...memoryFacts }
       let factsChanged = false
       for (const { key, regex } of factPatterns) {
         const match = msg.match(regex)
-        if (match) {
-          newFacts[key] = match[2] || match[1]
+        if (match && match[match.length - 1]) {
+          newFacts[key] = match[match.length - 1].trim()
           factsChanged = true
         }
       }
@@ -267,13 +305,20 @@ export default function AgentScreen() {
         await supabase.from('teeby_memory').upsert({ user_id: userId, facts: newFacts }, { onConflict: 'user_id' })
       }
 
-      const assistantMsg: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: reply, created_at: new Date().toISOString() }
+      const assistantMsg: Message = {
+        id: (Date.now() + 1).toString(), role: 'assistant',
+        content: reply, created_at: new Date().toISOString()
+      }
       setMessages(prev => [...prev, assistantMsg])
       await supabase.from('agent_messages').insert({ user_id: userId, role: 'assistant', content: reply })
       setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
 
-    } catch (e: any) {
-      const errMsg: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: 'Sorry, something went wrong. Try again!', created_at: new Date().toISOString() }
+    } catch {
+      const errMsg: Message = {
+        id: (Date.now() + 1).toString(), role: 'assistant',
+        content: 'Sorry, something went wrong. Try again!',
+        created_at: new Date().toISOString()
+      }
       setMessages(prev => [...prev, errMsg])
     } finally {
       setLoading(false)
@@ -284,7 +329,7 @@ export default function AgentScreen() {
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle="light-content" />
       <View style={s.header}>
         <View style={s.headerLeft}>
           <View style={s.agentAvatar}>
@@ -292,11 +337,14 @@ export default function AgentScreen() {
           </View>
           <View>
             <Text style={s.agentName}>{teebyName}</Text>
-            <Text style={s.agentSub}>Your Personal AI · Always here</Text>
+            <Text style={s.agentSub}>{locationCtx ? `📍 ${locationCtx.split(',')[0]}` : 'Your Personal AI'}</Text>
           </View>
         </View>
-        <TouchableOpacity style={s.settingsBtn} onPress={() => Alert.alert(teebyName, `📍 ${locationCtx || 'Location unknown'}\n🧠 ${Object.keys(memoryFacts).length} things remembered`)}>
-          <Text style={s.settingsBtnText}>⚙️</Text>
+        <TouchableOpacity style={s.settingsBtn} onPress={() => Alert.alert(
+          `${teebyName} Info`,
+          `📍 ${locationCtx || 'Location unknown'}\n🧠 ${Object.keys(memoryFacts).length} memories\n🌐 Web search: enabled\n📅 Calendar: enabled`
+        )}>
+          <Text style={s.settingsBtnText}>ⓘ</Text>
         </TouchableOpacity>
       </View>
 
@@ -306,17 +354,6 @@ export default function AgentScreen() {
           data={messages}
           keyExtractor={m => m.id}
           contentContainerStyle={s.messageList}
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-          ListFooterComponent={
-            loading ? (
-              <View style={s.typingRow}>
-                <View style={s.agentAvatarSmall}><Text style={s.agentAvatarSmallText}>✦</Text></View>
-                <View style={s.typingBubble}>
-                  <ActivityIndicator color={PURPLE} size="small" />
-                </View>
-              </View>
-            ) : null
-          }
           ListHeaderComponent={
             messages.length <= 1 ? (
               <View style={s.quickPromptsWrap}>
@@ -325,6 +362,16 @@ export default function AgentScreen() {
                     <Text style={s.quickPromptText}>{p}</Text>
                   </TouchableOpacity>
                 ))}
+              </View>
+            ) : null
+          }
+          ListFooterComponent={
+            loading ? (
+              <View style={s.typingRow}>
+                <View style={s.agentAvatarSmall}><Text style={s.agentAvatarSmallText}>✦</Text></View>
+                <View style={s.typingBubble}>
+                  <Text style={s.typingDots}>· · ·</Text>
+                </View>
               </View>
             ) : null
           }
@@ -353,14 +400,18 @@ export default function AgentScreen() {
             style={s.input}
             value={draft}
             onChangeText={setDraft}
-            placeholder={`Ask ${teebyName}...`}
-            placeholderTextColor="#B4B2A9"
+            placeholder={`Ask ${teebyName} anything...`}
+            placeholderTextColor="rgba(255,255,255,0.3)"
             multiline
             maxLength={500}
             returnKeyType="send"
             onSubmitEditing={() => send()}
           />
-          <TouchableOpacity style={[s.sendBtn, (!draft.trim() || loading) && s.sendBtnOff]} onPress={() => send()} disabled={!draft.trim() || loading}>
+          <TouchableOpacity
+            style={[s.sendBtn, (!draft.trim() || loading) && s.sendBtnOff]}
+            onPress={() => send()}
+            disabled={!draft.trim() || loading}
+          >
             <Text style={s.sendIcon}>↑</Text>
           </TouchableOpacity>
         </View>
@@ -370,41 +421,42 @@ export default function AgentScreen() {
 }
 
 const PURPLE = '#7F77DD'
-const GREEN = '#1D9E75'
+const DARK = '#1A1A2E'
 const GRAY = '#888780'
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FAFAF8' },
+  container: { flex: 1, backgroundColor: DARK },
   flex: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#16213E', borderBottomWidth: 0.5, borderColor: 'rgba(255,255,255,0.08)' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  agentAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEEDFE', borderWidth: 2, borderColor: PURPLE, alignItems: 'center', justifyContent: 'center' },
+  agentAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(127,119,221,0.2)', borderWidth: 1.5, borderColor: PURPLE, alignItems: 'center', justifyContent: 'center' },
   agentAvatarText: { fontSize: 18, color: PURPLE, fontWeight: '700' },
-  agentName: { fontSize: 16, fontWeight: '700', color: '#2C2C2A' },
-  agentSub: { fontSize: 11, color: GRAY },
-  settingsBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
-  settingsBtnText: { fontSize: 18 },
+  agentName: { fontSize: 16, fontWeight: '700', color: '#fff' },
+  agentSub: { fontSize: 11, color: 'rgba(255,255,255,0.4)' },
+  settingsBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' },
+  settingsBtnText: { fontSize: 18, color: 'rgba(255,255,255,0.5)' },
   messageList: { padding: 16, gap: 12, flexGrow: 1 },
-  quickPromptsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
-  quickPrompt: { backgroundColor: '#EEEDFE', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
-  quickPromptText: { fontSize: 13, color: PURPLE, fontWeight: '500' },
+  quickPromptsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
+  quickPrompt: { backgroundColor: 'rgba(127,119,221,0.15)', borderWidth: 1, borderColor: 'rgba(127,119,221,0.3)', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
+  quickPromptText: { fontSize: 13, color: '#A89EF5', fontWeight: '500' },
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   bubbleRowMe: { flexDirection: 'row-reverse' },
-  agentAvatarSmall: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#EEEDFE', alignItems: 'center', justifyContent: 'center' },
+  agentAvatarSmall: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(127,119,221,0.2)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(127,119,221,0.3)' },
   agentAvatarSmallText: { fontSize: 12, color: PURPLE, fontWeight: '700' },
-  bubbleCol: { maxWidth: '78%' },
+  bubbleCol: { maxWidth: '80%' },
   bubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
   bubbleMe: { backgroundColor: PURPLE, borderBottomRightRadius: 4 },
-  bubbleThem: { backgroundColor: '#fff', borderBottomLeftRadius: 4, borderWidth: 0.5, borderColor: '#E0DED8' },
-  bubbleText: { fontSize: 15, lineHeight: 22, color: '#2C2C2A' },
+  bubbleThem: { backgroundColor: 'rgba(255,255,255,0.07)', borderBottomLeftRadius: 4, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.1)' },
+  bubbleText: { fontSize: 15, lineHeight: 22, color: 'rgba(255,255,255,0.9)' },
   bubbleTextMe: { color: '#fff' },
-  timeText: { fontSize: 10, color: GRAY, marginTop: 4, marginLeft: 4 },
+  timeText: { fontSize: 10, color: 'rgba(255,255,255,0.25)', marginTop: 4, marginLeft: 4 },
   timeTextMe: { textAlign: 'right', marginRight: 4 },
-  typingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
-  typingBubble: { backgroundColor: '#fff', borderRadius: 18, padding: 12, borderWidth: 0.5, borderColor: '#E0DED8' },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8' },
-  input: { flex: 1, minHeight: 40, maxHeight: 100, backgroundColor: '#F1EFE8', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#2C2C2A' },
+  typingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4, paddingBottom: 8 },
+  typingBubble: { backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 18, paddingHorizontal: 16, paddingVertical: 12, borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.1)' },
+  typingDots: { fontSize: 18, color: PURPLE, letterSpacing: 4 },
+  inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, gap: 8, backgroundColor: '#16213E', borderTopWidth: 0.5, borderColor: 'rgba(255,255,255,0.08)' },
+  input: { flex: 1, minHeight: 40, maxHeight: 100, backgroundColor: 'rgba(255,255,255,0.07)', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#fff', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: PURPLE, alignItems: 'center', justifyContent: 'center' },
-  sendBtnOff: { opacity: 0.4 },
+  sendBtnOff: { opacity: 0.3 },
   sendIcon: { color: '#fff', fontSize: 18, fontWeight: '700' },
 })
