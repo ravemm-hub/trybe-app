@@ -179,6 +179,8 @@ Rules:
 - For food/places: give specific names, ratings if available, and why you recommend them
 - For calendar: confirm what you'll add, then include [CALENDAR:title|ISO-date] at the end
 - For posting: include [POST:content] at the end when user confirms
+- For navigation: when user asks how to get there or wants directions, include [NAVIGATE:place name and city] at the end.
+- For restaurant recommendations: always include name, brief description, rating if available, and offer to navigate.
 - Keep responses under 150 words unless listing items
 
 `
@@ -310,7 +312,17 @@ if (createGroupMatch) {
     reply += `[Open group →](tryber://chat/${newGroup.id})`
   }
 }
-      // Handle post action
+ // Handle navigation action
+const navMatch = reply.match(/\[NAVIGATE:([^\]]+)\]/)
+if (navMatch) {
+  reply = reply.replace(navMatch[0], '').trim()
+  const destination = encodeURIComponent(navMatch[1].trim())
+  const origin = coords ? `${coords.lat},${coords.lon}` : ''
+  const mapsUrl = `https://www.google.com/maps/dir/${origin}/${destination}`
+  Linking.openURL(mapsUrl)
+  reply += `\n\n🗺️ Opening Google Maps...`
+}  
+   // Handle post action
       const postMatch = reply.match(/\[POST:([^\]]+)\]/)
       if (postMatch) {
         reply = reply.replace(postMatch[0], '').trim()
