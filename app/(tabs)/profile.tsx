@@ -17,8 +17,8 @@ export default function ProfileScreen() {
   const [displayName, setDisplayName] = useState('')
   const [username, setUsername] = useState('')
   const [bio, setBio] = useState('')
-const [phone, setPhone] = useState('') 
- const [avatarChar, setAvatarChar] = useState('🦊')
+  const [phone, setPhone] = useState('')
+  const [avatarChar, setAvatarChar] = useState('🦊')
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -38,8 +38,8 @@ const [phone, setPhone] = useState('')
       setDisplayName(profile.display_name || '')
       setUsername(profile.username || '')
       setBio(profile.bio || '')
-setPhone(profile.phone || '')    
-  setAvatarChar(profile.avatar_char || '🦊')
+      setPhone(profile.phone || '')
+      setAvatarChar(profile.avatar_char || '🦊')
       setAvatarUrl(profile.avatar_url || null)
     }
     const { data: groups } = await supabase.from('group_members').select('group_id, groups(name, status)').eq('user_id', user.id).limit(10)
@@ -53,9 +53,8 @@ setPhone(profile.phone || '')
   const saveProfile = async () => {
     if (!userId) return
     setSaving(true)
-    await supabase.from('profiles').update({ display_name: displayName.trim(), bio: bio.trim() || null, avatar_char: avatarChar }).eq('id', userId)
-  phone: phone.trim() || null,
-  setSaving(false)
+    await supabase.from('profiles').update({ display_name: displayName.trim(), bio: bio.trim() || null, avatar_char: avatarChar, phone: phone.trim() || null }).eq('id', userId)
+    setSaving(false)
     Alert.alert('✓ Saved', 'Profile updated!')
   }
 
@@ -137,10 +136,12 @@ setPhone(profile.phone || '')
 
         <Text style={s.sectionLabel}>USERNAME</Text>
         <TextInput style={[s.input, { color: '#888' }]} value={`@${username}`} editable={false} />
-<Text style={s.sectionLabel}>PHONE</Text>
-<TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="+972..." placeholderTextColor="#B4B2A9" keyboardType="phone-pad" maxLength={20} />
+
         <Text style={s.sectionLabel}>BIO</Text>
         <TextInput style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]} value={bio} onChangeText={setBio} placeholder="Tell people about yourself..." placeholderTextColor="#B4B2A9" multiline maxLength={150} />
+
+        <Text style={s.sectionLabel}>PHONE (for contacts detection)</Text>
+        <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="+972..." placeholderTextColor="#B4B2A9" keyboardType="phone-pad" maxLength={20} />
 
         <TouchableOpacity style={[s.saveBtn, saving && { opacity: 0.6 }]} onPress={saveProfile} disabled={saving}>
           {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnText}>Save Profile</Text>}
