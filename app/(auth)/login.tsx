@@ -21,7 +21,10 @@ export default function LoginScreen() {
     if (!email.trim() || !password) { Alert.alert('Missing info', 'Enter your email and password'); return }
     if (password.length < 6) { Alert.alert('Password too short', 'At least 6 characters'); return }
     if (isSignup && !name.trim()) { Alert.alert('Missing info', 'Enter your name'); return }
-
+if (isSignup && !phone.trim()) {
+  Alert.alert('Missing info', 'Phone number is required to find friends')
+  return
+}
     setLoading(true)
     try {
       if (isSignup) {
@@ -111,7 +114,7 @@ export default function LoginScreen() {
           {isSignup && (
             <TextInput
               style={s.input}
-              placeholder="Phone number (optional, e.g. +972...)"
+              placeholder="Phone number (e.g. +972...)"
               value={phone}
               onChangeText={setPhone}
               placeholderTextColor="#B4B2A9"
