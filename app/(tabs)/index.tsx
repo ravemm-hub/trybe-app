@@ -154,11 +154,14 @@ export default function ChatsScreen() {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [loadAll])
-const markGroupRead = async (groupId: string) => {
-  if (!userId) return
-  await supabase.from('group_members').update({ last_read_at: new Date().toISOString() }).eq('group_id', groupId).eq('user_id', userId)
-  setGroups(prev => prev.map(g => g.id === groupId ? { ...g, unread: 0 } : g))
-}
+
+  const markGroupRead = async (groupId: string) => {
+    if (!userId) return
+    const now = new Date().toISOString()
+    await supabase.from('group_members').update({ last_read_at: now }).eq('group_id', groupId).eq('user_id', userId)
+    setGroups(prev => prev.map(g => g.id === groupId ? { ...g, unread: 0 } : g))
+  }
+
   const leaveGroup = (item: ChatItem) => {
     Alert.alert('Leave group', `Leave "${item.name}"?`, [
       { text: 'Cancel', style: 'cancel' },

@@ -4,9 +4,9 @@ import { useState, useEffect } from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { supabase } from '../../lib/supabase'
 
-const ACCENT = '#6C63FF'
-const TEAL = '#00BFA6'
+const ACCENT = '#1D9E75'
 const GRAY = '#8A8A9A'
+const BG = '#fff'
 
 function TabIcon({ emoji, count, focused }: { emoji: string; count?: number; focused: boolean }) {
   return (
@@ -27,44 +27,55 @@ export default function TabsLayout() {
 
   useEffect(() => {
     checkUnread()
+    const interval = setInterval(checkUnread, 30000)
     const channel = supabase.channel('unread-monitor')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => checkUnread())
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    return () => { clearInterval(interval); supabase.removeChannel(channel) }
   }, [])
 
   const checkUnread = async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    const { data: myGroups } = await supabase.from('group_members').select('group_id, last_read_at').eq('user_id', user.id)
-    let count = 0
-    for (const m of myGroups || []) {
-      const lastRead = m.last_read_at || new Date(0).toISOString()
-      const { count: c } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('group_id', m.group_id).neq('user_id', user.id).gt('created_at', lastRead)
-      count += c || 0
-    }
-    setUnread(count)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: myGroups } = await supabase
+        .from('group_members').select('group_id, last_read_at').eq('user_id', user.id)
+      if (!myGroups?.length) { setUnread(0); return }
+      let count = 0
+      for (const m of myGroups) {
+        const lastRead = m.last_read_at || new Date(0).toISOString()
+        const { count: c } = await supabase.from('messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('group_id', m.group_id)
+          .neq('user_id', user.id)
+          .gt('created_at', lastRead)
+        count += c || 0
+      }
+      setUnread(count)
+    } catch {}
   }
 
-  const tabBarHeight = 58 + insets.bottom
+  const tabBarHeight = 60 + insets.bottom
 
   return (
     <Tabs screenOptions={{
       headerShown: false,
       tabBarStyle: {
-        backgroundColor: '#16213E',
-        borderTopWidth: 0,
+        backgroundColor: BG,
+        borderTopWidth: 0.5,
+        borderTopColor: '#E8E8E8',
         height: tabBarHeight,
-        paddingBottom: insets.bottom + 4,
+        paddingBottom: insets.bottom + 6,
         paddingTop: 8,
-        elevation: 20,
-        shadowColor: '#6C63FF',
-        shadowOpacity: 0.15,
-        shadowRadius: 20,
+        elevation: 12,
+        shadowColor: '#000',
+        shadowOpacity: 0.08,
+        shadowRadius: 12,
+        shadowOffset: { width: 0, height: -2 },
       },
-      tabBarActiveTintColor: TEAL,
+      tabBarActiveTintColor: ACCENT,
       tabBarInactiveTintColor: GRAY,
-      tabBarLabelStyle: { fontSize: 9, fontWeight: '700', letterSpacing: 0.3, marginTop: 2 },
+      tabBarLabelStyle: { fontSize: 10, fontWeight: '600', letterSpacing: 0.2, marginTop: 2 },
     }}>
       <Tabs.Screen name="index" options={{
         title: 'Chats',
@@ -97,9 +108,9 @@ export default function TabsLayout() {
 }
 
 const s = StyleSheet.create({
-  iconWrap: { alignItems: 'center', justifyContent: 'center', position: 'relative', width: 32, height: 28 },
-  iconEmoji: { fontSize: 20, opacity: 0.5 },
+  iconWrap: { alignItems: 'center', justifyContent: 'center', position: 'relative', width: 32, height: 26 },
+  iconEmoji: { fontSize: 20, opacity: 0.45 },
   iconEmojiFocused: { opacity: 1 },
-  badge: { position: 'absolute', top: -4, right: -8, backgroundColor: '#FF4757', borderRadius: 10, minWidth: 16, height: 16, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 3, borderWidth: 1.5, borderColor: '#16213E' },
-  badgeText: { fontSize: 9, fontWeight: '700', color: '#fff' },
+  badge: { position: 'absolute', top: -5, right: -10, backgroundColor: '#FF3B30', borderRadius: 10, minWidth: 17, height: 17, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderWidth: 1.5, borderColor: '#fff' },
+  badgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
 })
