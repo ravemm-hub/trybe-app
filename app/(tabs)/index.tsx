@@ -9,32 +9,25 @@ import * as Contacts from 'expo-contacts'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
 
-const INVITE_MSG = `Hey! Join me on Tryber — The Next Generation of SocialAIsing 🚀\nDownload: https://ravemm-hub.github.io/trybe-app`
+const INVITE_MSG = `Hey! Join me on Tryber 🚀\nDownload: https://ravemm-hub.github.io/trybe-app`
+const PRIMARY = '#6C63FF'
+const TEAL = '#00BFA6'
+const BG = '#F8F9FD'
+const CARD = '#FFFFFF'
+const TEXT = '#1A1A2E'
+const GRAY = '#8A8A9A'
+const RED = '#FF3B30'
 
 type ChatItem = {
-  id: string
-  type: 'group' | 'dm'
-  name: string
-  avatar: string
-  last_message: string | null
-  last_message_at: string | null
-  unread: number
-  status?: string
-  member_count?: number
-  min_members?: number
-  is_private?: boolean
-  other_user_id?: string
+  id: string; type: 'group' | 'dm'; name: string; avatar: string
+  last_message: string | null; last_message_at: string | null; unread: number
+  status?: string; member_count?: number; min_members?: number
+  is_private?: boolean; other_user_id?: string
 }
 
 type Contact = {
-  id: string
-  name: string
-  phone: string
-  initials: string
-  onTryber: boolean
-  tryberUserId?: string
-  tryberUsername?: string
-  avatar_char?: string
+  id: string; name: string; phone: string; initials: string
+  onTryber: boolean; tryberUserId?: string; tryberUsername?: string; avatar_char?: string
 }
 
 export default function ChatsScreen() {
@@ -56,11 +49,7 @@ export default function ChatsScreen() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       setUserId(user.id)
-
-      // My groups
-      const { data: memberData } = await supabase
-        .from('group_members').select('group_id, last_read_at, groups(*)').eq('user_id', user.id)
-
+      const { data: memberData } = await supabase.from('group_members').select('group_id, last_read_at, groups(*)').eq('user_id', user.id)
       const groupItems: ChatItem[] = []
       for (const m of memberData || []) {
         const g = (m as any).groups
@@ -71,19 +60,10 @@ export default function ChatsScreen() {
           const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('group_id', g.id).neq('user_id', user.id).gt('created_at', m.last_read_at)
           unread = count || 0
         }
-        groupItems.push({
-          id: g.id, type: 'group', name: g.name,
-          avatar: g.is_private ? '🔒' : '⚡',
-          last_message: msgs?.[0]?.content || null,
-          last_message_at: msgs?.[0]?.created_at || g.created_at,
-          unread, status: g.status, member_count: g.member_count,
-          min_members: g.min_members, is_private: g.is_private,
-        })
+        groupItems.push({ id: g.id, type: 'group', name: g.name, avatar: g.is_private ? '🔒' : '⚡', last_message: msgs?.[0]?.content || null, last_message_at: msgs?.[0]?.created_at || g.created_at, unread, status: g.status, member_count: g.member_count, min_members: g.min_members, is_private: g.is_private })
       }
       groupItems.sort((a, b) => new Date(b.last_message_at || '').getTime() - new Date(a.last_message_at || '').getTime())
       setGroups(groupItems)
-
-      // DMs
       const { data: dmData } = await supabase.from('dm_messages').select('*').or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`).order('created_at', { ascending: false })
       const dmMap = new Map<string, any>()
       for (const dm of dmData || []) {
@@ -94,12 +74,7 @@ export default function ChatsScreen() {
       for (const [otherId, lastDm] of dmMap.entries()) {
         const { data: p } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', otherId).single()
         const name = p?.display_name || p?.username || 'Unknown'
-        dmItems.push({
-          id: `dm_${otherId}`, type: 'dm', name,
-          avatar: p?.avatar_char || name[0] || '?',
-          last_message: lastDm.content, last_message_at: lastDm.created_at,
-          unread: 0, other_user_id: otherId,
-        })
+        dmItems.push({ id: `dm_${otherId}`, type: 'dm', name, avatar: p?.avatar_char || name[0] || '?', last_message: lastDm.content, last_message_at: lastDm.created_at, unread: 0, other_user_id: otherId })
       }
       setDms(dmItems)
     } catch (err: any) { console.error(err.message) }
@@ -112,10 +87,7 @@ export default function ChatsScreen() {
     try {
       const { status } = await Contacts.requestPermissionsAsync()
       if (status !== 'granted') { setContactsLoading(false); return }
-      const { data } = await Contacts.getContactsAsync({
-        fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
-        sort: Contacts.SortTypes.FirstName,
-      })
+      const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name], sort: Contacts.SortTypes.FirstName })
       const contactList: Contact[] = []
       for (const c of data) {
         if (!c.phoneNumbers?.length || !c.name) continue
@@ -124,29 +96,20 @@ export default function ChatsScreen() {
         const initials = c.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()
         contactList.push({ id: c.id || phone, name: c.name, phone, initials, onTryber: false })
       }
-      const phones = contactList.map(c => c.phone)
-      if (phones.length > 0) {
+      if (contactList.length > 0) {
+        const phones = contactList.map(c => c.phone)
         const { data: tryberUsers } = await supabase.from('profiles').select('id, username, display_name, phone, avatar_char').in('phone', phones)
         const tryberMap = new Map((tryberUsers || []).map((u: any) => [u.phone, u]))
-        const enriched = contactList.map(c => {
-          const t = tryberMap.get(c.phone)
-          return { ...c, onTryber: !!t, tryberUserId: t?.id, tryberUsername: t?.display_name || t?.username, avatar_char: t?.avatar_char }
-        })
+        const enriched = contactList.map(c => { const t = tryberMap.get(c.phone); return { ...c, onTryber: !!t, tryberUserId: t?.id, tryberUsername: t?.display_name || t?.username, avatar_char: t?.avatar_char } })
         enriched.sort((a, b) => a.onTryber === b.onTryber ? a.name.localeCompare(b.name) : a.onTryber ? -1 : 1)
         setContacts(enriched)
-      } else {
-        setContacts(contactList)
       }
       setContactsLoaded(true)
-    } catch (e) { console.error(e) }
-    finally { setContactsLoading(false) }
+    } catch {} finally { setContactsLoading(false) }
   }, [contactsLoaded])
 
   useEffect(() => { loadAll() }, [loadAll])
-  useEffect(() => {
-    if (activeTab === 'chats') loadContacts()
-  }, [activeTab])
-
+  useEffect(() => { if (activeTab === 'chats') loadContacts() }, [activeTab])
   useEffect(() => {
     const channel = supabase.channel('chats-rt')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => loadAll())
@@ -157,8 +120,7 @@ export default function ChatsScreen() {
 
   const markGroupRead = async (groupId: string) => {
     if (!userId) return
-    const now = new Date().toISOString()
-    await supabase.from('group_members').update({ last_read_at: now }).eq('group_id', groupId).eq('user_id', userId)
+    await supabase.from('group_members').update({ last_read_at: new Date().toISOString() }).eq('group_id', groupId).eq('user_id', userId)
     setGroups(prev => prev.map(g => g.id === groupId ? { ...g, unread: 0 } : g))
   }
 
@@ -189,40 +151,24 @@ export default function ChatsScreen() {
   }
 
   const totalUnread = groups.reduce((sum, i) => sum + i.unread, 0)
-  const filteredContacts = contacts.filter(c =>
-    !contactSearch.trim() ||
-    c.name.toLowerCase().includes(contactSearch.toLowerCase()) ||
-    c.phone.includes(contactSearch)
-  )
+  const filteredContacts = contacts.filter(c => !contactSearch.trim() || c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.phone.includes(contactSearch))
 
   const renderGroupRow = (item: ChatItem) => {
     const hasUnread = item.unread > 0
     const isOpen = item.status === 'open'
     return (
-      <Pressable
-        style={s.row}
-        onPress={() => {
-          markGroupRead(item.id)
-          if (isOpen) router.push({ pathname: '/chat', params: { id: item.id, name: item.name, members: item.member_count?.toString() || '0' } })
-          else router.push({ pathname: '/lobby', params: { id: item.id, name: item.name } })
-        }}
-        onLongPress={() => Alert.alert(item.name, '', [
-          { text: '🚪 Leave group', style: 'destructive', onPress: () => leaveGroup(item) },
-          { text: 'Cancel', style: 'cancel' }
-        ])}
-      >
-        <View style={[s.avatar, s.avatarGroup]}>
+      <Pressable style={s.row} onPress={() => { markGroupRead(item.id); if (isOpen) router.push({ pathname: '/chat', params: { id: item.id, name: item.name, members: item.member_count?.toString() || '0' } }); else router.push({ pathname: '/lobby', params: { id: item.id, name: item.name } }) }} onLongPress={() => Alert.alert(item.name, '', [{ text: '🚪 Leave', style: 'destructive', onPress: () => leaveGroup(item) }, { text: 'Cancel', style: 'cancel' }])}>
+        <View style={[s.avatar, { backgroundColor: '#EEF0FF' }]}>
           <Text style={s.avatarText}>{item.avatar}</Text>
+          {isOpen && <View style={s.liveDot} />}
         </View>
         <View style={s.rowInfo}>
           <View style={s.rowTop}>
             <Text style={[s.rowName, hasUnread && s.rowNameBold]} numberOfLines={1}>{item.name}</Text>
-            {item.last_message_at && <Text style={[s.rowTime, hasUnread && { color: GREEN }]}>{formatTime(item.last_message_at)}</Text>}
+            {item.last_message_at && <Text style={[s.rowTime, hasUnread && { color: PRIMARY }]}>{formatTime(item.last_message_at)}</Text>}
           </View>
           <View style={s.rowBottom}>
-            <Text style={[s.rowLastMsg, hasUnread && s.rowLastMsgBold]} numberOfLines={1}>
-              {item.last_message || (isOpen ? '🟢 Live' : `🟣 ${item.member_count}/${item.min_members} to unlock`)}
-            </Text>
+            <Text style={[s.rowLastMsg, hasUnread && s.rowLastMsgBold]} numberOfLines={1}>{item.last_message || (isOpen ? '🟢 Live now' : `⏳ ${item.member_count}/${item.min_members} to unlock`)}</Text>
             {hasUnread && <View style={s.unreadBadge}><Text style={s.unreadBadgeText}>{item.unread > 99 ? '99+' : item.unread}</Text></View>}
           </View>
         </View>
@@ -230,51 +176,22 @@ export default function ChatsScreen() {
     )
   }
 
-  const renderDMRow = (item: ChatItem) => {
-    const hasUnread = item.unread > 0
-    return (
-      <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: item.other_user_id, userName: item.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
-        <View style={[s.avatar, s.avatarDM]}>
-          <Text style={s.avatarText}>{item.avatar}</Text>
-        </View>
-        <View style={s.rowInfo}>
-          <View style={s.rowTop}>
-            <Text style={[s.rowName, hasUnread && s.rowNameBold]} numberOfLines={1}>{item.name}</Text>
-            {item.last_message_at && <Text style={s.rowTime}>{formatTime(item.last_message_at)}</Text>}
-          </View>
-          <Text style={[s.rowLastMsg, hasUnread && s.rowLastMsgBold]} numberOfLines={1}>{item.last_message || 'Start chatting'}</Text>
-        </View>
-      </Pressable>
-    )
-  }
-
-  const renderContactRow = (item: Contact) => (
-    <View style={s.contactRow}>
-      <View style={[s.contactAvatar, item.onTryber && s.contactAvatarTryber]}>
-        <Text style={s.contactInitials}>{item.avatar_char || item.initials}</Text>
-        {item.onTryber && <View style={s.onTryberDot} />}
+  const renderDMRow = (item: ChatItem) => (
+    <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: item.other_user_id, userName: item.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
+      <View style={[s.avatar, { backgroundColor: '#E8F5F3' }]}>
+        <Text style={s.avatarText}>{item.avatar}</Text>
       </View>
-      <View style={s.contactInfo}>
-        <Text style={s.contactName}>{item.name}</Text>
-        {item.onTryber
-          ? <Text style={s.onTryberLabel}>✦ On Tryber</Text>
-          : <Text style={s.contactPhone}>{item.phone}</Text>
-        }
+      <View style={s.rowInfo}>
+        <View style={s.rowTop}>
+          <Text style={s.rowName} numberOfLines={1}>{item.name}</Text>
+          {item.last_message_at && <Text style={s.rowTime}>{formatTime(item.last_message_at)}</Text>}
+        </View>
+        <Text style={s.rowLastMsg} numberOfLines={1}>{item.last_message || 'Start chatting'}</Text>
       </View>
-      {item.onTryber ? (
-        <TouchableOpacity style={s.messageBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: item.tryberUserId, userName: item.tryberUsername || item.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
-          <Text style={s.messageBtnText}>Message</Text>
-        </TouchableOpacity>
-      ) : (
-        <TouchableOpacity style={s.inviteBtn} onPress={() => inviteContact(item)}>
-          <Text style={s.inviteBtnText}>Invite</Text>
-        </TouchableOpacity>
-      )}
-    </View>
+    </Pressable>
   )
 
-  // For chats tab — combine DMs + contacts into one list
-  const chatsListData = [
+  const chatsData = [
     ...dms.map(d => ({ type: 'dm' as const, data: d })),
     { type: 'divider' as const },
     { type: 'search' as const },
@@ -283,7 +200,7 @@ export default function ChatsScreen() {
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle="dark-content" backgroundColor={CARD} />
       <View style={s.header}>
         <View style={s.headerLeft}>
           <Text style={s.logo}>tryber</Text>
@@ -294,7 +211,6 @@ export default function ChatsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* 2 Tabs */}
       <View style={s.tabRow}>
         <TouchableOpacity style={[s.tabBtn, activeTab === 'trybes' && s.tabBtnActive]} onPress={() => setActiveTab('trybes')}>
           <Text style={[s.tabBtnText, activeTab === 'trybes' && s.tabBtnTextActive]}>⚡ Trybes {groups.length > 0 ? `(${groups.length})` : ''}</Text>
@@ -305,18 +221,18 @@ export default function ChatsScreen() {
       </View>
 
       {loading ? (
-        <View style={s.center}><ActivityIndicator color={GREEN} size="large" /></View>
+        <View style={s.center}><ActivityIndicator color={PRIMARY} size="large" /></View>
       ) : activeTab === 'trybes' ? (
         <FlatList
           data={groups}
           keyExtractor={i => i.id}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadAll() }} tintColor={GREEN} />}
-          contentContainerStyle={groups.length === 0 ? s.listEmpty : undefined}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadAll() }} tintColor={PRIMARY} />}
+          contentContainerStyle={groups.length === 0 ? s.listEmpty : { paddingVertical: 8 }}
           ListEmptyComponent={
             <View style={s.emptyState}>
               <Text style={s.emptyEmoji}>⚡</Text>
               <Text style={s.emptyTitle}>No trybes yet</Text>
-              <Text style={s.emptySub}>Join a Trybe on Explore or create your own</Text>
+              <Text style={s.emptySub}>Join groups on Explore or create your own</Text>
               <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/(tabs)/explore')}>
                 <Text style={s.emptyBtnText}>📡 Explore Trybes</Text>
               </TouchableOpacity>
@@ -327,100 +243,97 @@ export default function ChatsScreen() {
         />
       ) : (
         <FlatList
-          data={chatsListData}
+          data={chatsData}
           keyExtractor={(item, i) => item.type === 'dm' ? item.data.id : item.type === 'contact' ? item.data.id : `${item.type}_${i}`}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadAll() }} tintColor={GREEN} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadAll() }} tintColor={PRIMARY} />}
+          contentContainerStyle={{ paddingVertical: 8 }}
           renderItem={({ item }) => {
             if (item.type === 'dm') return renderDMRow(item.data)
             if (item.type === 'divider') return (
               <View style={s.sectionDivider}>
-                <Text style={s.sectionDividerText}>
-                  {contactsLoading ? 'Loading contacts...' : `Contacts · ${contacts.filter(c => c.onTryber).length} on Tryber`}
-                </Text>
+                <Text style={s.sectionDividerText}>{contactsLoading ? 'Loading contacts...' : `Contacts · ${contacts.filter(c => c.onTryber).length} on Tryber`}</Text>
               </View>
             )
             if (item.type === 'search') return (
               <View style={s.searchRow}>
-                <TextInput
-                  style={s.searchInput}
-                  value={contactSearch}
-                  onChangeText={setContactSearch}
-                  placeholder="Search contacts..."
-                  placeholderTextColor="#B4B2A9"
-                />
+                <TextInput style={s.searchInput} value={contactSearch} onChangeText={setContactSearch} placeholder="Search contacts..." placeholderTextColor="#B4B2A9" />
               </View>
             )
-            if (item.type === 'contact') return renderContactRow(item.data)
+            if (item.type === 'contact') {
+              const c = item.data
+              return (
+                <View style={s.contactRow}>
+                  <View style={[s.avatar, c.onTryber ? { backgroundColor: '#E8F5F3', borderWidth: 2, borderColor: TEAL } : { backgroundColor: '#F0F0F8' }]}>
+                    <Text style={s.avatarText}>{c.avatar_char || c.initials}</Text>
+                    {c.onTryber && <View style={[s.liveDot, { backgroundColor: TEAL }]} />}
+                  </View>
+                  <View style={s.rowInfo}>
+                    <Text style={s.rowName}>{c.name}</Text>
+                    <Text style={[s.rowLastMsg, c.onTryber && { color: TEAL }]}>{c.onTryber ? '✦ On Tryber' : c.phone}</Text>
+                  </View>
+                  {c.onTryber ? (
+                    <TouchableOpacity style={s.contactActionBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: c.tryberUserId, userName: c.tryberUsername || c.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
+                      <Text style={s.contactActionText}>Message</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity style={[s.contactActionBtn, { backgroundColor: '#F0F0F8' }]} onPress={() => inviteContact(c)}>
+                      <Text style={[s.contactActionText, { color: PRIMARY }]}>Invite</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )
+            }
             return null
           }}
-          ItemSeparatorComponent={({ leadingItem }) => {
-            if (leadingItem?.type === 'divider' || leadingItem?.type === 'search') return null
-            return <View style={[s.separator, { marginLeft: 74 }]} />
-          }}
-          ListEmptyComponent={null}
+          ItemSeparatorComponent={({ leadingItem }) => leadingItem?.type === 'divider' || leadingItem?.type === 'search' ? null : <View style={s.separator} />}
         />
       )}
     </View>
   )
 }
 
-const GREEN = '#1D9E75'
-const PURPLE = '#7F77DD'
-const GRAY = '#888780'
-
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FAFAF8' },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  container: { flex: 1, backgroundColor: BG },
+  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  logo: { fontSize: 26, fontWeight: '800', color: GREEN, letterSpacing: -1 },
-  totalUnread: { backgroundColor: '#E24B4A', borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
-  totalUnreadText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  createBtn: { backgroundColor: GREEN, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 },
-  createBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  tabRow: { flexDirection: 'row', backgroundColor: '#fff', paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  tabBtn: { flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#F1EFE8', alignItems: 'center' },
-  tabBtnActive: { backgroundColor: GREEN },
-  tabBtnText: { fontSize: 13, fontWeight: '600', color: GRAY },
+  logo: { fontSize: 28, fontWeight: '900', color: PRIMARY, letterSpacing: -1 },
+  totalUnread: { backgroundColor: RED, borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
+  totalUnreadText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  createBtn: { backgroundColor: PRIMARY, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
+  createBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  tabRow: { flexDirection: 'row', backgroundColor: CARD, paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
+  tabBtn: { flex: 1, paddingVertical: 9, borderRadius: 12, backgroundColor: '#F0F0F8', alignItems: 'center' },
+  tabBtnActive: { backgroundColor: PRIMARY },
+  tabBtnText: { fontSize: 13, fontWeight: '700', color: GRAY },
   tabBtnTextActive: { color: '#fff' },
   listEmpty: { flex: 1 },
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 60, paddingHorizontal: 32, gap: 12 },
-  emptyEmoji: { fontSize: 48, marginBottom: 8 },
-  emptyTitle: { fontSize: 20, fontWeight: '700', color: '#2C2C2A' },
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32, gap: 12 },
+  emptyEmoji: { fontSize: 52, marginBottom: 8 },
+  emptyTitle: { fontSize: 22, fontWeight: '800', color: TEXT },
   emptySub: { fontSize: 14, color: GRAY, textAlign: 'center' },
-  emptyBtn: { backgroundColor: GREEN, paddingHorizontal: 24, paddingVertical: 11, borderRadius: 20, width: '100%', alignItems: 'center' },
-  emptyBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 13, backgroundColor: '#fff' },
-  avatar: { width: 50, height: 50, borderRadius: 25, alignItems: 'center', justifyContent: 'center' },
-  avatarGroup: { backgroundColor: '#E1F5EE' },
-  avatarDM: { backgroundColor: '#EEEDFE' },
-  avatarText: { fontSize: 22 },
+  emptyBtn: { backgroundColor: PRIMARY, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20, width: '100%', alignItems: 'center' },
+  emptyBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD },
+  avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  avatarText: { fontSize: 24 },
+  liveDot: { position: 'absolute', bottom: 1, right: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: TEAL, borderWidth: 2, borderColor: CARD },
   rowInfo: { flex: 1 },
-  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
-  rowName: { fontSize: 15, fontWeight: '500', color: '#2C2C2A', flex: 1 },
-  rowNameBold: { fontWeight: '700' },
+  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  rowName: { fontSize: 15, fontWeight: '600', color: TEXT, flex: 1 },
+  rowNameBold: { fontWeight: '800' },
   rowTime: { fontSize: 11, color: GRAY },
   rowBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowLastMsg: { fontSize: 13, color: GRAY, flex: 1 },
-  rowLastMsgBold: { color: '#2C2C2A', fontWeight: '500' },
-  unreadBadge: { backgroundColor: GREEN, borderRadius: 12, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
-  unreadBadgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
-  separator: { height: 0.5, backgroundColor: '#E0DED8', marginLeft: 78 },
-  sectionDivider: { backgroundColor: '#F1EFE8', paddingHorizontal: 16, paddingVertical: 8 },
-  sectionDividerText: { fontSize: 12, color: GRAY, fontWeight: '600' },
-  searchRow: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  searchInput: { backgroundColor: '#F1EFE8', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: '#2C2C2A' },
-  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
-  contactAvatar: { width: 46, height: 46, borderRadius: 23, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  contactAvatarTryber: { backgroundColor: '#E1F5EE', borderWidth: 2, borderColor: GREEN },
-  contactInitials: { fontSize: 16, fontWeight: '700', color: '#2C2C2A' },
-  onTryberDot: { position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: GREEN, borderWidth: 2, borderColor: '#fff' },
-  contactInfo: { flex: 1 },
-  contactName: { fontSize: 15, fontWeight: '600', color: '#2C2C2A', marginBottom: 2 },
-  onTryberLabel: { fontSize: 12, color: GREEN, fontWeight: '500' },
-  contactPhone: { fontSize: 12, color: GRAY },
-  messageBtn: { backgroundColor: '#E1F5EE', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14 },
-  messageBtnText: { fontSize: 12, color: GREEN, fontWeight: '600' },
-  inviteBtn: { backgroundColor: '#EEEDFE', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14 },
-  inviteBtnText: { fontSize: 12, color: PURPLE, fontWeight: '600' },
+  rowLastMsgBold: { color: TEXT, fontWeight: '600' },
+  unreadBadge: { backgroundColor: PRIMARY, borderRadius: 12, minWidth: 22, height: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
+  unreadBadgeText: { color: '#fff', fontSize: 12, fontWeight: '800' },
+  separator: { height: 0.5, backgroundColor: '#EBEBEB', marginLeft: 80 },
+  sectionDivider: { backgroundColor: '#F0F0F8', paddingHorizontal: 16, paddingVertical: 8 },
+  sectionDividerText: { fontSize: 12, color: GRAY, fontWeight: '600', letterSpacing: 0.3 },
+  searchRow: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
+  searchInput: { backgroundColor: '#F0F0F8', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: TEXT },
+  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD },
+  contactActionBtn: { backgroundColor: '#E8F5F3', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16 },
+  contactActionText: { fontSize: 13, color: TEAL, fontWeight: '700' },
 })
