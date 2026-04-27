@@ -17,7 +17,8 @@ export default function ProfileScreen() {
   const [displayName, setDisplayName] = useState('')
   const [username, setUsername] = useState('')
   const [bio, setBio] = useState('')
-  const [avatarChar, setAvatarChar] = useState('🦊')
+const [phone, setPhone] = useState('') 
+ const [avatarChar, setAvatarChar] = useState('🦊')
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -37,7 +38,8 @@ export default function ProfileScreen() {
       setDisplayName(profile.display_name || '')
       setUsername(profile.username || '')
       setBio(profile.bio || '')
-      setAvatarChar(profile.avatar_char || '🦊')
+setPhone(profile.phone || '')    
+  setAvatarChar(profile.avatar_char || '🦊')
       setAvatarUrl(profile.avatar_url || null)
     }
     const { data: groups } = await supabase.from('group_members').select('group_id, groups(name, status)').eq('user_id', user.id).limit(10)
@@ -52,7 +54,8 @@ export default function ProfileScreen() {
     if (!userId) return
     setSaving(true)
     await supabase.from('profiles').update({ display_name: displayName.trim(), bio: bio.trim() || null, avatar_char: avatarChar }).eq('id', userId)
-    setSaving(false)
+  phone: phone.trim() || null,
+  setSaving(false)
     Alert.alert('✓ Saved', 'Profile updated!')
   }
 
@@ -134,7 +137,8 @@ export default function ProfileScreen() {
 
         <Text style={s.sectionLabel}>USERNAME</Text>
         <TextInput style={[s.input, { color: '#888' }]} value={`@${username}`} editable={false} />
-
+<Text style={s.sectionLabel}>PHONE</Text>
+<TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="+972..." placeholderTextColor="#B4B2A9" keyboardType="phone-pad" maxLength={20} />
         <Text style={s.sectionLabel}>BIO</Text>
         <TextInput style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]} value={bio} onChangeText={setBio} placeholder="Tell people about yourself..." placeholderTextColor="#B4B2A9" multiline maxLength={150} />
 
