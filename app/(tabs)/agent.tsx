@@ -61,7 +61,7 @@ export default function AgentScreen() {
 
     const { data: history } = await supabase.from('agent_messages')
       .select('*').eq('user_id', user.id)
-      
+      .gte('created_at', new Date(new Date().setHours(0,0,0,0)).toISOString())
       .order('created_at', { ascending: true }).limit(50)
 
     if (history?.length) {
@@ -151,32 +151,7 @@ export default function AgentScreen() {
     if (!msg || !userId || loading) return
     setDraft('')
     setLoading(true)
-// Check credits
-const { data: profileData } = await supabase.from('profiles').select('teeby_credits, teeby_credits_reset_at').eq('id', userId).single()
-const resetAt = new Date(profileData?.teeby_credits_reset_at || 0)
-const now = new Date()
-let credits = profileData?.teeby_credits ?? 20
 
-// Reset daily credits
-if (now.getDate() !== resetAt.getDate() || now.getMonth() !== resetAt.getMonth()) {
-  credits = 20
-  await supabase.from('profiles').update({ teeby_credits: 20, teeby_credits_reset_at: now.toISOString() }).eq('id', userId)
-}
-
-if (credits <= 0) {
-  setLoading(false)
-  Alert.alert(
-    '✦ Daily limit reached',
-    'You\'ve used all 20 free daily messages.\n\nCredits reset tomorrow, or get more now.',
-    [
-      { text: 'OK' },
-      { text: '💎 Get More Credits', onPress: () => Alert.alert('Coming soon!', 'In-app purchases coming in the next update.') }
-    ]
-  )
-  return
-}
-
-await supabase.from('profiles').update({ teeby_credits: credits - 1 }).eq('id', userId)
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: msg, created_at: new Date().toISOString() }
     setMessages(prev => [...prev, userMsg])
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
@@ -204,8 +179,6 @@ Rules:
 - For food/places: give specific names, ratings if available, and why you recommend them
 - For calendar: confirm what you'll add, then include [CALENDAR:title|ISO-date] at the end
 - For posting: include [POST:content] at the end when user confirms
-- For navigation: when user asks how to get there or wants directions, include [NAVIGATE:place name and city] at the end.
-- For restaurant recommendations: always include name, brief description, rating if available, and offer to navigate.
 - Keep responses under 150 words unless listing items
 
 `
@@ -259,17 +232,7 @@ Rules:
       if (needsCalendar) {
         context += '\nFor calendar requests: if the user gave a title and time, add [CALENDAR:title|YYYY-MM-DDTHH:mm] at the end of your reply. Be smart about parsing dates from natural language.\n\n'
       }
-// Send DM intent
-const needsDM = lower.includes('send message') || lower.includes('שלח הודעה') || lower.includes('write to') || lower.includes('כתוב ל') || lower.includes('tell') && lower.includes('that')
-if (needsDM) {
-  context += '\nFor sending DMs: if user wants to send a message to someone, include [DM:username|message content] at the end.\n\n'
-}
 
-// Create group intent
-const needsCreateGroup = lower.includes('create group') || lower.includes('צור קבוצה') || lower.includes('open group') || lower.includes('פתח קבוצה') || lower.includes('start a group')
-if (needsCreateGroup) {
-  context += '\nFor creating groups: if user wants to create a group, include [CREATE_GROUP:group name] at the end.\n\n'
-}
       // Post intent
       const needsPost = lower.includes('post') || lower.includes('פרסם') || lower.includes('publish') || lower.includes('share on feed')
       if (needsPost) {
@@ -306,48 +269,8 @@ if (needsCreateGroup) {
           ? `\n\n✅ Added "${calMatch[1].trim()}" to your calendar!`
           : `\n\n⚠️ Couldn't add to calendar. Check permissions in Settings.`
       }
-// Handle DM action
-const dmMatch = reply.match(/\[DM:([^\|]+)\|([^\]]+)\]/)
-if (dmMatch) {
-  reply = reply.replace(dmMatch[0], '').trim()
-  const targetName = dmMatch[1].trim()
-  const dmContent = dmMatch[2].trim()
-  const { data: targetProfile } = await supabase.from('profiles').select('id, display_name').ilike('username', `%${targetName}%`).limit(1).single()
-  if (targetProfile) {
-    await supabase.from('dm_messages').insert({ sender_id: userId, receiver_id: targetProfile.id, content: dmContent, sender_mode: 'lit', receiver_mode: 'lit' })
-    reply += `\n\n✅ Message sent to ${targetProfile.display_name || targetName}!`
-  } else {
-    reply += `\n\n⚠️ Couldn't find user "${targetName}" on Tryber.`
-  }
-}
 
-// Handle create group action
-const createGroupMatch = reply.match(/\[CREATE_GROUP:([^\]]+)\]/)
-if (createGroupMatch) {
-  reply = reply.replace(createGroupMatch[0], '').trim()
-  const groupName = createGroupMatch[1].trim()
-  const { data: newGroup } = await supabase.from('groups').insert({
-    name: groupName, status: 'open', type: 'manual', group_type: 'live',
-    min_members: 1, member_count: 1, created_by: userId,
-  }).select().single()
-  if (newGroup) {
-    await supabase.from('group_members').insert({ group_id: newGroup.id, user_id: userId, role: 'admin' })
-    await supabase.from('group_agents').insert({ group_id: newGroup.id, enabled: true })
-    reply += `\n\n✅ Group "${groupName}" created! `
-    reply += `[Open group →](tryber://chat/${newGroup.id})`
-  }
-}
- // Handle navigation action
-const navMatch = reply.match(/\[NAVIGATE:([^\]]+)\]/)
-if (navMatch) {
-  reply = reply.replace(navMatch[0], '').trim()
-  const destination = encodeURIComponent(navMatch[1].trim())
-  const origin = coords ? `${coords.lat},${coords.lon}` : ''
-  const mapsUrl = `https://www.google.com/maps/dir/${origin}/${destination}`
-  Linking.openURL(mapsUrl)
-  reply += `\n\n🗺️ Opening Google Maps...`
-}  
-   // Handle post action
+      // Handle post action
       const postMatch = reply.match(/\[POST:([^\]]+)\]/)
       if (postMatch) {
         reply = reply.replace(postMatch[0], '').trim()
