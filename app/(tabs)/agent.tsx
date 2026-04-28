@@ -61,7 +61,7 @@ export default function AgentScreen() {
 
     const { data: history } = await supabase.from('agent_messages')
       .select('*').eq('user_id', user.id)
-      .gte('created_at', new Date(new Date().setHours(0,0,0,0)).toISOString())
+      
       .order('created_at', { ascending: true }).limit(50)
 
     if (history?.length) {
