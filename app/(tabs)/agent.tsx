@@ -151,7 +151,32 @@ export default function AgentScreen() {
     if (!msg || !userId || loading) return
     setDraft('')
     setLoading(true)
+// Check credits
+const { data: profileData } = await supabase.from('profiles').select('teeby_credits, teeby_credits_reset_at').eq('id', userId).single()
+const resetAt = new Date(profileData?.teeby_credits_reset_at || 0)
+const now = new Date()
+let credits = profileData?.teeby_credits ?? 20
 
+// Reset daily credits
+if (now.getDate() !== resetAt.getDate() || now.getMonth() !== resetAt.getMonth()) {
+  credits = 20
+  await supabase.from('profiles').update({ teeby_credits: 20, teeby_credits_reset_at: now.toISOString() }).eq('id', userId)
+}
+
+if (credits <= 0) {
+  setLoading(false)
+  Alert.alert(
+    '✦ Daily limit reached',
+    'You\'ve used all 20 free daily messages.\n\nCredits reset tomorrow, or get more now.',
+    [
+      { text: 'OK' },
+      { text: '💎 Get More Credits', onPress: () => Alert.alert('Coming soon!', 'In-app purchases coming in the next update.') }
+    ]
+  )
+  return
+}
+
+await supabase.from('profiles').update({ teeby_credits: credits - 1 }).eq('id', userId)
     const userMsg: Message = { id: Date.now().toString(), role: 'user', content: msg, created_at: new Date().toISOString() }
     setMessages(prev => [...prev, userMsg])
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
