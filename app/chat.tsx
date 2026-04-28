@@ -60,7 +60,11 @@ export default function ChatScreen() {
   const [blockedUsers, setBlockedUsers] = useState<string[]>([])
   const listRef = useRef<FlatList>(null)
   const swipeableRefs = useRef<Map<string, Swipeable>>(new Map())
-
+const markAsRead = useCallback(async (uid: string) => {
+  await supabase.from('group_members')
+    .update({ last_read_at: new Date().toISOString() })
+    .eq('group_id', id).eq('user_id', uid)
+}, [id])
   const loadMessages = useCallback(async () => {
     const { data } = await supabase
       .from('messages')
@@ -77,7 +81,8 @@ export default function ChatScreen() {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
       setUserId(user.id)
-      const { data: member } = await supabase.from('group_members').select('role').eq('group_id', id).eq('user_id', user.id).single()
+  markAsRead(user.id)   
+ const { data: member } = await supabase.from('group_members').select('role').eq('group_id', id).eq('user_id', user.id).single()
       if (member?.role === 'admin') setIsAdmin(true)
       const { data: blocks } = await supabase.from('group_blocks').select('blocked_user_id').eq('group_id', id)
       if (blocks) setBlockedUsers(blocks.map((b: any) => b.blocked_user_id))
