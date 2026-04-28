@@ -115,19 +115,34 @@ export default function ChatScreen() {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [id])
-
-  const sendMessage = async () => {
-    if (!draft.trim() || !userId) return
-    const text = draft.trim()
-    setDraft('')
-    await supabase.from('messages').insert({
-      group_id: id, user_id: userId, type: 'text', content: text,
-      sender_mode: senderMode,
-      reply_to_id: replyTo?.id || null,
-      reply_preview: replyTo?.content ? replyTo.content.slice(0, 60) : null,
-    })
-    setReplyTo(null)
+const sendMessage = async () => {
+  if (!draft.trim() || !userId) return
+  const text = draft.trim()
+  setDraft('')
+  
+  const tempMsg: Message = {
+    id: `temp_${Date.now()}`,
+    user_id: userId,
+    type: 'text',
+    content: text,
+    media_url: null,
+    reply_to_id: replyTo?.id || null,
+    reply_preview: replyTo?.content?.slice(0, 60) || null,
+    created_at: new Date().toISOString(),
+    sender_mode: senderMode,
+    profile: undefined,
   }
+  setMessages(prev => [...prev, tempMsg])
+  setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
+  setReplyTo(null)
+
+  await supabase.from('messages').insert({
+    group_id: id, user_id: userId, type: 'text', content: text,
+    sender_mode: senderMode,
+    reply_to_id: tempMsg.reply_to_id,
+    reply_preview: tempMsg.reply_preview,
+  })
+
 
   const handleSwipeReply = (item: Message) => {
     setReplyTo(item)
@@ -378,9 +393,14 @@ export default function ChatScreen() {
                         }
                       </View>
                       <View style={[s.msgMeta, isMe && s.msgMetaMe]}>
-                        <Text style={s.timeText}>{formatTime(item.created_at)}</Text>
-                        {item.edited && <Text style={s.editedTag}>· edited</Text>}
-                      </View>
+  <Text style={s.timeText}>{formatTime(item.created_at)}</Text>
+  {item.edited && <Text style={s.editedTag}>· edited</Text>}
+  {isMe && (
+    <Text style={{ fontSize: 11, color: item.id.startsWith('temp_') ? 'rgba(255,255,255,0.4)' : '#00BFA6' }}>
+      {item.id.startsWith('temp_') ? '✓' : '✓✓'}
+    </Text>
+  )}
+</View>
                     </View>
                   </Pressable>
                 </Swipeable>
