@@ -184,7 +184,10 @@ const sendMessage = async () => {
                     <View style={[s.bubble, isMe ? s.bubbleMe : talkingToAgent ? s.bubbleAgent : s.bubbleThem]}>
                       <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{item.content}</Text>
                     </View>
-                    <Text style={[s.timeText, isMe && s.timeTextMe]}>{formatTime(item.created_at)}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 4, justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
+  <Text style={[s.timeText]}>{formatTime(item.created_at)}</Text>
+  {isMe && <Text style={{ fontSize: 11, color: item.id.startsWith('temp_') ? 'rgba(255,255,255,0.4)' : '#00BFA6' }}>✓✓</Text>}
+</View>
                   </View>
                 </View>
               )
