@@ -115,28 +115,60 @@ export default function AgentScreen() {
       return result || ''
     } catch { return '' }
   }
-
-  const addToCalendar = async (title: string, dateStr: string, notes?: string): Promise<boolean> => {
-    try {
-      const { status } = await Calendar.requestCalendarPermissionsAsync()
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Allow calendar access to add events')
-        return false
+const addToCalendar = async (title: string, dateStr: string, notes?: string): Promise<boolean> => {
+  try {
+    const { status } = await Calendar.requestCalendarPermissionsAsync()
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Allow calendar access in Settings')
+      return false
+    }
+    
+    // Parse date intelligently
+    let date = new Date(dateStr)
+    if (isNaN(date.getTime())) {
+      // Try natural language parsing
+      const lower = dateStr.toLowerCase()
+      const now = new Date()
+      if (lower.includes('minute')) {
+        const mins = parseInt(lower.match(/(\d+)/)?.[1] || '30')
+        date = new Date(now.getTime() + mins * 60000)
+      } else if (lower.includes('hour')) {
+        const hrs = parseInt(lower.match(/(\d+)/)?.[1] || '1')
+        date = new Date(now.getTime() + hrs * 3600000)
+      } else if (lower.includes('tomorrow')) {
+        date = new Date(now)
+        date.setDate(date.getDate() + 1)
+        date.setHours(9, 0, 0, 0)
+      } else if (lower.includes('tonight') || lower.includes('evening')) {
+        date = new Date(now)
+        date.setHours(20, 0, 0, 0)
+      } else {
+        date = new Date(now.getTime() + 60 * 60000)
       }
-      const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
-      const defaultCal = calendars.find(c => c.allowsModifications) || calendars[0]
-      if (!defaultCal) return false
-      const date = new Date(dateStr)
-      if (isNaN(date.getTime())) return false
-      await Calendar.createEventAsync(defaultCal.id, {
-        title,
-        startDate: date,
-        endDate: new Date(date.getTime() + 60 * 60 * 1000),
-        notes: notes || 'Added by Teeby on Tryber',
-      })
-      return true
-    } catch { return false }
+    }
+    
+    const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
+    const writableCal = calendars.find(c => c.allowsModifications)
+    if (!writableCal) {
+      Alert.alert('No calendar found', 'Please add a calendar to your device first')
+      return false
+    }
+    
+    const eventId = await Calendar.createEventAsync(writableCal.id, {
+      title,
+      startDate: date,
+      endDate: new Date(date.getTime() + 60 * 60 * 1000),
+      notes: notes || 'Added by Teeby on Tryber ✦',
+      alarms: [{ relativeOffset: -15 }],
+    })
+    
+    return !!eventId
+  } catch (e) {
+    console.log('Calendar error:', e)
+    return false
   }
+}
+ 
 
   const publishPost = async (content: string): Promise<boolean> => {
     if (!userId) return false

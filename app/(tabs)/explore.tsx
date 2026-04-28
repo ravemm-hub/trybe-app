@@ -92,7 +92,8 @@ export default function ExploreScreen() {
     setCoords({ lat: latitude, lon: longitude })
     await supabase.from('user_locations').upsert({ user_id: userId, location: `POINT(${longitude} ${latitude})`, radar_on: true, identity_mode: myMode, updated_at: new Date().toISOString() })
     try {
-      const { data } = await supabase.rpc('nearby_users', { lat: latitude, lon: longitude, radius_m: 2000 })
+ await supabase.rpc('place_agents_near_user', { user_id_input: userId }) 
+    const { data } = await supabase.rpc('nearby_users', { lat: latitude, lon: longitude, radius_m: 2000 })
       setNearbyUsers(((data || []) as NearbyUser[]).filter(u => u.id !== userId).map(u => ({ ...u, is_agent: AGENT_IDS.includes(u.id) })))
     } catch {}
   }
