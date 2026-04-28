@@ -272,7 +272,22 @@ export default function ChatScreen() {
                 <Text style={s.menuItemText}>✏️ Edit</Text>
               </TouchableOpacity>
             )}
-            {selectedMsg?.user_id === userId && !selectedMsg?.deleted && (
+  {selectedMsg?.user_id !== userId && selectedMsg?.user_id && (
+  <TouchableOpacity style={s.menuItem} onPress={() => {
+    setShowMenu(false)
+    router.push({
+      pathname: '/dm',
+      params: {
+        userId: selectedMsg!.user_id!,
+        userName: selectedMsg!.profile?.display_name || selectedMsg!.profile?.username || 'User',
+        myMode: 'lit', myAvatar: '💬', isAgent: '0',
+      }
+    })
+  }}>
+    <Text style={s.menuItemText}>💬 Send DM</Text>
+  </TouchableOpacity>
+)}        
+  {selectedMsg?.user_id === userId && !selectedMsg?.deleted && (
               <TouchableOpacity style={s.menuItem} onPress={() => deleteMessage(selectedMsg)}>
                 <Text style={[s.menuItemText, { color: '#E24B4A' }]}>🗑️ Delete</Text>
               </TouchableOpacity>
