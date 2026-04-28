@@ -107,16 +107,18 @@ export default function DMScreen() {
     finally { setAgentTyping(false) }
   }
 
-  const sendMessage = async () => {
-    if (!draft.trim() || !myId) return
-    const text = draft.trim()
+ const sendMessage = async () => {
+  if (!draft.trim() || !myId) return
+  const text = draft.trim()
+  const { error } = await supabase.from('dm_messages').insert({
+    sender_id: myId, receiver_id: otherUserId, content: text,
+    sender_mode: myMode || 'lit', receiver_mode: 'lit',
+  })
+  if (!error) {
     setDraft('')
-    await supabase.from('dm_messages').insert({
-      sender_id: myId, receiver_id: otherUserId, content: text,
-      sender_mode: myMode || 'lit', receiver_mode: 'lit',
-    })
     if (talkingToAgent) getAgentReply(text)
   }
+}
 
   const formatTime = (ts: string) => new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
 
