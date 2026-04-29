@@ -33,6 +33,7 @@ export default function ExploreScreen() {
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
   const [loading, setLoading] = useState(false)
   const [joiningId, setJoiningId] = useState<string | null>(null)
+  const [radarLoading, setRadarLoading] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -78,27 +79,65 @@ export default function ExploreScreen() {
   }
 
   const openGroup = (group: Group) => {
-    if (group.status === 'open') router.push({ pathname: '/chat', params: { id: group.id, name: group.name, members: group.member_count.toString(), readOnly: group.memberStatus !== 'member' ? '1' : '0' } })
-    else router.push({ pathname: '/lobby', params: { id: group.id, name: group.name } })
+    if (group.status === 'open') {
+      router.push({ pathname: '/chat', params: { id: group.id, name: group.name, members: group.member_count.toString(), readOnly: group.memberStatus !== 'member' ? '1' : '0' } })
+    } else {
+      router.push({ pathname: '/lobby', params: { id: group.id, name: group.name } })
+    }
+  }
+
+  const activateRadar = async () => {
+    setRadarLoading(true)
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync()
+      if (status !== 'granted') {
+        Alert.alert('Location needed', 'Radar needs your location to find people nearby')
+        setRadarOn(false)
+        return
+      }
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+      const { latitude, longitude } = loc.coords
+      setCoords({ lat: latitude, lon: longitude })
+
+      // Update my location
+      await supabase.from('user_locations').upsert({
+        user_id: userId,
+        location: `POINT(${longitude} ${latitude})`,
+        radar_on: true,
+        identity_mode: myMode,
+        updated_at: new Date().toISOString(),
+      })
+
+      // Place fake agents near me
+      await supabase.rpc('place_agents_near_user', { user_id_input: userId })
+
+      // Load nearby users
+      const { data } = await supabase.rpc('nearby_users', { lat: latitude, lon: longitude, radius_m: 2000 })
+      const users = ((data || []) as NearbyUser[])
+        .filter(u => u.id !== userId)
+        .map(u => ({ ...u, is_agent: AGENT_IDS.includes(u.id) }))
+      setNearbyUsers(users)
+    } catch (e: any) {
+      console.log('Radar error:', e)
+    } finally {
+      setRadarLoading(false)
+    }
   }
 
   const toggleRadar = async (val: boolean) => {
     setRadarOn(val)
-    if (!val) { if (userId) await supabase.from('user_locations').update({ radar_on: false }).eq('user_id', userId); setNearbyUsers([]); return }
-    const { status } = await Location.requestForegroundPermissionsAsync()
-    if (status !== 'granted') { Alert.alert('Location needed', 'Radar needs location permission'); setRadarOn(false); return }
-    const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-    const { latitude, longitude } = loc.coords
-    setCoords({ lat: latitude, lon: longitude })
-    await supabase.from('user_locations').upsert({ user_id: userId, location: `POINT(${longitude} ${latitude})`, radar_on: true, identity_mode: myMode, updated_at: new Date().toISOString() })
-    try {
- await supabase.rpc('place_agents_near_user', { user_id_input: userId }) 
-    const { data } = await supabase.rpc('nearby_users', { lat: latitude, lon: longitude, radius_m: 2000 })
-      setNearbyUsers(((data || []) as NearbyUser[]).filter(u => u.id !== userId).map(u => ({ ...u, is_agent: AGENT_IDS.includes(u.id) })))
-    } catch {}
+    if (!val) {
+      if (userId) await supabase.from('user_locations').update({ radar_on: false }).eq('user_id', userId)
+      setNearbyUsers([])
+      return
+    }
+    await activateRadar()
   }
 
-  const filteredGroups = groups.filter(g => g.name.toLowerCase().includes(search.toLowerCase()) || (g.location_name || '').toLowerCase().includes(search.toLowerCase()))
+  const filteredGroups = groups.filter(g =>
+    g.name.toLowerCase().includes(search.toLowerCase()) ||
+    (g.location_name || '').toLowerCase().includes(search.toLowerCase())
+  )
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -115,17 +154,24 @@ export default function ExploreScreen() {
         </View>
       </View>
 
+      {/* Radar Bar */}
       <View style={s.radarBar}>
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={s.radarTitle}>📡 Radar</Text>
-          <Text style={s.radarSub}>{radarOn ? (myMode === 'lit' ? '🔥 Visible to others' : '👻 Ghost mode') : 'See people & groups nearby'}</Text>
+          <Text style={s.radarSub}>
+            {radarLoading ? 'Finding people...' :
+             radarOn ? (myMode === 'lit' ? '🔥 You are visible to others' : '👻 Ghost mode — anonymous') :
+             'Turn on to see people nearby'}
+          </Text>
         </View>
-        <Switch value={radarOn} onValueChange={toggleRadar} trackColor={{ false: '#E0E0E0', true: TEAL }} thumbColor="#fff" />
+        {radarLoading ? <ActivityIndicator color={TEAL} /> :
+          <Switch value={radarOn} onValueChange={toggleRadar} trackColor={{ false: '#E0E0E0', true: TEAL }} thumbColor="#fff" />
+        }
       </View>
 
       {radarOn && (
         <View style={s.modeBar}>
-          <TouchableOpacity style={[s.modeBtn, myMode === 'lit' && s.modeBtnActive]} onPress={() => setMyMode('lit')}>
+          <TouchableOpacity style={[s.modeBtn, myMode === 'lit' && s.modeBtnLit]} onPress={() => setMyMode('lit')}>
             <Text style={s.modeBtnText}>🔥 Visible</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[s.modeBtn, myMode === 'ghost' && s.modeBtnGhost]} onPress={() => setMyMode('ghost')}>
@@ -139,7 +185,9 @@ export default function ExploreScreen() {
           <Text style={[s.tabBtnText, tab === 'trybes' && s.tabBtnTextActive]}>⚡ Trybes ({groups.length})</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[s.tabBtn, tab === 'people' && s.tabBtnActive]} onPress={() => setTab('people')}>
-          <Text style={[s.tabBtnText, tab === 'people' && s.tabBtnTextActive]}>👥 People {nearbyUsers.length > 0 ? `(${nearbyUsers.length})` : ''}</Text>
+          <Text style={[s.tabBtnText, tab === 'people' && s.tabBtnTextActive]}>
+            👥 People {nearbyUsers.length > 0 ? `(${nearbyUsers.length})` : ''}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -156,7 +204,11 @@ export default function ExploreScreen() {
           contentContainerStyle={{ padding: 12, gap: 8, paddingBottom: 20 }}
           refreshing={loading}
           onRefresh={() => loadGroups()}
-          ListEmptyComponent={<View style={s.empty}>{loading ? <ActivityIndicator color={PRIMARY} /> : <Text style={s.emptyText}>No groups yet</Text>}</View>}
+          ListEmptyComponent={
+            <View style={s.empty}>
+              {loading ? <ActivityIndicator color={PRIMARY} /> : <Text style={s.emptyText}>No groups yet</Text>}
+            </View>
+          }
           renderItem={({ item }) => {
             const isMember = item.memberStatus === 'member'
             const isPending = item.memberStatus === 'pending'
@@ -200,34 +252,53 @@ export default function ExploreScreen() {
         <FlatList
           data={nearbyUsers}
           keyExtractor={u => u.id}
-          contentContainerStyle={{ padding: 12, gap: 8 }}
+          contentContainerStyle={{ padding: 12, gap: 8, paddingBottom: 20 }}
           ListEmptyComponent={
             <View style={s.empty}>
               {!radarOn ? (
-                <View style={{ alignItems: 'center', gap: 12 }}>
-                  <Text style={{ fontSize: 48 }}>📡</Text>
-                  <Text style={{ fontSize: 18, fontWeight: '700', color: TEXT }}>Enable Radar</Text>
-                  <Text style={{ fontSize: 14, color: GRAY, textAlign: 'center' }}>Turn on Radar above to see people nearby</Text>
+                <View style={{ alignItems: 'center', gap: 16, paddingTop: 40 }}>
+                  <Text style={{ fontSize: 56 }}>📡</Text>
+                  <Text style={{ fontSize: 20, fontWeight: '800', color: TEXT }}>Enable Radar</Text>
+                  <Text style={{ fontSize: 14, color: GRAY, textAlign: 'center', lineHeight: 22 }}>
+                    Turn on Radar above to see{'\n'}people nearby in real-time
+                  </Text>
+                  <TouchableOpacity style={[s.joinBtn, { paddingHorizontal: 28 }]} onPress={() => toggleRadar(true)}>
+                    <Text style={s.joinBtnText}>📡 Enable Radar</Text>
+                  </TouchableOpacity>
                 </View>
-              ) : <Text style={s.emptyText}>No people nearby with Radar on</Text>}
+              ) : radarLoading ? (
+                <View style={{ alignItems: 'center', gap: 12, paddingTop: 40 }}>
+                  <ActivityIndicator color={TEAL} size="large" />
+                  <Text style={{ color: GRAY }}>Scanning for people nearby...</Text>
+                </View>
+              ) : (
+                <View style={{ alignItems: 'center', paddingTop: 40 }}>
+                  <Text style={{ fontSize: 40, marginBottom: 12 }}>🔍</Text>
+                  <Text style={{ color: GRAY, fontSize: 14 }}>No people nearby with Radar on</Text>
+                </View>
+              )}
             </View>
           }
           renderItem={({ item }) => {
             const displayName = item.identity_mode === 'ghost' ? 'Anonymous' : (item.display_name || item.username)
-            const avatar = item.identity_mode === 'ghost' ? (item.avatar_char || '👻') : (item.display_name?.[0] || '?')
+            const avatar = item.identity_mode === 'ghost' ? (item.avatar_char || '👻') : (item.avatar_char || item.display_name?.[0] || '?')
             return (
               <View style={s.userCard}>
-                <View style={[s.userAvatar, item.is_agent && { backgroundColor: '#FFF0EB', borderColor: '#FF6B35', borderWidth: 2 }]}>
+                <View style={[s.userAvatar, item.is_agent && { backgroundColor: '#EEF0FF', borderColor: PRIMARY, borderWidth: 2 }]}>
                   <Text style={{ fontSize: 24 }}>{avatar}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <Text style={s.userName}>{displayName}</Text>
                     {item.is_agent && <View style={s.agentBadge}><Text style={s.agentBadgeText}>AI</Text></View>}
+                    {item.identity_mode === 'ghost' && !item.is_agent && <View style={s.ghostBadge}><Text style={s.ghostBadgeText}>👻 anon</Text></View>}
                   </View>
                   <Text style={s.userDist}>{item.distance_m < 1000 ? `${Math.round(item.distance_m)}m` : `${(item.distance_m / 1000).toFixed(1)}km`} away</Text>
                 </View>
-                <TouchableOpacity style={s.dmBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: item.id, userName: item.identity_mode === 'ghost' ? (item.avatar_char || '👻') : (item.display_name || item.username), myMode, myAvatar: '📡', isAgent: item.is_agent ? '1' : '0' } })}>
+                <TouchableOpacity style={s.dmBtn} onPress={() => router.push({
+                  pathname: '/dm',
+                  params: { userId: item.id, userName: item.identity_mode === 'ghost' ? (item.avatar_char || '👻') : (item.display_name || item.username), myMode, myAvatar: '📡', isAgent: item.is_agent ? '1' : '0' }
+                })}>
                   <Text style={{ fontSize: 20 }}>💬</Text>
                 </TouchableOpacity>
               </View>
@@ -248,22 +319,22 @@ const s = StyleSheet.create({
   mapBtnText: { fontSize: 18 },
   createBtn: { backgroundColor: PRIMARY, paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 },
   createBtnText: { color: '#fff', fontSize: 12, fontWeight: '700' },
-  radarBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
+  radarBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB', gap: 12 },
   radarTitle: { fontSize: 15, fontWeight: '700', color: TEXT },
   radarSub: { fontSize: 12, color: GRAY, marginTop: 2 },
   modeBar: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  modeBtn: { flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: '#F0F0F8', alignItems: 'center' },
-  modeBtnActive: { backgroundColor: '#E8F5F3', borderWidth: 1.5, borderColor: TEAL },
+  modeBtn: { flex: 1, paddingVertical: 8, borderRadius: 10, backgroundColor: BG, alignItems: 'center' },
+  modeBtnLit: { backgroundColor: '#E8F5F3', borderWidth: 1.5, borderColor: TEAL },
   modeBtnGhost: { backgroundColor: '#EEF0FF', borderWidth: 1.5, borderColor: PRIMARY },
   modeBtnText: { fontSize: 13, fontWeight: '600', color: TEXT },
   tabRow: { flexDirection: 'row', backgroundColor: CARD, paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  tabBtn: { flex: 1, paddingVertical: 8, borderRadius: 12, backgroundColor: '#F0F0F8', alignItems: 'center' },
+  tabBtn: { flex: 1, paddingVertical: 8, borderRadius: 12, backgroundColor: BG, alignItems: 'center' },
   tabBtnActive: { backgroundColor: PRIMARY },
   tabBtnText: { fontSize: 13, fontWeight: '600', color: GRAY },
   tabBtnTextActive: { color: '#fff' },
   searchWrap: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  searchInput: { backgroundColor: '#F0F0F8', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: TEXT },
-  empty: { paddingTop: 60, alignItems: 'center', gap: 12 },
+  searchInput: { backgroundColor: BG, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: TEXT },
+  empty: { paddingTop: 40, alignItems: 'center', gap: 12, paddingHorizontal: 32 },
   emptyText: { fontSize: 14, color: GRAY },
   groupCard: { backgroundColor: CARD, borderRadius: 16, padding: 14, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2 },
   groupCardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10, marginBottom: 10 },
@@ -281,13 +352,15 @@ const s = StyleSheet.create({
   enterBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   joinBtn: { backgroundColor: TEAL, paddingHorizontal: 16, paddingVertical: 7, borderRadius: 20, minWidth: 80, alignItems: 'center' },
   joinBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  pendingBtn: { backgroundColor: '#F0F0F8', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 },
+  pendingBtn: { backgroundColor: BG, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 20 },
   pendingBtnText: { color: GRAY, fontSize: 12, fontWeight: '600' },
   userCard: { backgroundColor: CARD, borderRadius: 16, padding: 14, flexDirection: 'row', alignItems: 'center', gap: 12, shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 8, elevation: 2 },
   userAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
   userName: { fontSize: 15, fontWeight: '700', color: TEXT },
   userDist: { fontSize: 12, color: GRAY, marginTop: 2 },
-  agentBadge: { backgroundColor: '#FF6B35', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  agentBadge: { backgroundColor: PRIMARY, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
   agentBadgeText: { fontSize: 10, fontWeight: '700', color: '#fff' },
-  dmBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
+  ghostBadge: { backgroundColor: BG, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 },
+  ghostBadgeText: { fontSize: 10, color: GRAY },
+  dmBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
 })
