@@ -93,7 +93,7 @@ export default function FeedScreen() {
 
   const openComments = async (post: Post) => {
     setSelectedPost(post)
-    const { data } = await supabase.from('post_comments').select('*').eq('post_id', post.id).order('created_at', { ascending: true })
+    const { data } = await supabase.from('post_comments').select('*, is_anonymous').eq('post_id', post.id).order('created_at', { ascending: true })
     const enriched = await Promise.all((data || []).map(async (c: Comment) => {
       const { data: profile } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', c.user_id).single()
       return { ...c, profile: profile || undefined }
@@ -283,7 +283,7 @@ export default function FeedScreen() {
                     <Text style={{ fontSize: 16 }}>{item.profile?.avatar_char || item.profile?.display_name?.[0] || '?'}</Text>
                   </View>
                   <View style={s.commentBubble}>
-                    <Text style={s.commentName}>{item.profile?.display_name || item.profile?.username}</Text>
+                    <Text style={s.commentName}>{(item as any).is_anonymous ? '👻 Anonymous' : (item.profile?.display_name || item.profile?.username)}</Text>
                     <Text style={s.commentText}>{item.content}</Text>
                   </View>
                 </View>

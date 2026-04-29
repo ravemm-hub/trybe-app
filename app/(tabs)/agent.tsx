@@ -481,7 +481,7 @@ const s = StyleSheet.create({
   typingBubble: { backgroundColor: '#F0F0F8', borderRadius: 18, paddingHorizontal: 16, paddingVertical: 12, borderWidth: 0.5, borderColor: '#EBEBEB' },
   typingDots: { fontSize: 18, color: PURPLE, letterSpacing: 4 },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, gap: 8, backgroundColor: '#FFFFFF', borderTopWidth: 0.5, borderColor: 'rgba(255,255,255,0.08)' },
-  input: { flex: 1, minHeight: 40, maxHeight: 100, backgroundColor: '#F0F0F8', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#fff', borderWidth: 1, borderColor: '#EBEBEB' },
+  input: { flex: 1, minHeight: 40, maxHeight: 100, backgroundColor: '#F0F0F8', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#1A1A2E', borderWidth: 1, borderColor: '#EBEBEB' },
   sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: PURPLE, alignItems: 'center', justifyContent: 'center' },
   sendBtnOff: { opacity: 0.3 },
   sendIcon: { color: '#fff', fontSize: 18, fontWeight: '700' },

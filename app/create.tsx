@@ -5,7 +5,6 @@ import {
   KeyboardAvoidingView, Platform, StatusBar, FlatList, Modal,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import MapView, { Marker, Circle, PROVIDER_GOOGLE } from 'react-native-maps'
 import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import * as Contacts from 'expo-contacts'
@@ -90,7 +89,7 @@ export default function CreateScreen() {
     if (!coords || !userId) return
     try {
       await supabase.rpc('place_agents_near_user', { user_id_input: userId })
-      const { data } = await supabase.rpc('nearby_users', { lat: coords.lat, lon: coords.lon, radius_m: r })
+      const { data } = await supabase.rpc('nearby_users', { p_lat: coords.lat, p_lon: coords.lon, radius_m: r })
       const users = ((data || []) as NearbyUser[])
         .filter(u => u.id !== userId)
         .map(u => ({ ...u, is_agent: AGENT_IDS.includes(u.id) }))
@@ -261,28 +260,12 @@ export default function CreateScreen() {
                 ))}
               </View>
 
-              {/* Map */}
+              {/* Nearby users map placeholder */}
               {coords && (
-                <MapView
-                  style={s.map}
-                  provider={PROVIDER_GOOGLE}
-                  initialRegion={{ latitude: coords.lat, longitude: coords.lon, latitudeDelta: 0.005, longitudeDelta: 0.005 }}
-                  showsUserLocation
-                >
-                  <Circle center={{ latitude: coords.lat, longitude: coords.lon }} radius={radius} fillColor="rgba(0,191,166,0.1)" strokeColor={TEAL} strokeWidth={1} />
-                  {nearbyUsers.map(u => (
-                    <Marker
-                      key={u.id}
-                      coordinate={{ latitude: u.lat || coords.lat + (Math.random()-0.5)*0.003, longitude: u.lon || coords.lon + (Math.random()-0.5)*0.003 }}
-                      onPress={() => toggleSelect(u.id)}
-                    >
-                      <View style={[s.mapMarker, selectedIds.has(u.id) && s.mapMarkerSelected]}>
-                        <Text style={{ fontSize: 18 }}>{u.avatar_char || '👤'}</Text>
-                        {selectedIds.has(u.id) && <View style={s.mapMarkerCheck}><Text style={{ color: '#fff', fontSize: 10 }}>✓</Text></View>}
-                      </View>
-                    </Marker>
-                  ))}
-                </MapView>
+                <View style={s.radarPreview}>
+                  <Text style={s.radarPreviewText}>📡 Showing users within {radius < 1000 ? `${radius}m` : `${radius/1000}km`}</Text>
+                  <Text style={s.radarPreviewSub}>{nearbyUsers.length} people found nearby</Text>
+                </View>
               )}
 
               {/* Nearby list */}
@@ -388,10 +371,9 @@ const s = StyleSheet.create({
   radiusBtnActive: { backgroundColor: TEAL },
   radiusBtnText: { fontSize: 11, color: GRAY, fontWeight: '600' },
   radiusBtnTextActive: { color: '#fff' },
-  map: { height: 200, width: '100%' },
-  mapMarker: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF0FF', borderWidth: 2, borderColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
-  mapMarkerSelected: { backgroundColor: '#E8F5F3', borderColor: TEAL, borderWidth: 3 },
-  mapMarkerCheck: { position: 'absolute', bottom: 0, right: 0, width: 14, height: 14, borderRadius: 7, backgroundColor: TEAL, alignItems: 'center', justifyContent: 'center' },
+  radarPreview: { backgroundColor: '#E8F5F3', borderRadius: 12, padding: 14, marginHorizontal: 16, marginVertical: 8, alignItems: 'center' },
+  radarPreviewText: { fontSize: 14, fontWeight: '600', color: TEAL },
+  radarPreviewSub: { fontSize: 12, color: GRAY, marginTop: 4 },
   emptyNearby: { textAlign: 'center', color: GRAY, padding: 20, fontSize: 13 },
   nearbyRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
   nearbyAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
