@@ -109,29 +109,8 @@ export default function FeedScreen() {
     await supabase.from('posts').update({ comment_count: (selectedPost.comment_count || 0) + 1 }).eq('id', selectedPost.id)
     await openComments(selectedPost)
     setPosts(prev => prev.map(p => p.id === selectedPost.id ? { ...p, comment_count: (p.comment_count || 0) + 1 } : p))
- 
- }
-// Teeby auto-reply to comments on user's own posts
-if (selectedPost.user_id === userId) {
-  setTimeout(async () => {
-    try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': process.env.EXPO_PUBLIC_ANTHROPIC_KEY || '', 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001', max_tokens: 80,
-          messages: [{ role: 'user', content: `Someone commented on your post "${selectedPost.content?.slice(0,50)}": "${text}". Write a warm friendly reply in the same language. Max 1 sentence.` }]
-        }),
-      })
-      const data = await res.json()
-      const reply = data.content?.[0]?.text?.trim()
-      if (reply) {
-        await supabase.from('post_comments').insert({ post_id: selectedPost.id, user_id: userId, content: `✦ ${reply}`, is_anonymous: false })
-        await openComments(selectedPost)
-      }
-    } catch {}
-  }, 3000)
-}
+  }
+
   const pickImage = async () => {
     const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync()
     if (!granted) return
