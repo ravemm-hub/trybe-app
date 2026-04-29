@@ -60,11 +60,7 @@ export default function ChatScreen() {
   const [blockedUsers, setBlockedUsers] = useState<string[]>([])
   const listRef = useRef<FlatList>(null)
   const swipeableRefs = useRef<Map<string, Swipeable>>(new Map())
-const markAsRead = useCallback(async (uid: string) => {
-  await supabase.from('group_members')
-    .update({ last_read_at: new Date().toISOString() })
-    .eq('group_id', id).eq('user_id', uid)
-}, [id])
+
   const loadMessages = useCallback(async () => {
     const { data } = await supabase
       .from('messages')
@@ -81,8 +77,7 @@ const markAsRead = useCallback(async (uid: string) => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
       setUserId(user.id)
-  markAsRead(user.id)   
- const { data: member } = await supabase.from('group_members').select('role').eq('group_id', id).eq('user_id', user.id).single()
+      const { data: member } = await supabase.from('group_members').select('role').eq('group_id', id).eq('user_id', user.id).single()
       if (member?.role === 'admin') setIsAdmin(true)
       const { data: blocks } = await supabase.from('group_blocks').select('blocked_user_id').eq('group_id', id)
       if (blocks) setBlockedUsers(blocks.map((b: any) => b.blocked_user_id))
@@ -120,34 +115,19 @@ const markAsRead = useCallback(async (uid: string) => {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [id])
-const sendMessage = async () => {
-  if (!draft.trim() || !userId) return
-  const text = draft.trim()
-  setDraft('')
-  
-  const tempMsg: Message = {
-    id: `temp_${Date.now()}`,
-    user_id: userId,
-    type: 'text',
-    content: text,
-    media_url: null,
-    reply_to_id: replyTo?.id || null,
-    reply_preview: replyTo?.content?.slice(0, 60) || null,
-    created_at: new Date().toISOString(),
-    sender_mode: senderMode,
-    profile: undefined,
+
+  const sendMessage = async () => {
+    if (!draft.trim() || !userId) return
+    const text = draft.trim()
+    setDraft('')
+    await supabase.from('messages').insert({
+      group_id: id, user_id: userId, type: 'text', content: text,
+      sender_mode: senderMode,
+      reply_to_id: replyTo?.id || null,
+      reply_preview: replyTo?.content ? replyTo.content.slice(0, 60) : null,
+    })
+    setReplyTo(null)
   }
-  setMessages(prev => [...prev, tempMsg])
-  setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
-  setReplyTo(null)
-
-  await supabase.from('messages').insert({
-    group_id: id, user_id: userId, type: 'text', content: text,
-    sender_mode: senderMode,
-    reply_to_id: tempMsg.reply_to_id,
-    reply_preview: tempMsg.reply_preview,
-  })
-
 
   const handleSwipeReply = (item: Message) => {
     setReplyTo(item)
@@ -292,22 +272,7 @@ const sendMessage = async () => {
                 <Text style={s.menuItemText}>✏️ Edit</Text>
               </TouchableOpacity>
             )}
-  {selectedMsg?.user_id !== userId && selectedMsg?.user_id && (
-  <TouchableOpacity style={s.menuItem} onPress={() => {
-    setShowMenu(false)
-    router.push({
-      pathname: '/dm',
-      params: {
-        userId: selectedMsg!.user_id!,
-        userName: selectedMsg!.profile?.display_name || selectedMsg!.profile?.username || 'User',
-        myMode: 'lit', myAvatar: '💬', isAgent: '0',
-      }
-    })
-  }}>
-    <Text style={s.menuItemText}>💬 Send DM</Text>
-  </TouchableOpacity>
-)}        
-  {selectedMsg?.user_id === userId && !selectedMsg?.deleted && (
+            {selectedMsg?.user_id === userId && !selectedMsg?.deleted && (
               <TouchableOpacity style={s.menuItem} onPress={() => deleteMessage(selectedMsg)}>
                 <Text style={[s.menuItemText, { color: '#E24B4A' }]}>🗑️ Delete</Text>
               </TouchableOpacity>
@@ -398,14 +363,9 @@ const sendMessage = async () => {
                         }
                       </View>
                       <View style={[s.msgMeta, isMe && s.msgMetaMe]}>
-  <Text style={s.timeText}>{formatTime(item.created_at)}</Text>
-  {item.edited && <Text style={s.editedTag}>· edited</Text>}
-  {isMe && (
-    <Text style={{ fontSize: 11, color: item.id.startsWith('temp_') ? 'rgba(255,255,255,0.4)' : '#00BFA6' }}>
-      {item.id.startsWith('temp_') ? '✓' : '✓✓'}
-    </Text>
-  )}
-</View>
+                        <Text style={s.timeText}>{formatTime(item.created_at)}</Text>
+                        {item.edited && <Text style={s.editedTag}>· edited</Text>}
+                      </View>
                     </View>
                   </Pressable>
                 </Swipeable>
