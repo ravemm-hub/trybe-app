@@ -30,6 +30,7 @@ type DmMessage = {
   content: string
   created_at: string
   sender_mode: string
+  read_at?: string | null
 }
 
 export default function DMScreen() {
@@ -51,18 +52,22 @@ export default function DMScreen() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     setMyId(user.id)
-
-    // Load other user's profile
     if (!talkingToAgent) {
       const { data: profile } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', otherUserId).single()
       if (profile) setOtherProfile(profile)
     }
-
-    const { data } = await supabase
-      .from('dm_messages').select('*')
+    const { data } = await supabase.from('dm_messages').select('*')
       .or(`and(sender_id.eq.${user.id},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${user.id})`)
       .order('created_at', { ascending: true }).limit(100)
-    if (data) setMessages(data as DmMessage[])
+    if (data) {
+      setMessages(data as DmMessage[])
+      // Mark incoming messages as read
+      const unread = data.filter((m: DmMessage) => m.sender_id === otherUserId && !m.read_at)
+      if (unread.length > 0) {
+        await supabase.from('dm_messages').update({ read_at: new Date().toISOString() })
+          .in('id', unread.map((m: DmMessage) => m.id))
+      }
+    }
     setLoading(false)
     setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 100)
   }, [otherUserId])
@@ -72,13 +77,24 @@ export default function DMScreen() {
   useEffect(() => {
     if (!myId) return
     const channel = supabase.channel(`dm:${myId}:${otherUserId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, (payload) => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, async (payload) => {
         const msg = payload.new as DmMessage
         if ((msg.sender_id === myId && msg.receiver_id === otherUserId) ||
             (msg.sender_id === otherUserId && msg.receiver_id === myId)) {
-          setMessages(prev => [...prev, msg])
+          if (msg.sender_id === otherUserId) {
+            await supabase.from('dm_messages').update({ read_at: new Date().toISOString() }).eq('id', msg.id)
+            msg.read_at = new Date().toISOString()
+          }
+          setMessages(prev => {
+            const filtered = prev.filter(m => !m.id.startsWith('temp_'))
+            return [...filtered, msg]
+          })
           setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
         }
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dm_messages' }, (payload) => {
+        const msg = payload.new as DmMessage
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, read_at: msg.read_at } : m))
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
@@ -100,40 +116,48 @@ export default function DMScreen() {
       const reply = data.content?.[0]?.text?.trim()
       if (reply && myId) {
         await supabase.from('dm_messages').insert({
-          sender_id: otherUserId, receiver_id: myId, content: reply, sender_mode: 'lit', receiver_mode: myMode || 'lit',
+          sender_id: otherUserId, receiver_id: myId, content: reply,
+          sender_mode: 'lit', receiver_mode: myMode || 'lit',
         })
       }
     } catch (e) { console.log(e) }
     finally { setAgentTyping(false) }
   }
-const sendMessage = async () => {
-  if (!draft.trim() || !myId) return
-  const text = draft.trim()
-  setDraft('')
-  const tempMsg: DmMessage = {
-    id: `temp_${Date.now()}`,
-    sender_id: myId,
-    receiver_id: otherUserId,
-    content: text,
-    created_at: new Date().toISOString(),
-    sender_mode: myMode || 'lit',
+
+  const sendMessage = async () => {
+    if (!draft.trim() || !myId) return
+    const text = draft.trim()
+    setDraft('')
+    const tempMsg: DmMessage = {
+      id: `temp_${Date.now()}`,
+      sender_id: myId,
+      receiver_id: otherUserId,
+      content: text,
+      created_at: new Date().toISOString(),
+      sender_mode: myMode || 'lit',
+      read_at: null,
+    }
+    setMessages(prev => [...prev, tempMsg])
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
+    const { error } = await supabase.from('dm_messages').insert({
+      sender_id: myId, receiver_id: otherUserId, content: text,
+      sender_mode: myMode || 'lit', receiver_mode: 'lit',
+    })
+    if (error) setMessages(prev => prev.filter(m => m.id !== tempMsg.id))
+    if (!error && talkingToAgent) getAgentReply(text)
   }
-  setMessages(prev => [...prev, tempMsg])
-  setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
-  const { error } = await supabase.from('dm_messages').insert({
-    sender_id: myId, receiver_id: otherUserId, content: text,
-    sender_mode: myMode || 'lit', receiver_mode: 'lit',
-  })
-  if (error) setMessages(prev => prev.filter(m => m.id !== tempMsg.id))
-  if (!error && talkingToAgent) getAgentReply(text)
-}
-  
-   
 
   const formatTime = (ts: string) => new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
 
+  // WhatsApp-style status: ✓ sent (temp), ✓✓ gray (delivered), ✓✓ blue (read)
+  const getStatus = (msg: DmMessage) => {
+    if (msg.id.startsWith('temp_')) return { text: '✓', color: 'rgba(0,0,0,0.3)' }
+    if (msg.read_at) return { text: '✓✓', color: TEAL }
+    return { text: '✓✓', color: 'rgba(0,0,0,0.3)' }
+  }
+
   const displayName = talkingToAgent ? userName : (otherProfile?.display_name || otherProfile?.username || userName)
-  const avatarChar = talkingToAgent ? '🤖' : (otherProfile?.avatar_char || displayName?.[0] || '?')
+  const avatarChar = talkingToAgent ? '✦' : (otherProfile?.avatar_char || displayName?.[0] || '?')
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -173,6 +197,7 @@ const sendMessage = async () => {
             }
             renderItem={({ item }) => {
               const isMe = item.sender_id === myId
+              const status = getStatus(item)
               return (
                 <View style={[s.bubbleRow, isMe && s.bubbleRowMe]}>
                   {!isMe && (
@@ -184,10 +209,10 @@ const sendMessage = async () => {
                     <View style={[s.bubble, isMe ? s.bubbleMe : talkingToAgent ? s.bubbleAgent : s.bubbleThem]}>
                       <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{item.content}</Text>
                     </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 4, justifyContent: isMe ? 'flex-end' : 'flex-start' }}>
-  <Text style={[s.timeText]}>{formatTime(item.created_at)}</Text>
-  {isMe && <Text style={{ fontSize: 11, color: item.id.startsWith('temp_') ? 'rgba(255,255,255,0.4)' : '#00BFA6' }}>✓✓</Text>}
-</View>
+                    <View style={[s.metaRow, isMe && s.metaRowMe]}>
+                      <Text style={s.timeText}>{formatTime(item.created_at)}</Text>
+                      {isMe && <Text style={[s.statusText, { color: status.color }]}>{status.text}</Text>}
+                    </View>
                   </View>
                 </View>
               )
@@ -236,7 +261,7 @@ const s = StyleSheet.create({
   backBtn: { padding: 4 },
   backText: { fontSize: 32, color: PRIMARY, lineHeight: 36, marginTop: -4 },
   headerAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
-  headerAvatarAgent: { backgroundColor: '#EEF0FF', borderWidth: 2, borderColor: PRIMARY },
+  headerAvatarAgent: { borderWidth: 2, borderColor: PRIMARY },
   headerAvatarText: { fontSize: 20 },
   headerInfo: { flex: 1 },
   headerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -248,7 +273,7 @@ const s = StyleSheet.create({
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   bubbleRowMe: { flexDirection: 'row-reverse' },
   avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
-  avatarAgent: { backgroundColor: '#EEF0FF', borderWidth: 1.5, borderColor: PRIMARY },
+  avatarAgent: { borderWidth: 1.5, borderColor: PRIMARY },
   avatarText: { fontSize: 16, fontWeight: '600', color: PRIMARY },
   bubbleCol: { maxWidth: '75%' },
   bubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20 },
@@ -257,8 +282,10 @@ const s = StyleSheet.create({
   bubbleAgent: { backgroundColor: '#EEF0FF', borderBottomLeftRadius: 4 },
   bubbleText: { fontSize: 15, lineHeight: 22, color: TEXT },
   bubbleTextMe: { color: '#fff' },
-  timeText: { fontSize: 10, color: GRAY, marginTop: 4, marginLeft: 4 },
-  timeTextMe: { textAlign: 'right', marginRight: 4 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3, marginLeft: 4 },
+  metaRowMe: { justifyContent: 'flex-end', marginRight: 4 },
+  timeText: { fontSize: 10, color: GRAY },
+  statusText: { fontSize: 12, fontWeight: '600' },
   typingRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
   typingDots: { fontSize: 18, color: PRIMARY, letterSpacing: 4 },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#EBEBEB' },

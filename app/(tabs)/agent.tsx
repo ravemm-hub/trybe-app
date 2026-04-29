@@ -270,6 +270,32 @@ Rules:
           : `\n\n⚠️ Couldn't add to calendar. Check permissions in Settings.`
       }
 
+      // Handle shopping list
+      const shopMatch = reply.match(/\[SHOPPING:([^\]]+)\]/)
+      if (shopMatch) {
+        reply = reply.replace(shopMatch[0], '').trim()
+        const items = shopMatch[1].split(',').map((i: string) => i.trim()).filter(Boolean)
+        const existing: string[] = memoryFacts.shopping_list || []
+        const newList = [...new Set([...existing, ...items])]
+        const newFacts = { ...memoryFacts, shopping_list: newList }
+        setMemoryFacts(newFacts)
+        await supabase.from('teeby_memory').upsert({ user_id: userId, facts: newFacts }, { onConflict: 'user_id' })
+        reply += `\n\n🛒 Shopping list (${newList.length} items):\n${newList.map((i: string, n: number) => `${n+1}. ${i}`).join('\n')}`
+      }
+
+      // Handle matchmaking
+      const matchMatch = reply.match(/\[MATCH:([^\]]+)\]/)
+      if (matchMatch) {
+        reply = reply.replace(matchMatch[0], '').trim()
+        const { data: users } = await supabase.from('profiles').select('id, display_name, username, bio').neq('id', userId).limit(10)
+        const matches = (users || []).filter((u: any) => u.bio && u.bio.length > 0).slice(0, 3)
+        if (matches.length > 0) {
+          reply += `\n\n🤝 Found ${matches.length} people you might connect with:\n${matches.map((u: any) => `• ${u.display_name || u.username}${u.bio ? ': ' + u.bio.slice(0, 50) : ''}`).join('\n')}`
+        } else {
+          reply += `\n\n🔍 No matches yet — invite friends to Tryber!`
+        }
+      }
+
       // Handle post action
       const postMatch = reply.match(/\[POST:([^\]]+)\]/)
       if (postMatch) {

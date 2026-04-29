@@ -33,27 +33,29 @@ export default function TabsLayout() {
       .subscribe()
     return () => { clearInterval(interval); supabase.removeChannel(channel) }
   }, [])
-const checkUnread = async () => {
-  try {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    const { data: myGroups } = await supabase
-      .from('group_members').select('group_id, last_read_at').eq('user_id', user.id)
-    if (!myGroups?.length) { setUnread(0); return }
-    let count = 0
-    for (const m of myGroups) {
-      const lastRead = m.last_read_at || new Date(0).toISOString()
-      const { count: c } = await supabase.from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('group_id', m.group_id)
-        .neq('user_id', user.id)
-        .neq('type', 'system')
-        .gt('created_at', lastRead)
-      count += c || 0
-    }
-    setUnread(count)
-  } catch {}
-}
+
+  const checkUnread = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: myGroups } = await supabase
+        .from('group_members').select('group_id, last_read_at').eq('user_id', user.id)
+      if (!myGroups?.length) { setUnread(0); return }
+      let count = 0
+      for (const m of myGroups) {
+        const lastRead = m.last_read_at || new Date(0).toISOString()
+        const { count: c } = await supabase.from('messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('group_id', m.group_id)
+          .neq('user_id', user.id)
+          .neq('type', 'system')
+          .gt('created_at', lastRead)
+        count += c || 0
+      }
+      setUnread(count)
+    } catch {}
+  }
+
   const tabBarHeight = 60 + insets.bottom
 
   return (

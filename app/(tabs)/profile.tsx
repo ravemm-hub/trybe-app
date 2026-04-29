@@ -8,6 +8,13 @@ import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
 
+const PRIMARY = '#6C63FF'
+const TEAL = '#00BFA6'
+const BG = '#F8F9FD'
+const CARD = '#FFFFFF'
+const TEXT = '#1A1A2E'
+const GRAY = '#8A8A9A'
+
 const AVATARS = ['🦊','🐺','🦁','🐯','🐻','🦝','🐼','🦄','🐲','👾','🤖','👽','🎭','🔮','⚡️','🌊','🔥','🌙','🎸','🎵']
 
 export default function ProfileScreen() {
@@ -26,6 +33,7 @@ export default function ProfileScreen() {
   const [myGroups, setMyGroups] = useState<any[]>([])
   const [myPosts, setMyPosts] = useState<any[]>([])
   const [stats, setStats] = useState({ groups: 0, posts: 0, messages: 0 })
+  const [credits, setCredits] = useState(20)
 
   useEffect(() => { load() }, [])
 
@@ -41,6 +49,7 @@ export default function ProfileScreen() {
       setPhone(profile.phone || '')
       setAvatarChar(profile.avatar_char || '🦊')
       setAvatarUrl(profile.avatar_url || null)
+      setCredits(profile.teeby_credits ?? 20)
     }
     const { data: groups } = await supabase.from('group_members').select('group_id, groups(name, status)').eq('user_id', user.id).limit(10)
     if (groups) setMyGroups(groups)
@@ -89,7 +98,7 @@ export default function ProfileScreen() {
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="dark-content" />
+      <StatusBar barStyle="dark-content" backgroundColor={CARD} />
       <View style={s.header}>
         <Text style={s.title}>My Profile</Text>
         <TouchableOpacity onPress={signOut}>
@@ -98,17 +107,22 @@ export default function ProfileScreen() {
       </View>
 
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+        {/* Avatar */}
         <View style={s.avatarSection}>
-          <TouchableOpacity onPress={pickAvatar} disabled={uploading}>
+          <TouchableOpacity onPress={pickAvatar} disabled={uploading} style={s.avatarWrap}>
             {uploading ? (
-              <View style={s.avatarCircle}><ActivityIndicator color={GREEN} /></View>
+              <View style={s.avatarCircle}><ActivityIndicator color={PRIMARY} /></View>
             ) : avatarUrl ? (
               <Image source={{ uri: avatarUrl }} style={s.avatarImage} />
             ) : (
-              <View style={s.avatarCircle}><Text style={s.avatarEmoji}>{avatarChar}</Text></View>
+              <View style={s.avatarCircle}>
+                <Text style={s.avatarEmoji}>{avatarChar}</Text>
+              </View>
             )}
             <View style={s.avatarEditBadge}><Text style={s.avatarEditText}>✏️</Text></View>
           </TouchableOpacity>
+          <Text style={s.displayNameLarge}>{displayName || username}</Text>
+          <Text style={s.usernameSub}>@{username}</Text>
           <TouchableOpacity style={s.emojiPickerBtn} onPress={() => setShowAvatarPicker(!showAvatarPicker)}>
             <Text style={s.emojiPickerText}>Change emoji avatar</Text>
           </TouchableOpacity>
@@ -123,30 +137,57 @@ export default function ProfileScreen() {
           )}
         </View>
 
+        {/* Stats */}
         <View style={s.statsRow}>
-          <View style={s.stat}><Text style={s.statNum}>{stats.groups}</Text><Text style={s.statLabel}>Trybes</Text></View>
+          <View style={s.stat}>
+            <Text style={s.statNum}>{stats.groups}</Text>
+            <Text style={s.statLabel}>Trybes</Text>
+          </View>
           <View style={s.statDivider} />
-          <View style={s.stat}><Text style={s.statNum}>{stats.posts}</Text><Text style={s.statLabel}>Posts</Text></View>
+          <View style={s.stat}>
+            <Text style={s.statNum}>{stats.posts}</Text>
+            <Text style={s.statLabel}>Posts</Text>
+          </View>
           <View style={s.statDivider} />
-          <View style={s.stat}><Text style={s.statNum}>{stats.messages}</Text><Text style={s.statLabel}>Messages</Text></View>
+          <View style={s.stat}>
+            <Text style={s.statNum}>{stats.messages}</Text>
+            <Text style={s.statLabel}>Messages</Text>
+          </View>
+          <View style={s.statDivider} />
+          <View style={s.stat}>
+            <Text style={[s.statNum, { color: PRIMARY }]}>{credits}</Text>
+            <Text style={s.statLabel}>✦ Credits</Text>
+          </View>
         </View>
 
+        {/* Edit */}
         <Text style={s.sectionLabel}>DISPLAY NAME</Text>
         <TextInput style={s.input} value={displayName} onChangeText={setDisplayName} placeholder="Your name" placeholderTextColor="#B4B2A9" maxLength={30} />
 
         <Text style={s.sectionLabel}>USERNAME</Text>
-        <TextInput style={[s.input, { color: '#888' }]} value={`@${username}`} editable={false} />
+        <TextInput style={[s.input, { color: GRAY }]} value={`@${username}`} editable={false} />
+
+        <Text style={s.sectionLabel}>PHONE</Text>
+        <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="+972..." placeholderTextColor="#B4B2A9" keyboardType="phone-pad" maxLength={20} />
 
         <Text style={s.sectionLabel}>BIO</Text>
         <TextInput style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]} value={bio} onChangeText={setBio} placeholder="Tell people about yourself..." placeholderTextColor="#B4B2A9" multiline maxLength={150} />
-
-        <Text style={s.sectionLabel}>PHONE (for contacts detection)</Text>
-        <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="+972..." placeholderTextColor="#B4B2A9" keyboardType="phone-pad" maxLength={20} />
 
         <TouchableOpacity style={[s.saveBtn, saving && { opacity: 0.6 }]} onPress={saveProfile} disabled={saving}>
           {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnText}>Save Profile</Text>}
         </TouchableOpacity>
 
+        {/* Teeby Credits */}
+        <View style={s.creditsCard}>
+          <Text style={s.creditsTitle}>✦ Teeby Credits</Text>
+          <Text style={s.creditsDesc}>{credits}/20 daily credits remaining</Text>
+          <View style={s.creditsBar}>
+            <View style={[s.creditsFill, { width: `${(credits/20)*100}%` as any }]} />
+          </View>
+          <Text style={s.creditsReset}>Resets every day at midnight</Text>
+        </View>
+
+        {/* My Trybes */}
         {myGroups.length > 0 && (
           <>
             <Text style={s.sectionLabel}>MY TRYBES ({myGroups.length})</Text>
@@ -155,7 +196,7 @@ export default function ProfileScreen() {
                 if (m.groups?.status === 'open') router.push({ pathname: '/chat', params: { id: m.group_id, name: m.groups?.name, members: '0' } })
                 else router.push({ pathname: '/lobby', params: { id: m.group_id, name: m.groups?.name } })
               }}>
-                <View style={[s.groupDot, m.groups?.status === 'open' ? s.dotOpen : s.dotLobby]} />
+                <View style={[s.groupDot, { backgroundColor: m.groups?.status === 'open' ? TEAL : PRIMARY }]} />
                 <Text style={s.groupName} numberOfLines={1}>{m.groups?.name || 'Trybe'}</Text>
                 <Text style={s.groupArrow}>›</Text>
               </TouchableOpacity>
@@ -163,6 +204,7 @@ export default function ProfileScreen() {
           </>
         )}
 
+        {/* My Posts */}
         {myPosts.length > 0 && (
           <>
             <Text style={s.sectionLabel}>MY POSTS ({myPosts.length})</Text>
@@ -186,46 +228,49 @@ export default function ProfileScreen() {
   )
 }
 
-const GREEN = '#1D9E75'
-const PURPLE = '#7F77DD'
-const GRAY = '#888780'
-
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#FAFAF8' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 12, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  title: { fontSize: 20, fontWeight: '700', color: '#2C2C2A' },
-  signOutBtn: { fontSize: 14, color: '#E24B4A', fontWeight: '500' },
+  container: { flex: 1, backgroundColor: BG },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
+  title: { fontSize: 22, fontWeight: '800', color: TEXT },
+  signOutBtn: { fontSize: 14, color: '#FF3B30', fontWeight: '600' },
   content: { padding: 20 },
   avatarSection: { alignItems: 'center', marginBottom: 24 },
-  avatarCircle: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#EEEDFE', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: PURPLE },
-  avatarImage: { width: 90, height: 90, borderRadius: 45, borderWidth: 3, borderColor: PURPLE },
-  avatarEmoji: { fontSize: 44 },
-  avatarEditBadge: { position: 'absolute', bottom: 0, right: 0, width: 28, height: 28, borderRadius: 14, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#E0DED8' },
+  avatarWrap: { position: 'relative', marginBottom: 12 },
+  avatarCircle: { width: 96, height: 96, borderRadius: 48, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: PRIMARY },
+  avatarImage: { width: 96, height: 96, borderRadius: 48, borderWidth: 3, borderColor: PRIMARY },
+  avatarEmoji: { fontSize: 48 },
+  avatarEditBadge: { position: 'absolute', bottom: 0, right: 0, width: 28, height: 28, borderRadius: 14, backgroundColor: CARD, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#EBEBEB' },
   avatarEditText: { fontSize: 14 },
-  emojiPickerBtn: { marginTop: 10 },
-  emojiPickerText: { fontSize: 13, color: PURPLE, fontWeight: '500' },
+  displayNameLarge: { fontSize: 22, fontWeight: '800', color: TEXT, marginBottom: 4 },
+  usernameSub: { fontSize: 14, color: GRAY, marginBottom: 8 },
+  emojiPickerBtn: { marginTop: 4 },
+  emojiPickerText: { fontSize: 13, color: PRIMARY, fontWeight: '500' },
   emojiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12, justifyContent: 'center' },
-  emojiOpt: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center' },
-  emojiOptSelected: { backgroundColor: '#EEEDFE', borderWidth: 2, borderColor: PURPLE },
-  statsRow: { flexDirection: 'row', backgroundColor: '#fff', borderRadius: 16, padding: 16, marginBottom: 24, borderWidth: 0.5, borderColor: '#E0DED8' },
+  emojiOpt: { width: 44, height: 44, borderRadius: 22, backgroundColor: BG, alignItems: 'center', justifyContent: 'center' },
+  emojiOptSelected: { backgroundColor: '#EEF0FF', borderWidth: 2, borderColor: PRIMARY },
+  statsRow: { flexDirection: 'row', backgroundColor: CARD, borderRadius: 16, padding: 16, marginBottom: 24, borderWidth: 0.5, borderColor: '#EBEBEB' },
   stat: { flex: 1, alignItems: 'center' },
-  statNum: { fontSize: 24, fontWeight: '800', color: '#2C2C2A' },
+  statNum: { fontSize: 22, fontWeight: '800', color: TEXT },
   statLabel: { fontSize: 11, color: GRAY, marginTop: 2 },
-  statDivider: { width: 0.5, backgroundColor: '#E0DED8' },
+  statDivider: { width: 0.5, backgroundColor: '#EBEBEB' },
   sectionLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginBottom: 8, marginTop: 20 },
-  input: { backgroundColor: '#F1EFE8', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: '#2C2C2A' },
-  saveBtn: { backgroundColor: GREEN, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
+  input: { backgroundColor: CARD, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: '#EBEBEB' },
+  saveBtn: { backgroundColor: TEAL, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
   saveBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  groupRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#fff', borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 0.5, borderColor: '#E0DED8' },
+  creditsCard: { backgroundColor: '#EEF0FF', borderRadius: 16, padding: 16, marginTop: 20 },
+  creditsTitle: { fontSize: 16, fontWeight: '700', color: PRIMARY, marginBottom: 4 },
+  creditsDesc: { fontSize: 13, color: TEXT, marginBottom: 10 },
+  creditsBar: { height: 6, backgroundColor: '#D0CFFF', borderRadius: 3, marginBottom: 6 },
+  creditsFill: { height: 6, backgroundColor: PRIMARY, borderRadius: 3 },
+  creditsReset: { fontSize: 11, color: GRAY },
+  groupRow: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: CARD, borderRadius: 12, padding: 14, marginBottom: 8, borderWidth: 0.5, borderColor: '#EBEBEB' },
   groupDot: { width: 8, height: 8, borderRadius: 4 },
-  dotOpen: { backgroundColor: GREEN },
-  dotLobby: { backgroundColor: PURPLE },
-  groupName: { flex: 1, fontSize: 14, fontWeight: '500', color: '#2C2C2A' },
+  groupName: { flex: 1, fontSize: 14, fontWeight: '500', color: TEXT },
   groupArrow: { fontSize: 18, color: GRAY },
   postsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   postCard: { width: '47%' },
   postImage: { width: '100%', height: 120, borderRadius: 12 },
-  postTextCard: { width: '100%', height: 120, borderRadius: 12, backgroundColor: '#fff', padding: 10, borderWidth: 0.5, borderColor: '#E0DED8', justifyContent: 'center' },
-  postText: { fontSize: 12, color: '#2C2C2A', lineHeight: 18 },
+  postTextCard: { width: '100%', height: 120, borderRadius: 12, backgroundColor: CARD, padding: 10, borderWidth: 0.5, borderColor: '#EBEBEB', justifyContent: 'center' },
+  postText: { fontSize: 12, color: TEXT, lineHeight: 18 },
   postMeta: { fontSize: 10, color: GRAY, marginTop: 4, marginLeft: 2 },
 })
