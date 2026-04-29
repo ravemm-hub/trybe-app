@@ -5,10 +5,40 @@ import {
   KeyboardAvoidingView, Platform, StatusBar, FlatList, Modal,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import MapView, { Marker, Circle, PROVIDER_GOOGLE } from 'react-native-maps'
 import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import * as Contacts from 'expo-contacts'
 import { supabase } from '../lib/supabase'
+
+const PRIMARY = '#6C63FF'
+const TEAL = '#00BFA6'
+const BG = '#F8F9FD'
+const CARD = '#FFFFFF'
+const TEXT = '#1A1A2E'
+const GRAY = '#8A8A9A'
+
+const AGENT_IDS = [
+  'a1000001-0000-0000-0000-000000000001',
+  'a1000001-0000-0000-0000-000000000002',
+  'a1000001-0000-0000-0000-000000000003',
+  'a1000001-0000-0000-0000-000000000019',
+  'a1000001-0000-0000-0000-000000000020',
+  'a1000001-0000-0000-0000-000000000026',
+  'a1000001-0000-0000-0000-000000000029',
+]
+
+type NearbyUser = {
+  id: string
+  display_name: string | null
+  username: string
+  avatar_char: string | null
+  identity_mode: 'lit' | 'ghost'
+  distance_m: number
+  lat?: number
+  lon?: number
+  is_agent?: boolean
+}
 
 export default function CreateScreen() {
   const router = useRouter()
@@ -20,13 +50,21 @@ export default function CreateScreen() {
   const [locLoading, setLocLoading] = useState(true)
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
   const [showInvite, setShowInvite] = useState(false)
+  const [showRadarPicker, setShowRadarPicker] = useState(false)
   const [contacts, setContacts] = useState<any[]>([])
-  const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set())
+  const [nearbyUsers, setNearbyUsers] = useState<NearbyUser[]>([])
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [contactSearch, setContactSearch] = useState('')
   const [createdGroupId, setCreatedGroupId] = useState<string | null>(null)
   const [createdGroupName, setCreatedGroupName] = useState('')
+  const [radius, setRadius] = useState(500)
+  const [userId, setUserId] = useState<string | null>(null)
+  const [inviteTab, setInviteTab] = useState<'radar' | 'contacts'>('radar')
 
-  useEffect(() => { getLocation() }, [])
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id) })
+    getLocation()
+  }, [])
 
   const getLocation = async () => {
     setLocLoading(true)
@@ -48,6 +86,18 @@ export default function CreateScreen() {
     finally { setLocLoading(false) }
   }
 
+  const loadNearbyUsers = async (r: number) => {
+    if (!coords || !userId) return
+    try {
+      await supabase.rpc('place_agents_near_user', { user_id_input: userId })
+      const { data } = await supabase.rpc('nearby_users', { lat: coords.lat, lon: coords.lon, radius_m: r })
+      const users = ((data || []) as NearbyUser[])
+        .filter(u => u.id !== userId)
+        .map(u => ({ ...u, is_agent: AGENT_IDS.includes(u.id) }))
+      setNearbyUsers(users)
+    } catch {}
+  }
+
   const handleCreate = async () => {
     if (!name.trim()) { Alert.alert('Name required'); return }
     setLoading(true)
@@ -58,15 +108,10 @@ export default function CreateScreen() {
       const lon = coords?.lon ?? 34.7818
 
       const { data, error } = await supabase.from('groups').insert({
-        name: name.trim(),
-        location_name: locationName.trim() || null,
+        name: name.trim(), location_name: locationName.trim() || null,
         location: `POINT(${lon} ${lat})`,
-        min_members: 1,
-        member_count: 1,
-        status: 'open',
-        type: 'manual',
-        group_type: 'live',
-        is_private: isPrivate,
+        min_members: 1, member_count: 1, status: 'open',
+        type: 'manual', group_type: 'live', is_private: isPrivate,
         created_by: user.id,
       }).select().single()
 
@@ -74,13 +119,11 @@ export default function CreateScreen() {
 
       await supabase.from('group_members').insert({ group_id: data.id, user_id: user.id, role: 'admin' })
       await supabase.from('group_agents').insert({ group_id: data.id, enabled: true })
-      await supabase.from('messages').insert({
-        group_id: data.id, type: 'system',
-        content: `"${data.name}" created ${isPrivate ? '🔒' : '🌐'} — invite people to join!`
-      })
+      await supabase.from('messages').insert({ group_id: data.id, type: 'system', content: `"${data.name}" created ${isPrivate ? '🔒' : '🌐'}` })
 
       setCreatedGroupId(data.id)
       setCreatedGroupName(data.name)
+      await loadNearbyUsers(radius)
       setShowInvite(true)
     } catch (err: any) { Alert.alert('Error', err.message) }
     finally { setLoading(false) }
@@ -89,43 +132,52 @@ export default function CreateScreen() {
   const loadContacts = async () => {
     const { status } = await Contacts.requestPermissionsAsync()
     if (status !== 'granted') return
-    const { data } = await Contacts.getContactsAsync({
-      fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name],
-      sort: Contacts.SortTypes.FirstName,
-    })
+    const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name], sort: Contacts.SortTypes.FirstName })
     const list = data.filter(c => c.phoneNumbers?.length && c.name).map(c => ({
-      id: c.id,
-      name: c.name,
+      id: c.id, name: c.name,
       phone: c.phoneNumbers![0].number?.replace(/[\s\-\(\)]/g, '') || '',
       initials: c.name!.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase(),
     }))
     setContacts(list)
   }
 
-  const inviteSelected = async () => {
-    if (!createdGroupId || selectedContacts.size === 0) {
-      router.replace({ pathname: '/chat', params: { id: createdGroupId!, name: createdGroupName, members: '1' } })
-      return
-    }
-    // Find Tryber users by phone
-    const selectedList = contacts.filter(c => selectedContacts.has(c.id))
-    const phones = selectedList.map(c => c.phone)
-    const { data: tryberUsers } = await supabase.from('profiles').select('id, phone').in('phone', phones)
-
-    for (const u of tryberUsers || []) {
-      await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: u.id, role: 'member' }).catch(() => {})
-    }
-
-    if ((tryberUsers?.length || 0) > 0) {
-      await supabase.from('groups').update({ member_count: 1 + (tryberUsers?.length || 0) }).eq('id', createdGroupId)
-    }
-
-    router.replace({ pathname: '/chat', params: { id: createdGroupId, name: createdGroupName, members: (1 + (tryberUsers?.length || 0)).toString() } })
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
   }
 
-  const filteredContacts = contacts.filter(c =>
-    !contactSearch || c.name.toLowerCase().includes(contactSearch.toLowerCase())
-  )
+  const inviteAndOpen = async () => {
+    if (!createdGroupId) return
+
+    // Add selected nearby users (agents/real)
+    for (const uid of selectedIds) {
+      if (AGENT_IDS.includes(uid)) {
+        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }).catch(() => {})
+      } else {
+        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }).catch(() => {})
+      }
+    }
+
+    // Add selected contacts who are on Tryber
+    const selectedContacts = contacts.filter(c => selectedIds.has(c.id))
+    if (selectedContacts.length > 0) {
+      const phones = selectedContacts.map(c => c.phone)
+      const { data: tryberUsers } = await supabase.from('profiles').select('id, phone').in('phone', phones)
+      for (const u of tryberUsers || []) {
+        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: u.id, role: 'member' }).catch(() => {})
+      }
+    }
+
+    const totalMembers = 1 + selectedIds.size
+    await supabase.from('groups').update({ member_count: totalMembers }).eq('id', createdGroupId)
+
+    router.replace({ pathname: '/chat', params: { id: createdGroupId, name: createdGroupName, members: totalMembers.toString() } })
+  }
+
+  const filteredContacts = contacts.filter(c => !contactSearch || c.name.toLowerCase().includes(contactSearch.toLowerCase()))
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
@@ -140,7 +192,7 @@ export default function CreateScreen() {
         <ScrollView contentContainerStyle={s.form} keyboardShouldPersistTaps="handled">
           {locLoading && (
             <View style={s.locBanner}>
-              <ActivityIndicator color={GREEN} size="small" />
+              <ActivityIndicator color={TEAL} size="small" />
               <Text style={s.locText}>Detecting location...</Text>
             </View>
           )}
@@ -155,28 +207,26 @@ export default function CreateScreen() {
           <View style={s.privacyRow}>
             <TouchableOpacity style={[s.privacyBtn, !isPrivate && s.privacyBtnActive]} onPress={() => setIsPrivate(false)}>
               <Text style={s.privacyEmoji}>🌐</Text>
-              <Text style={[s.privacyBtnText, !isPrivate && { color: GREEN }]}>Public</Text>
+              <Text style={[s.privacyBtnText, !isPrivate && { color: TEAL }]}>Public</Text>
               <Text style={s.privacyDesc}>Anyone can join</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[s.privacyBtn, isPrivate && s.privacyBtnActivePrivate]} onPress={() => setIsPrivate(true)}>
+            <TouchableOpacity style={[s.privacyBtn, isPrivate && s.privacyBtnPrivate]} onPress={() => setIsPrivate(true)}>
               <Text style={s.privacyEmoji}>🔒</Text>
-              <Text style={[s.privacyBtnText, isPrivate && { color: PURPLE }]}>Private</Text>
+              <Text style={[s.privacyBtnText, isPrivate && { color: PRIMARY }]}>Private</Text>
               <Text style={s.privacyDesc}>Invite only</Text>
             </TouchableOpacity>
           </View>
 
           <View style={s.infoBox}>
-            <Text style={s.infoText}>⚡ Your Trybe opens immediately — invite people from your contacts or let others find it on Explore</Text>
+            <Text style={s.infoText}>⚡ Your Trybe opens immediately — invite people from Radar or your contacts</Text>
           </View>
 
           <TouchableOpacity
             style={[s.submitBtn, (loading || locLoading) && s.submitBtnDisabled]}
-            onPress={handleCreate}
-            disabled={loading || locLoading}
+            onPress={handleCreate} disabled={loading || locLoading}
           >
             {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>⚡ Drop the Trybe</Text>}
           </TouchableOpacity>
-
           <View style={{ height: 60 }} />
         </ScrollView>
       </KeyboardAvoidingView>
@@ -186,53 +236,112 @@ export default function CreateScreen() {
         <View style={[s.inviteContainer, { paddingTop: insets.top }]}>
           <View style={s.inviteHeader}>
             <Text style={s.inviteTitle}>🎉 Trybe Created!</Text>
-            <Text style={s.inviteSub}>Invite people from your contacts</Text>
+            <Text style={s.inviteSub}>Invite people to join</Text>
           </View>
 
-          <View style={s.searchRow}>
-            <TextInput
-              style={s.searchInput}
-              value={contactSearch}
-              onChangeText={setContactSearch}
-              placeholder="Search contacts..."
-              placeholderTextColor="#B4B2A9"
-              onFocus={loadContacts}
-            />
-          </View>
-
-          {contacts.length === 0 ? (
-            <TouchableOpacity style={s.loadContactsBtn} onPress={loadContacts}>
-              <Text style={s.loadContactsBtnText}>📱 Load Contacts</Text>
+          {/* Tabs */}
+          <View style={s.inviteTabs}>
+            <TouchableOpacity style={[s.inviteTab, inviteTab === 'radar' && s.inviteTabActive]} onPress={() => { setInviteTab('radar'); loadNearbyUsers(radius) }}>
+              <Text style={[s.inviteTabText, inviteTab === 'radar' && s.inviteTabTextActive]}>📡 Radar Nearby</Text>
             </TouchableOpacity>
-          ) : (
-            <FlatList
-              data={filteredContacts}
-              keyExtractor={c => c.id}
-              renderItem={({ item }) => (
-                <Pressable style={s.contactRow} onPress={() => {
-                  setSelectedContacts(prev => {
-                    const next = new Set(prev)
-                    next.has(item.id) ? next.delete(item.id) : next.add(item.id)
-                    return next
-                  })
-                }}>
-                  <View style={[s.contactAvatar, selectedContacts.has(item.id) && s.contactAvatarSelected]}>
-                    <Text style={s.contactInitials}>{item.initials}</Text>
-                    {selectedContacts.has(item.id) && <View style={s.checkmark}><Text style={{ color: '#fff', fontSize: 10, fontWeight: '700' }}>✓</Text></View>}
-                  </View>
-                  <Text style={s.contactName}>{item.name}</Text>
-                </Pressable>
+            <TouchableOpacity style={[s.inviteTab, inviteTab === 'contacts' && s.inviteTabActive]} onPress={() => { setInviteTab('contacts'); loadContacts() }}>
+              <Text style={[s.inviteTabText, inviteTab === 'contacts' && s.inviteTabTextActive]}>👥 Contacts</Text>
+            </TouchableOpacity>
+          </View>
+
+          {inviteTab === 'radar' ? (
+            <View style={{ flex: 1 }}>
+              {/* Radius selector */}
+              <View style={s.radiusRow}>
+                <Text style={s.radiusLabel}>Radius:</Text>
+                {[10, 50, 100, 500, 1000].map(r => (
+                  <TouchableOpacity key={r} style={[s.radiusBtn, radius === r && s.radiusBtnActive]} onPress={() => { setRadius(r); loadNearbyUsers(r) }}>
+                    <Text style={[s.radiusBtnText, radius === r && s.radiusBtnTextActive]}>{r < 1000 ? `${r}m` : `${r/1000}km`}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Map */}
+              {coords && (
+                <MapView
+                  style={s.map}
+                  provider={PROVIDER_GOOGLE}
+                  initialRegion={{ latitude: coords.lat, longitude: coords.lon, latitudeDelta: 0.005, longitudeDelta: 0.005 }}
+                  showsUserLocation
+                >
+                  <Circle center={{ latitude: coords.lat, longitude: coords.lon }} radius={radius} fillColor="rgba(0,191,166,0.1)" strokeColor={TEAL} strokeWidth={1} />
+                  {nearbyUsers.map(u => (
+                    <Marker
+                      key={u.id}
+                      coordinate={{ latitude: u.lat || coords.lat + (Math.random()-0.5)*0.003, longitude: u.lon || coords.lon + (Math.random()-0.5)*0.003 }}
+                      onPress={() => toggleSelect(u.id)}
+                    >
+                      <View style={[s.mapMarker, selectedIds.has(u.id) && s.mapMarkerSelected]}>
+                        <Text style={{ fontSize: 18 }}>{u.avatar_char || '👤'}</Text>
+                        {selectedIds.has(u.id) && <View style={s.mapMarkerCheck}><Text style={{ color: '#fff', fontSize: 10 }}>✓</Text></View>}
+                      </View>
+                    </Marker>
+                  ))}
+                </MapView>
               )}
-              ItemSeparatorComponent={() => <View style={{ height: 0.5, backgroundColor: '#E0DED8', marginLeft: 68 }} />}
-            />
+
+              {/* Nearby list */}
+              <FlatList
+                data={nearbyUsers}
+                keyExtractor={u => u.id}
+                style={{ maxHeight: 160 }}
+                ListEmptyComponent={<Text style={s.emptyNearby}>No one nearby — try increasing the radius</Text>}
+                renderItem={({ item }) => (
+                  <TouchableOpacity style={s.nearbyRow} onPress={() => toggleSelect(item.id)}>
+                    <View style={[s.nearbyAvatar, item.is_agent && { borderColor: PRIMARY, borderWidth: 2 }]}>
+                      <Text style={{ fontSize: 20 }}>{item.avatar_char || '👤'}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.nearbyName}>{item.identity_mode === 'ghost' ? '👻 Anonymous' : (item.display_name || item.username)}</Text>
+                      <Text style={s.nearbyDist}>{item.distance_m < 1000 ? `${Math.round(item.distance_m)}m` : `${(item.distance_m/1000).toFixed(1)}km`} away{item.is_agent ? ' · AI Agent' : ''}</Text>
+                    </View>
+                    <View style={[s.checkbox, selectedIds.has(item.id) && s.checkboxSelected]}>
+                      {selectedIds.has(item.id) && <Text style={{ color: '#fff', fontSize: 12 }}>✓</Text>}
+                    </View>
+                  </TouchableOpacity>
+                )}
+              />
+            </View>
+          ) : (
+            <View style={{ flex: 1 }}>
+              <View style={s.searchRow}>
+                <TextInput style={s.searchInput} value={contactSearch} onChangeText={setContactSearch} placeholder="Search contacts..." placeholderTextColor="#B4B2A9" onFocus={loadContacts} />
+              </View>
+              {contacts.length === 0 ? (
+                <TouchableOpacity style={s.loadContactsBtn} onPress={loadContacts}>
+                  <Text style={s.loadContactsBtnText}>📱 Load Contacts</Text>
+                </TouchableOpacity>
+              ) : (
+                <FlatList
+                  data={filteredContacts}
+                  keyExtractor={c => c.id}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity style={s.nearbyRow} onPress={() => toggleSelect(item.id)}>
+                      <View style={s.nearbyAvatar}>
+                        <Text style={s.nearbyInitials}>{item.initials}</Text>
+                      </View>
+                      <Text style={[s.nearbyName, { flex: 1 }]}>{item.name}</Text>
+                      <View style={[s.checkbox, selectedIds.has(item.id) && s.checkboxSelected]}>
+                        {selectedIds.has(item.id) && <Text style={{ color: '#fff', fontSize: 12 }}>✓</Text>}
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                />
+              )}
+            </View>
           )}
 
           <View style={[s.inviteFooter, { paddingBottom: insets.bottom + 8 }]}>
-            <TouchableOpacity style={s.inviteSkipBtn} onPress={() => router.replace({ pathname: '/chat', params: { id: createdGroupId!, name: createdGroupName, members: '1' } })}>
-              <Text style={s.inviteSkipText}>Skip for now</Text>
+            <TouchableOpacity style={s.skipBtn} onPress={() => router.replace({ pathname: '/chat', params: { id: createdGroupId!, name: createdGroupName, members: '1' } })}>
+              <Text style={s.skipBtnText}>Skip</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[s.inviteSendBtn, selectedContacts.size === 0 && { opacity: 0.5 }]} onPress={inviteSelected}>
-              <Text style={s.inviteSendText}>Invite {selectedContacts.size > 0 ? `(${selectedContacts.size})` : ''} & Open →</Text>
+            <TouchableOpacity style={[s.inviteSendBtn, selectedIds.size === 0 && { opacity: 0.6 }]} onPress={inviteAndOpen}>
+              <Text style={s.inviteSendText}>{selectedIds.size > 0 ? `Add ${selectedIds.size} & Open →` : 'Open Group →'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -241,51 +350,63 @@ export default function CreateScreen() {
   )
 }
 
-const Pressable = TouchableOpacity
-const GREEN = '#1D9E75'
-const PURPLE = '#7F77DD'
-const GRAY = '#888780'
-
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: CARD },
   flex: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 0.5, borderColor: '#E0DED8' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
   cancel: { fontSize: 16, color: GRAY },
-  title: { fontSize: 17, fontWeight: '700', color: '#2C2C2A' },
+  title: { fontSize: 17, fontWeight: '700', color: TEXT },
   form: { padding: 20 },
   label: { fontSize: 11, fontWeight: '700', color: GRAY, marginTop: 24, marginBottom: 8, letterSpacing: 0.8 },
-  input: { backgroundColor: '#F1EFE8', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: '#2C2C2A' },
-  locBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#E1F5EE', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 8 },
-  locText: { fontSize: 13, color: '#0F6E56' },
+  input: { backgroundColor: BG, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: '#EBEBEB' },
+  locBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#E8F5F3', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 8 },
+  locText: { fontSize: 13, color: TEAL },
   privacyRow: { flexDirection: 'row', gap: 10 },
-  privacyBtn: { flex: 1, padding: 14, borderRadius: 14, backgroundColor: '#F1EFE8', alignItems: 'center', gap: 4 },
-  privacyBtnActive: { backgroundColor: '#E1F5EE', borderWidth: 2, borderColor: GREEN },
-  privacyBtnActivePrivate: { backgroundColor: '#EEEDFE', borderWidth: 2, borderColor: PURPLE },
+  privacyBtn: { flex: 1, padding: 14, borderRadius: 14, backgroundColor: BG, alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#EBEBEB' },
+  privacyBtnActive: { backgroundColor: '#E8F5F3', borderColor: TEAL },
+  privacyBtnPrivate: { backgroundColor: '#EEF0FF', borderColor: PRIMARY },
   privacyEmoji: { fontSize: 24 },
-  privacyBtnText: { fontSize: 14, fontWeight: '700', color: '#2C2C2A' },
+  privacyBtnText: { fontSize: 14, fontWeight: '700', color: TEXT },
   privacyDesc: { fontSize: 11, color: GRAY },
-  infoBox: { backgroundColor: '#E1F5EE', borderRadius: 12, padding: 14, marginTop: 20 },
-  infoText: { fontSize: 13, color: '#0F6E56', lineHeight: 20 },
-  submitBtn: { backgroundColor: GREEN, borderRadius: 16, paddingVertical: 18, alignItems: 'center', marginTop: 24 },
+  infoBox: { backgroundColor: '#E8F5F3', borderRadius: 12, padding: 14, marginTop: 20 },
+  infoText: { fontSize: 13, color: TEAL, lineHeight: 20 },
+  submitBtn: { backgroundColor: TEAL, borderRadius: 16, paddingVertical: 18, alignItems: 'center', marginTop: 24 },
   submitBtnDisabled: { opacity: 0.5 },
   submitBtnText: { color: '#fff', fontSize: 17, fontWeight: '700' },
-  inviteContainer: { flex: 1, backgroundColor: '#FAFAF8' },
-  inviteHeader: { padding: 20, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8', alignItems: 'center' },
-  inviteTitle: { fontSize: 22, fontWeight: '800', color: '#2C2C2A', marginBottom: 4 },
+  inviteContainer: { flex: 1, backgroundColor: BG },
+  inviteHeader: { padding: 20, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB', alignItems: 'center' },
+  inviteTitle: { fontSize: 22, fontWeight: '800', color: TEXT, marginBottom: 4 },
   inviteSub: { fontSize: 14, color: GRAY },
-  searchRow: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#E0DED8' },
-  searchInput: { backgroundColor: '#F1EFE8', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: '#2C2C2A' },
-  loadContactsBtn: { margin: 32, backgroundColor: GREEN, borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
+  inviteTabs: { flexDirection: 'row', backgroundColor: CARD, paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
+  inviteTab: { flex: 1, paddingVertical: 8, borderRadius: 12, backgroundColor: BG, alignItems: 'center' },
+  inviteTabActive: { backgroundColor: PRIMARY },
+  inviteTabText: { fontSize: 13, fontWeight: '600', color: GRAY },
+  inviteTabTextActive: { color: '#fff' },
+  radiusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
+  radiusLabel: { fontSize: 12, color: GRAY, fontWeight: '600' },
+  radiusBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: BG },
+  radiusBtnActive: { backgroundColor: TEAL },
+  radiusBtnText: { fontSize: 11, color: GRAY, fontWeight: '600' },
+  radiusBtnTextActive: { color: '#fff' },
+  map: { height: 200, width: '100%' },
+  mapMarker: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF0FF', borderWidth: 2, borderColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
+  mapMarkerSelected: { backgroundColor: '#E8F5F3', borderColor: TEAL, borderWidth: 3 },
+  mapMarkerCheck: { position: 'absolute', bottom: 0, right: 0, width: 14, height: 14, borderRadius: 7, backgroundColor: TEAL, alignItems: 'center', justifyContent: 'center' },
+  emptyNearby: { textAlign: 'center', color: GRAY, padding: 20, fontSize: 13 },
+  nearbyRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
+  nearbyAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
+  nearbyInitials: { fontSize: 16, fontWeight: '700', color: PRIMARY },
+  nearbyName: { fontSize: 15, fontWeight: '600', color: TEXT },
+  nearbyDist: { fontSize: 12, color: GRAY, marginTop: 2 },
+  checkbox: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#EBEBEB', alignItems: 'center', justifyContent: 'center' },
+  checkboxSelected: { backgroundColor: TEAL, borderColor: TEAL },
+  searchRow: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
+  searchInput: { backgroundColor: BG, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: TEXT },
+  loadContactsBtn: { margin: 32, backgroundColor: PRIMARY, borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
   loadContactsBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#fff' },
-  contactAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#F1EFE8', alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  contactAvatarSelected: { backgroundColor: '#E1F5EE', borderWidth: 2, borderColor: GREEN },
-  contactInitials: { fontSize: 15, fontWeight: '700', color: '#2C2C2A' },
-  checkmark: { position: 'absolute', bottom: 0, right: 0, width: 16, height: 16, borderRadius: 8, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' },
-  contactName: { fontSize: 15, fontWeight: '500', color: '#2C2C2A', flex: 1 },
-  inviteFooter: { flexDirection: 'row', gap: 10, padding: 16, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#E0DED8' },
-  inviteSkipBtn: { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 14, backgroundColor: '#F1EFE8', alignItems: 'center' },
-  inviteSkipText: { fontSize: 14, color: GRAY, fontWeight: '600' },
-  inviteSendBtn: { flex: 1, backgroundColor: GREEN, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
+  inviteFooter: { flexDirection: 'row', gap: 10, padding: 16, backgroundColor: CARD, borderTopWidth: 0.5, borderColor: '#EBEBEB' },
+  skipBtn: { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 14, backgroundColor: BG, alignItems: 'center' },
+  skipBtnText: { fontSize: 14, color: GRAY, fontWeight: '600' },
+  inviteSendBtn: { flex: 1, backgroundColor: TEAL, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
   inviteSendText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 })
