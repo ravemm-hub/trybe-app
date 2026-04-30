@@ -78,9 +78,10 @@ export default function CreateScreen() {
         setLocationName(placeName)
         const now = new Date()
         const hour = now.getHours()
-        const time = hour < 12 ? 'Morning' : hour < 17 ? 'Afternoon' : hour < 21 ? 'Evening' : 'Night'
-        setName(`${time} ${['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][now.getDay()]} — ${placeName}`)
-      }
+        const vibes = ['🔥 Hot Spot', '⚡ Live at', '🎯 Meetup at', '🌟 Happening at', '🎪 Gathering at', '🚀 Squad at']
+        const vibe = vibes[Math.floor(Math.random() * vibes.length)]
+        setName(`${vibe} ${placeName}`)
+        setLocationName(`${placeName} · ${now.toLocaleDateString('en', { weekday: 'long', day: 'numeric', month: 'short' })}`)      }
     } catch {}
     finally { setLocLoading(false) }
   }

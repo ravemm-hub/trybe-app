@@ -81,6 +81,8 @@ export default function ChatScreen() {
       if (member?.role === 'admin') setIsAdmin(true)
       const { data: blocks } = await supabase.from('group_blocks').select('blocked_user_id').eq('group_id', id)
       if (blocks) setBlockedUsers(blocks.map((b: any) => b.blocked_user_id))
+      // Mark as read immediately on open
+      await supabase.from('group_members').update({ last_read_at: new Date().toISOString() }).eq('group_id', id).eq('user_id', user.id)
     })
     loadMessages()
     loadAgentSettings()

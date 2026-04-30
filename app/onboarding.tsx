@@ -124,7 +124,7 @@ export default function OnboardingScreen() {
   }
 
   const startOnboarding = async () => {
-    await typeMessage(`Hey! I'm Teeby, your personal AI on Tryber ✦\n\nI help you discover people nearby, manage groups, and get things done.\n\nWhat's your name?`)
+    await typeMessage(`Hey! I'm Teeby, your personal AI on Tryber ✦\n\nWith Tryber you can:\n⚡ Create live groups with people near you\n📡 See who's around on Radar\n💬 Chat anonymously or openly\n✦ Ask me anything — I'm always here\n\nWhat's your name?`)
   }
 
   const handleSend = async () => {
@@ -165,7 +165,7 @@ export default function OnboardingScreen() {
         await typeMessage(`Perfect! Tryber is made for you. 🎯`)
       }
       await new Promise(r => setTimeout(r, 800))
-      await typeMessage(`📡 This is your Radar — see who's around you right now!\n\nPeople appear as dots on the map. You can:\n• Chat anonymously 👻\n• Create groups ⚡\n• Find events near you 🗺️\n\nReady to explore?`)
+      await typeMessage(`📡 This is your Radar!\n\nRight now I can see people near you. You can:\n• Tap anyone to chat with them 💬\n• Create a group and invite nearby people ⚡\n• Go ghost mode to stay anonymous 👻\n\nTry it — tap "Explore" → enable Radar to see who's around you live.\n\nReady to start?`)
       return
     }
 
