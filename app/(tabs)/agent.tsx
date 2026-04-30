@@ -427,7 +427,7 @@ Rules:
             value={draft}
             onChangeText={setDraft}
             placeholder={`Ask ${teebyName} anything...`}
-            placeholderTextColor="rgba(255,255,255,0.3)"
+            placeholderTextColor="#B4B2A9"
             multiline
             maxLength={500}
             returnKeyType="send"
