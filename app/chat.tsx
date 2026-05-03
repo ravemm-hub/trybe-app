@@ -364,11 +364,23 @@ export default function ChatScreen() {
                     )}
                     <View style={s.bubbleCol}>
                       {!isMe && (
-                        <View style={s.senderRow}>
+                        <TouchableOpacity style={s.senderRow} onPress={() => {
+                          if (!item.user_id || isGhost) return
+                          router.push({
+                            pathname: '/dm',
+                            params: {
+                              userId: item.user_id,
+                              userName: item.profile?.display_name || item.profile?.username || 'User',
+                              myMode: 'lit',
+                              myAvatar: '💬',
+                              isAgent: AGENT_IDS.includes(item.user_id) ? '1' : '0',
+                            }
+                          })
+                        }}>
                           <Text style={[s.senderName, isGhost && s.senderNameGhost]}>{displayName}</Text>
                           {agent && <View style={s.agentBadge}><Text style={s.agentBadgeText}>AI</Text></View>}
                           {isGhost && !agent && <View style={s.ghostBadge}><Text style={s.ghostBadgeText}>anon</Text></View>}
-                        </View>
+                        </TouchableOpacity>
                       )}
                       {isMe && isGhost && <Text style={s.myGhostLabel}>👻 sent anonymously</Text>}
                       {item.reply_preview && (

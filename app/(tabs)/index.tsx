@@ -286,7 +286,7 @@ export default function ChatsScreen() {
                     <Text style={[s.rowLastMsg, c.onTryber && { color: TEAL }]}>{c.onTryber ? '✦ On Tryber' : c.phone}</Text>
                   </View>
                   {c.onTryber ? (
-                    <TouchableOpacity style={s.contactActionBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: c.tryberUserId, userName: c.tryberUsername || c.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
+                    <TouchableOpacity style={s.contactActionBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: c.tryberUserId, userName: c.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
                       <Text style={s.contactActionText}>Message</Text>
                     </TouchableOpacity>
                   ) : (
