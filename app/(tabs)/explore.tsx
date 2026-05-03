@@ -112,7 +112,7 @@ export default function ExploreScreen() {
       await supabase.rpc('place_agents_near_user', { user_id_input: userId })
 
       // Load nearby users
-      const { data } = await supabase.rpc('nearby_users', { p_lat: latitude, p_lon: longitude, radius_m: 2000 })
+      const { data } = await supabase.rpc('nearby_users', { p_lat: latitude, p_lon: longitude, radius_m: 10000 })
       const users = ((data || []) as NearbyUser[])
         .filter(u => u.id !== userId)
         .map(u => ({ ...u, is_agent: AGENT_IDS.includes(u.id) }))
