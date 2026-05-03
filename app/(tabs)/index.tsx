@@ -7,7 +7,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Contacts from 'expo-contacts'
 import { useRouter } from 'expo-router'
-import { supabase } from '../../lib/supabase'
+import { saveContactPhoneMap } from '../../lib/contactNames'
+
 
 const INVITE_MSG = `Hey! Join me on Tryber 🚀\nDownload: https://ravemm-hub.github.io/trybe-app`
 const PRIMARY = '#6C63FF'
@@ -97,6 +98,8 @@ export default function ChatsScreen() {
         contactList.push({ id: c.id || phone, name: c.name, phone, initials, onTryber: false })
       }
       if (contactList.length > 0) {
+        // Save phone→name mapping for later use in chat
+        await saveContactPhoneMap(contactList)
         const phones = contactList.map(c => c.phone)
         // Also try with +972 prefix normalization
         const phonesNormalized = phones.map(p => p.startsWith('0') ? '+972' + p.slice(1) : p)

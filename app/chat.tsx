@@ -9,6 +9,7 @@ import { Swipeable } from 'react-native-gesture-handler'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import * as ImagePicker from 'expo-image-picker'
 import { supabase } from '../lib/supabase'
+import { getCustomName, saveCustomName } from '../lib/contactNames'
 
 const AGENT_IDS = [
   'a1000001-0000-0000-0000-000000000001',
@@ -52,6 +53,7 @@ export default function ChatScreen() {
   const [editDraft, setEditDraft] = useState('')
   const [showMenu, setShowMenu] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [contactNames, setContactNames] = useState<Record<string, string>>({})
   const [showAgentSettings, setShowAgentSettings] = useState(false)
   const [agentEnabled, setAgentEnabled] = useState(true)
   const [agentInstructions, setAgentInstructions] = useState('')
@@ -68,7 +70,17 @@ export default function ChatScreen() {
       .eq('group_id', id)
       .order('created_at', { ascending: true })
       .limit(100)
-    if (data) setMessages(data as Message[])
+    if (data) {
+      setMessages(data as Message[])
+      // Load custom names for all users in chat
+      const userIds = [...new Set((data as Message[]).map(m => m.user_id).filter(Boolean))] as string[]
+      const names: Record<string, string> = {}
+      for (const uid of userIds) {
+        const n = await getCustomName(uid)
+        if (n) names[uid] = n
+      }
+      setContactNames(names)
+    }
     setLoading(false)
     setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 100)
   }, [id])
@@ -335,7 +347,8 @@ export default function ChatScreen() {
               const isSystem = item.type === 'system'
               const agent = isAgentMsg(item.user_id)
               const isGhost = item.sender_mode === 'ghost'
-              const displayName = isGhost && !isMe ? '👻 Anonymous' : (item.profile?.display_name || item.profile?.username || 'Unknown')
+              const appName = item.profile?.display_name || item.profile?.username || 'Unknown'
+              const displayName = isGhost && !isMe ? '👻 Anonymous' : (contactNames[item.user_id || ''] || appName)
               const avatarChar = isGhost && !isMe ? '👻' : (item.profile?.avatar_char || displayName[0] || '?')
 
               if (isSystem) return <View style={s.systemMsg}><Text style={s.systemText}>{item.content}</Text></View>
@@ -364,19 +377,36 @@ export default function ChatScreen() {
                     )}
                     <View style={s.bubbleCol}>
                       {!isMe && (
-                        <TouchableOpacity style={s.senderRow} onPress={() => {
-                          if (!item.user_id || isGhost) return
-                          router.push({
-                            pathname: '/dm',
-                            params: {
-                              userId: item.user_id,
-                              userName: item.profile?.display_name || item.profile?.username || 'User',
-                              myMode: 'lit',
-                              myAvatar: '💬',
-                              isAgent: AGENT_IDS.includes(item.user_id) ? '1' : '0',
-                            }
-                          })
-                        }}>
+                        <TouchableOpacity 
+                          style={s.senderRow} 
+                          onPress={() => {
+                            if (!item.user_id || isGhost) return
+                            router.push({
+                              pathname: '/dm',
+                              params: {
+                                userId: item.user_id,
+                                userName: displayName,
+                                myMode: 'lit',
+                                myAvatar: '💬',
+                                isAgent: AGENT_IDS.includes(item.user_id) ? '1' : '0',
+                              }
+                            })
+                          }}
+                          onLongPress={() => {
+                            if (!item.user_id || isGhost || !userId) return
+                            Alert.prompt(
+                              'Rename contact',
+                              `How do you want to call ${appName}?`,
+                              async (newName) => {
+                                if (!newName?.trim()) return
+                                await saveCustomName(userId, item.user_id!, newName.trim())
+                                setContactNames(prev => ({ ...prev, [item.user_id!]: newName.trim() }))
+                              },
+                              'plain-text',
+                              displayName
+                            )
+                          }}
+                        >
                           <Text style={[s.senderName, isGhost && s.senderNameGhost]}>{displayName}</Text>
                           {agent && <View style={s.agentBadge}><Text style={s.agentBadgeText}>AI</Text></View>}
                           {isGhost && !agent && <View style={s.ghostBadge}><Text style={s.ghostBadgeText}>anon</Text></View>}
