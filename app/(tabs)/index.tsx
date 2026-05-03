@@ -98,9 +98,23 @@ export default function ChatsScreen() {
       }
       if (contactList.length > 0) {
         const phones = contactList.map(c => c.phone)
-        const { data: tryberUsers } = await supabase.from('profiles').select('id, username, display_name, phone, avatar_char').in('phone', phones)
-        const tryberMap = new Map((tryberUsers || []).map((u: any) => [u.phone, u]))
-        const enriched = contactList.map(c => { const t = tryberMap.get(c.phone); return { ...c, onTryber: !!t, tryberUserId: t?.id, tryberUsername: t?.display_name || t?.username, avatar_char: t?.avatar_char } })
+        // Also try with +972 prefix normalization
+        const phonesNormalized = phones.map(p => p.startsWith('0') ? '+972' + p.slice(1) : p)
+        const allPhones = [...new Set([...phones, ...phonesNormalized])]
+        const { data: tryberUsers } = await supabase.from('profiles').select('id, username, display_name, phone, avatar_char').in('phone', allPhones)
+        const tryberMap = new Map()
+        for (const u of tryberUsers || []) {
+          if (u.phone) {
+            tryberMap.set(u.phone, u)
+            // Also map normalized version
+            if (u.phone.startsWith('0')) tryberMap.set('+972' + u.phone.slice(1), u)
+            if (u.phone.startsWith('+972')) tryberMap.set('0' + u.phone.slice(4), u)
+          }
+        }
+        const enriched = contactList.map(c => {
+          const t = tryberMap.get(c.phone) || tryberMap.get(c.phone.startsWith('0') ? '+972' + c.phone.slice(1) : c.phone)
+          return { ...c, onTryber: !!t, tryberUserId: t?.id, tryberUsername: t?.display_name || t?.username, avatar_char: t?.avatar_char }
+        })
         enriched.sort((a, b) => a.onTryber === b.onTryber ? a.name.localeCompare(b.name) : a.onTryber ? -1 : 1)
         setContacts(enriched)
       }

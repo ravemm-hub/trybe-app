@@ -269,6 +269,24 @@ export default function ChatScreen() {
             <TouchableOpacity style={s.menuItem} onPress={() => { setReplyTo(selectedMsg!); setShowMenu(false); setSelectedMsg(null) }}>
               <Text style={s.menuItemText}>↩ Reply</Text>
             </TouchableOpacity>
+            {selectedMsg?.user_id !== userId && selectedMsg?.user_id && (
+              <TouchableOpacity style={s.menuItem} onPress={() => {
+                setShowMenu(false)
+                setSelectedMsg(null)
+                router.push({
+                  pathname: '/dm',
+                  params: {
+                    userId: selectedMsg!.user_id!,
+                    userName: selectedMsg!.profile?.display_name || selectedMsg!.profile?.username || 'User',
+                    myMode: 'lit',
+                    myAvatar: '💬',
+                    isAgent: AGENT_IDS.includes(selectedMsg!.user_id!) ? '1' : '0',
+                  }
+                })
+              }}>
+                <Text style={s.menuItemText}>💬 Send DM</Text>
+              </TouchableOpacity>
+            )}
             {selectedMsg && canEdit(selectedMsg) && (
               <TouchableOpacity style={s.menuItem} onPress={() => startEdit(selectedMsg)}>
                 <Text style={s.menuItemText}>✏️ Edit</Text>
