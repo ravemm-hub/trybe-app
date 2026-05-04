@@ -127,7 +127,7 @@ export default function OnboardingScreen() {
         // Name step
         const name = text.split(' ')[0]
         setUserName(name)
-        if (userId) await supabase.from('profiles').update({ display_name: text }).eq('id', userId).catch(() => {})
+        if (userId) { try { await supabase.from('profiles').update({ display_name: text }).eq('id', userId) } catch {} }
         setStep(1)
         await new Promise(r => setTimeout(r, 800))
         addBotMessage(`Nice to meet you, ${name}! 🙌\n\n${locationName ? `I can see you're in ${locationName}!` : 'Great to have you!'}\n\nWhat brings you to Tryber? Tell me about yourself:`)

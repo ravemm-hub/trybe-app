@@ -155,9 +155,9 @@ export default function CreateScreen() {
     // Add selected nearby users (agents/real)
     for (const uid of selectedIds) {
       if (AGENT_IDS.includes(uid)) {
-        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }).catch(() => {})
+        try { await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }) } catch {}
       } else {
-        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }).catch(() => {})
+        try { await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }) } catch {}
       }
     }
 
@@ -167,7 +167,7 @@ export default function CreateScreen() {
       const phones = selectedContacts.map(c => c.phone)
       const { data: tryberUsers } = await supabase.from('profiles').select('id, phone').in('phone', phones)
       for (const u of tryberUsers || []) {
-        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: u.id, role: 'member' }).catch(() => {})
+        try { await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: u.id, role: 'member' }) } catch {}
       }
     }
 
