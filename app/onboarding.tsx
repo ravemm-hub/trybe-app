@@ -158,10 +158,12 @@ export default function OnboardingScreen() {
   }
 
   const finishOnboarding = async () => {
-    await AsyncStorage.setItem('onboarding_done', 'true').catch(() => {})
-    if (userId) {
-      await supabase.from('user_onboarding').upsert({ user_id: userId, completed: true }).catch(() => {})
-    }
+    try {
+      await AsyncStorage.setItem('onboarding_done', 'true')
+      if (userId) {
+        await supabase.from('user_onboarding').upsert({ user_id: userId, completed: true })
+      }
+    } catch {}
     router.replace('/(tabs)')
   }
 
