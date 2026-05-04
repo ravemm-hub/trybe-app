@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Contacts from 'expo-contacts'
 import { useRouter } from 'expo-router'
 import { saveContactPhoneMap } from '../../lib/contactNames'
-
+import { supabase } from '../../lib/supabase'
 
 const INVITE_MSG = `Hey! Join me on Tryber 🚀\nDownload: https://ravemm-hub.github.io/trybe-app`
 const PRIMARY = '#6C63FF'
