@@ -86,8 +86,11 @@ export default function DMScreen() {
             msg.read_at = new Date().toISOString()
           }
           setMessages(prev => {
-            const filtered = prev.filter(m => !m.id.startsWith('temp_'))
-            return [...filtered, msg]
+            // Remove temp message if exists, add real one
+            const withoutTemp = prev.filter(m => !m.id.startsWith('temp_') || m.sender_id !== myId)
+            // Avoid duplicates
+            if (withoutTemp.find(m => m.id === msg.id)) return withoutTemp
+            return [...withoutTemp, msg]
           })
           setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
         }

@@ -57,6 +57,11 @@ export default function ChatScreen() {
   const [showAgentSettings, setShowAgentSettings] = useState(false)
   const [agentEnabled, setAgentEnabled] = useState(true)
   const [agentInstructions, setAgentInstructions] = useState('')
+  const [showMyTeeby, setShowMyTeeby] = useState(false)
+  const [myTeebyEnabled, setMyTeebyEnabled] = useState(false)
+  const [myTeebyInstructions, setMyTeebyInstructions] = useState('')
+  const [myTeebyAutoReply, setMyTeebyAutoReply] = useState(false)
+  const [savingMyTeeby, setSavingMyTeeby] = useState(false)
   const [savingAgent, setSavingAgent] = useState(false)
   const [senderMode, setSenderMode] = useState<'lit' | 'ghost'>('lit')
   const [blockedUsers, setBlockedUsers] = useState<string[]>([])
@@ -103,6 +108,20 @@ export default function ChatScreen() {
   const loadAgentSettings = async () => {
     const { data } = await supabase.from('group_agents').select('*').eq('group_id', id).single()
     if (data) { setAgentEnabled(data.enabled); setAgentInstructions(data.instructions || '') }
+    // Load personal Teeby settings
+    if (userId) {
+      const { data: myTeeby } = await supabase.from('user_group_teeby').select('*').eq('group_id', id).eq('user_id', userId).single()
+      if (myTeeby) { setMyTeebyEnabled(myTeeby.enabled); setMyTeebyInstructions(myTeeby.instructions || ''); setMyTeebyAutoReply(myTeeby.auto_reply || false) }
+    }
+  }
+
+  const saveMyTeeby = async () => {
+    if (!userId) return
+    setSavingMyTeeby(true)
+    await supabase.from('user_group_teeby').upsert({ user_id: userId, group_id: id, enabled: myTeebyEnabled, instructions: myTeebyInstructions.trim() || null, auto_reply: myTeebyAutoReply }, { onConflict: 'user_id,group_id' })
+    setSavingMyTeeby(false)
+    setShowMyTeeby(false)
+    Alert.alert('✓ Saved', myTeebyEnabled ? 'Teeby is now active in this group!' : 'Teeby deactivated.')
   }
 
   const saveAgentSettings = async () => {
@@ -232,12 +251,60 @@ export default function ChatScreen() {
           <Text style={s.headerSub}>{memberCount} people · LIVE</Text>
         </View>
         {isAdmin && (
+          <TouchableOpacity style={s.settingsBtn} onPress={() => setShowMyTeeby(true)}>
+            <Text style={s.settingsBtnText}>✦</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={s.settingsBtn} onPress={() => setShowAgentSettings(true)}>
             <Text style={s.settingsBtnText}>⚙️</Text>
           </TouchableOpacity>
         )}
         <View style={s.liveDot} />
       </View>
+
+      <Modal visible={showMyTeeby} animationType="slide" onRequestClose={() => setShowMyTeeby(false)}>
+        <View style={[s.agentModal, { paddingTop: insets.top }]}>
+          <View style={s.agentModalHeader}>
+            <TouchableOpacity onPress={() => setShowMyTeeby(false)}><Text style={s.agentModalCancel}>Cancel</Text></TouchableOpacity>
+            <Text style={s.agentModalTitle}>My Teeby ✦</Text>
+            <TouchableOpacity onPress={saveMyTeeby} disabled={savingMyTeeby}>
+              {savingMyTeeby ? <ActivityIndicator color={PRIMARY} /> : <Text style={s.agentModalSave}>Save</Text>}
+            </TouchableOpacity>
+          </View>
+          <View style={s.agentModalBody}>
+            <View style={s.agentToggleRow}>
+              <View>
+                <Text style={s.agentToggleTitle}>Activate Teeby in this group</Text>
+                <Text style={s.agentToggleSub}>Teeby acts on your behalf</Text>
+              </View>
+              <TouchableOpacity style={[s.toggle, myTeebyEnabled && s.toggleOn]} onPress={() => setMyTeebyEnabled(!myTeebyEnabled)}>
+                <View style={[s.toggleThumb, myTeebyEnabled && s.toggleThumbOn]} />
+              </TouchableOpacity>
+            </View>
+            <View style={s.agentToggleRow}>
+              <View>
+                <Text style={s.agentToggleTitle}>Auto-reply to messages</Text>
+                <Text style={s.agentToggleSub}>Teeby responds when you're away</Text>
+              </View>
+              <TouchableOpacity style={[s.toggle, myTeebyAutoReply && s.toggleOn]} onPress={() => setMyTeebyAutoReply(!myTeebyAutoReply)}>
+                <View style={[s.toggleThumb, myTeebyAutoReply && s.toggleThumbOn]} />
+              </TouchableOpacity>
+            </View>
+            <Text style={s.agentInstructionsLabel}>INSTRUCTIONS FOR TEEBY</Text>
+            <TextInput style={s.agentInstructionsInput} value={myTeebyInstructions} onChangeText={setMyTeebyInstructions} placeholder="e.g. Reply in Hebrew, welcome newcomers, alert me about deals..." placeholderTextColor="#B4B2A9" multiline maxLength={500} />
+            <Text style={s.agentPresetsLabel}>QUICK PRESETS</Text>
+            {[
+              { label: '👋 Welcome mode', text: 'Welcome new members and introduce me to them. Be friendly.' },
+              { label: '🔔 Alert mode', text: 'Alert me about important messages or events. Summarize what I missed.' },
+              { label: '💬 Reply mode', text: 'Reply on my behalf when I am away. Keep my tone casual and friendly.' },
+              { label: '🤝 Network mode', text: 'Help me connect with people who share my interests.' },
+            ].map(preset => (
+              <TouchableOpacity key={preset.label} style={s.presetBtn} onPress={() => setMyTeebyInstructions(preset.text)}>
+                <Text style={s.presetBtnText}>{preset.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+      </Modal>
 
       <Modal visible={showAgentSettings} animationType="slide" onRequestClose={() => setShowAgentSettings(false)}>
         <View style={[s.agentModal, { paddingTop: insets.top }]}>
