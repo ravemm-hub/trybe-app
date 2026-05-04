@@ -251,12 +251,14 @@ export default function ChatScreen() {
           <Text style={s.headerSub}>{memberCount} people · LIVE</Text>
         </View>
         {isAdmin && (
-          <TouchableOpacity style={s.settingsBtn} onPress={() => setShowMyTeeby(true)}>
-            <Text style={s.settingsBtnText}>✦</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={s.settingsBtn} onPress={() => setShowAgentSettings(true)}>
-            <Text style={s.settingsBtnText}>⚙️</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity style={s.settingsBtn} onPress={() => setShowMyTeeby(true)}>
+              <Text style={s.settingsBtnText}>✦</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={s.settingsBtn} onPress={() => setShowAgentSettings(true)}>
+              <Text style={s.settingsBtnText}>⚙️</Text>
+            </TouchableOpacity>
+          </View>
         )}
         <View style={s.liveDot} />
       </View>
