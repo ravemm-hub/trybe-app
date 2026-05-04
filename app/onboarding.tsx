@@ -157,14 +157,14 @@ export default function OnboardingScreen() {
     }
   }
 
-  const finishOnboarding = async () => {
-    // Navigate immediately — don't wait for async operations
+  const finishOnboarding = () => {
     router.replace('/(tabs)')
-    // Save in background
     AsyncStorage.setItem('onboarding_done', 'true').catch(() => {})
     if (userId) {
-      supabase.from('user_onboarding').upsert({ user_id: userId, completed: true }).catch(() => {})
-      supabase.from('profiles').update({ display_name: userName || undefined }).eq('id', userId).catch(() => {})
+      try {
+        supabase.from('user_onboarding').upsert({ user_id: userId, completed: true })
+        supabase.from('profiles').update({ display_name: userName || undefined }).eq('id', userId)
+      } catch {}
     }
   }
 
