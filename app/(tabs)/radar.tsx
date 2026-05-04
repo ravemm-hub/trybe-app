@@ -61,7 +61,7 @@ export default function RadarScreen() {
         longitude = loc.coords.longitude
       }
       const { data, error } = await supabase.rpc('nearby_users', {
-        lat: latitude, lon: longitude, radius_m: 1000
+        p_lat: latitude, p_lon: longitude, radius_m: 10000
       })
       if (error) throw error
       setNearbyUsers((data || []).filter((u: NearbyUser) => u.id !== userId))

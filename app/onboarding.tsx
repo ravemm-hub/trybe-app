@@ -158,13 +158,14 @@ export default function OnboardingScreen() {
   }
 
   const finishOnboarding = async () => {
-    try {
-      await AsyncStorage.setItem('onboarding_done', 'true')
-      if (userId) {
-        await supabase.from('user_onboarding').upsert({ user_id: userId, completed: true })
-      }
-    } catch {}
+    // Navigate immediately — don't wait for async operations
     router.replace('/(tabs)')
+    // Save in background
+    AsyncStorage.setItem('onboarding_done', 'true').catch(() => {})
+    if (userId) {
+      supabase.from('user_onboarding').upsert({ user_id: userId, completed: true }).catch(() => {})
+      supabase.from('profiles').update({ display_name: userName || undefined }).eq('id', userId).catch(() => {})
+    }
   }
 
   const skip = () => finishOnboarding()
