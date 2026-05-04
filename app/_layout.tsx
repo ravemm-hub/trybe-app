@@ -1,54 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Stack, useRouter, useSegments } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import * as Notifications from 'expo-notifications'
-import * as Calendar from 'expo-calendar'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { supabase } from '../lib/supabase'
 import type { Session } from '@supabase/supabase-js'
-
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
-})
-
-async function registerForPushNotifications(userId: string) {
-  try {
-    const { status: existing } = await Notifications.getPermissionsAsync()
-    let finalStatus = existing
-    if (existing !== 'granted') {
-      const { status } = await Notifications.requestPermissionsAsync()
-      finalStatus = status
-    }
-    if (finalStatus !== 'granted') return
-    const token = await Notifications.getExpoPushTokenAsync({
-      projectId: 'f39665fe-cfb2-460a-bfa6-826d501d7333',
-    })
-    await supabase.from('profiles').update({ push_token: token.data }).eq('id', userId)
-  } catch (err) {
-    console.log('Push token error:', err)
-  }
-}
-
-async function updateBadge(userId: string) {
-  try {
-    const { data: myGroups } = await supabase
-      .from('group_members').select('group_id, last_read_at').eq('user_id', userId)
-    let count = 0
-    for (const m of myGroups || []) {
-      const lastRead = m.last_read_at || new Date(0).toISOString()
-      const { count: c } = await supabase.from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('group_id', m.group_id).neq('user_id', userId).gt('created_at', lastRead)
-      count += c || 0
-    }
-    await Notifications.setBadgeCountAsync(count)
-  } catch {}
-}
 
 async function checkTeebyProactive(userId: string) {
   try {
@@ -60,7 +16,7 @@ async function checkTeebyProactive(userId: string) {
     if (lastTime > Date.now() - 60 * 60 * 1000) return
 
     const { data: profile } = await supabase
-      .from('profiles').select('display_name, teeby_name').eq('id', userId).single()
+      .from('profiles').select('display_name').eq('id', userId).single()
 
     const userName = profile?.display_name || ''
     const { data: groups } = await supabase
@@ -82,26 +38,6 @@ async function checkTeebyProactive(userId: string) {
   }
 }
 
-async function checkCalendarReminders(userId: string) {
-  try {
-    const { status } = await Calendar.requestCalendarPermissionsAsync()
-    if (status !== 'granted') return
-    const now = new Date()
-    const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000)
-    const cals = await Calendar.getCalendarsAsync()
-    if (!cals.length) return
-    const events = await Calendar.getEventsAsync(cals.map(c => c.id), now, oneHourLater)
-    if (events.length > 0) {
-      const event = events[0]
-      const timeStr = new Date(event.startDate).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })
-      await supabase.from('agent_messages').insert({
-        user_id: userId, role: 'assistant',
-        content: `⏰ Reminder: "${event.title}" is coming up at ${timeStr}!`
-      })
-    }
-  } catch {}
-}
-
 export default function RootLayout() {
   const [session, setSession] = useState<Session | null | undefined>(undefined)
   const router = useRouter()
@@ -111,21 +47,12 @@ export default function RootLayout() {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session)
       if (session?.user) {
-        registerForPushNotifications(session.user.id)
         checkTeebyProactive(session.user.id)
-        checkCalendarReminders(session.user.id)
-        updateBadge(session.user.id)
       }
     })
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, session) => {
       setSession(session)
-      if (session?.user) {
-        registerForPushNotifications(session.user.id)
-        updateBadge(session.user.id)
-      } else {
-        Notifications.setBadgeCountAsync(0)
-      }
     })
 
     return () => subscription.unsubscribe()
