@@ -20,7 +20,7 @@
         "ACCESS_COARSE_LOCATION",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
-        "POST_NOTIFICATIONS"
+        
       ]
     },
     "plugins": [
@@ -32,14 +32,7 @@
           "locationWhenInUsePermission": "Tryber uses your location to find nearby groups."
         }
       ],
-      [
-        "expo-notifications",
-        {
-          
-          "color": "#1D9E75",
-          "defaultChannel": "default"
-        }
-      ],
+      
       "@react-native-community/datetimepicker"
     ],
     "extra": {
