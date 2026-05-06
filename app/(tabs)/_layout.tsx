@@ -28,6 +28,11 @@ export default function TabsLayout() {
   useEffect(() => {
     checkUnread()
     const interval = setInterval(checkUnread, 30000)
+// Also check when app comes to foreground
+const { AppState } = require('react-native')
+AppState.addEventListener('change', (state: string) => {
+  if (state === 'active') checkUnread()
+})
     const channel = supabase.channel('unread-monitor')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => checkUnread())
       .subscribe()
