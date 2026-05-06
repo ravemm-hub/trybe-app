@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
   StatusBar, TouchableOpacity, Switch, ActivityIndicator, Alert,
@@ -34,6 +34,11 @@ export default function ExploreScreen() {
   const [loading, setLoading] = useState(false)
   const [joiningId, setJoiningId] = useState<string | null>(null)
   const [radarLoading, setRadarLoading] = useState(false)
+  const radarIntervalRef = useRef<any>(null)
+
+  useEffect(() => {
+    return () => { if (radarIntervalRef.current) clearInterval(radarIntervalRef.current) }
+  }, [])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -127,11 +132,24 @@ export default function ExploreScreen() {
   const toggleRadar = async (val: boolean) => {
     setRadarOn(val)
     if (!val) {
+      if (radarIntervalRef.current) { clearInterval(radarIntervalRef.current); radarIntervalRef.current = null }
       if (userId) await supabase.from('user_locations').update({ radar_on: false }).eq('user_id', userId)
       setNearbyUsers([])
       return
     }
     await activateRadar()
+    // Update location every 30 seconds while radar is on
+    radarIntervalRef.current = setInterval(async () => {
+      if (!userId) return
+      try {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        const { latitude, longitude } = loc.coords
+        await supabase.from('user_locations').update({ 
+          location: `POINT(${longitude} ${latitude})`,
+          updated_at: new Date().toISOString()
+        }).eq('user_id', userId)
+      } catch {}
+    }, 30000)
   }
 
   const filteredGroups = groups.filter(g =>

@@ -159,7 +159,8 @@ export default function DMScreen() {
     return { text: '✓✓', color: 'rgba(0,0,0,0.3)' }
   }
 
-  const displayName = talkingToAgent ? userName : (otherProfile?.display_name || otherProfile?.username || userName)
+  // userName is contact name (from contacts list) - prefer it over app display name
+  const displayName = talkingToAgent ? userName : (userName || otherProfile?.display_name || otherProfile?.username || 'Unknown')
   const avatarChar = talkingToAgent ? '✦' : (otherProfile?.avatar_char || displayName?.[0] || '?')
 
   return (
