@@ -55,6 +55,12 @@ export default function DMScreen() {
     if (!talkingToAgent) {
       const { data: profile } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', otherUserId).single()
       if (profile) setOtherProfile(profile)
+      // Try to get contact name from local cache
+      try {
+        const { getCustomName } = require('../lib/contactNames')
+        const contactName = await getCustomName(otherUserId)
+        if (contactName) setOtherProfile((prev: any) => ({ ...prev, _contactName: contactName }))
+      } catch {}
     }
     const { data } = await supabase.from('dm_messages').select('*')
       .or(`and(sender_id.eq.${user.id},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${user.id})`)
@@ -160,7 +166,7 @@ export default function DMScreen() {
   }
 
   // userName is contact name (from contacts list) - prefer it over app display name
-  const displayName = talkingToAgent ? userName : (userName || otherProfile?.display_name || otherProfile?.username || 'Unknown')
+  const displayName = talkingToAgent ? userName : (userName || otherProfile?._contactName || otherProfile?.display_name || otherProfile?.username || 'Unknown')
   const avatarChar = talkingToAgent ? '✦' : (otherProfile?.avatar_char || displayName?.[0] || '?')
 
   return (

@@ -77,14 +77,18 @@ export default function ChatScreen() {
       .limit(100)
     if (data) {
       setMessages(data as Message[])
-      // Load custom names for all users in chat
-      const userIds = [...new Set((data as Message[]).map(m => m.user_id).filter(Boolean))] as string[]
-      const names: Record<string, string> = {}
-      for (const uid of userIds) {
-        const n = await getCustomName(uid)
-        if (n) names[uid] = n
-      }
-      setContactNames(names)
+      // Load custom names safely
+      try {
+        const userIds = [...new Set((data as Message[]).map(m => m.user_id).filter(Boolean))] as string[]
+        const names: Record<string, string> = {}
+        for (const uid of userIds) {
+          try {
+            const n = await getCustomName(uid)
+            if (n) names[uid] = n
+          } catch {}
+        }
+        setContactNames(names)
+      } catch {}
     }
     setLoading(false)
     setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 100)
