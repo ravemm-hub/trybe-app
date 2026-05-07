@@ -7,17 +7,15 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Contacts from 'expo-contacts'
 import { useRouter } from 'expo-router'
-import { saveContactPhoneMap } from '../../lib/contactNames'
 import { supabase } from '../../lib/supabase'
+import { saveContactPhoneMap } from '../../lib/contactNames'
 
 const INVITE_MSG = `Hey! Join me on Tryber 🚀\nDownload: https://ravemm-hub.github.io/trybe-app`
 const PRIMARY = '#6C63FF'
-const TEAL = '#00BFA6'
-const BG = '#F8F9FD'
+const BG = '#F8F7FF'
 const CARD = '#FFFFFF'
 const TEXT = '#1A1A2E'
 const GRAY = '#8A8A9A'
-const RED = '#FF3B30'
 
 type ChatItem = {
   id: string; type: 'group' | 'dm'; name: string; avatar: string
@@ -58,13 +56,14 @@ export default function ChatsScreen() {
         const { data: msgs } = await supabase.from('messages').select('content, created_at').eq('group_id', g.id).eq('type', 'text').order('created_at', { ascending: false }).limit(1)
         let unread = 0
         if (m.last_read_at) {
-          const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('group_id', g.id).neq('user_id', user.id).gt('created_at', m.last_read_at)
+          const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('group_id', g.id).neq('user_id', user.id).neq('type', 'system').gt('created_at', m.last_read_at)
           unread = count || 0
         }
         groupItems.push({ id: g.id, type: 'group', name: g.name, avatar: g.is_private ? '🔒' : '⚡', last_message: msgs?.[0]?.content || null, last_message_at: msgs?.[0]?.created_at || g.created_at, unread, status: g.status, member_count: g.member_count, min_members: g.min_members, is_private: g.is_private })
       }
       groupItems.sort((a, b) => new Date(b.last_message_at || '').getTime() - new Date(a.last_message_at || '').getTime())
       setGroups(groupItems)
+
       const { data: dmData } = await supabase.from('dm_messages').select('*').or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`).order('created_at', { ascending: false })
       const dmMap = new Map<string, any>()
       for (const dm of dmData || []) {
@@ -98,24 +97,36 @@ export default function ChatsScreen() {
         contactList.push({ id: c.id || phone, name: c.name, phone, initials, onTryber: false })
       }
       if (contactList.length > 0) {
-        // Save phone→name mapping for later use in chat
         await saveContactPhoneMap(contactList)
         const phones = contactList.map(c => c.phone)
-        // Also try with +972 prefix normalization
-        const phonesNormalized = phones.map(p => p.startsWith('0') ? '+972' + p.slice(1) : p)
-        const allPhones = [...new Set([...phones, ...phonesNormalized])]
+        const phonesNormalized = phones.map(p => {
+          p = p.replace(/[\s\-\(\)\+]/g, '')
+          if (p.startsWith('972')) p = '0' + p.slice(3)
+          if (p.startsWith('00972')) p = '0' + p.slice(5)
+          return p
+        })
+        const phonesWithPrefix = phonesNormalized.map(p => p.startsWith('0') ? '+972' + p.slice(1) : p)
+        const allPhones = [...new Set([...phones, ...phonesNormalized, ...phonesWithPrefix])]
         const { data: tryberUsers } = await supabase.from('profiles').select('id, username, display_name, phone, avatar_char').in('phone', allPhones)
         const tryberMap = new Map()
         for (const u of tryberUsers || []) {
-          if (u.phone) {
-            tryberMap.set(u.phone, u)
-            // Also map normalized version
-            if (u.phone.startsWith('0')) tryberMap.set('+972' + u.phone.slice(1), u)
-            if (u.phone.startsWith('+972')) tryberMap.set('0' + u.phone.slice(4), u)
-          }
+          if (!u.phone) continue
+          const raw = u.phone.replace(/[\s\-\(\)\+]/g, '')
+          let normalized = raw
+          if (raw.startsWith('972')) normalized = '0' + raw.slice(3)
+          if (raw.startsWith('00972')) normalized = '0' + raw.slice(5)
+          const withPrefix = normalized.startsWith('0') ? '+972' + normalized.slice(1) : normalized
+          tryberMap.set(u.phone, u)
+          tryberMap.set(normalized, u)
+          tryberMap.set(withPrefix, u)
         }
         const enriched = contactList.map(c => {
-          const t = tryberMap.get(c.phone) || tryberMap.get(c.phone.startsWith('0') ? '+972' + c.phone.slice(1) : c.phone)
+          const raw = c.phone.replace(/[\s\-\(\)\+]/g, '')
+          let normalized = raw
+          if (raw.startsWith('972')) normalized = '0' + raw.slice(3)
+          if (raw.startsWith('00972')) normalized = '0' + raw.slice(5)
+          const withPrefix = normalized.startsWith('0') ? '+972' + normalized.slice(1) : normalized
+          const t = tryberMap.get(c.phone) || tryberMap.get(normalized) || tryberMap.get(withPrefix)
           return { ...c, onTryber: !!t, tryberUserId: t?.id, tryberUsername: t?.display_name || t?.username, avatar_char: t?.avatar_char }
         })
         enriched.sort((a, b) => a.onTryber === b.onTryber ? a.name.localeCompare(b.name) : a.onTryber ? -1 : 1)
@@ -141,24 +152,6 @@ export default function ChatsScreen() {
     setGroups(prev => prev.map(g => g.id === groupId ? { ...g, unread: 0 } : g))
   }
 
-  const leaveGroup = (item: ChatItem) => {
-    Alert.alert('Leave group', `Leave "${item.name}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Leave', style: 'destructive', onPress: async () => {
-        await supabase.from('group_members').delete().eq('group_id', item.id).eq('user_id', userId)
-        setGroups(prev => prev.filter(g => g.id !== item.id))
-      }}
-    ])
-  }
-
-  const inviteContact = (contact: Contact) => {
-    Alert.alert(`Invite ${contact.name}`, '', [
-      { text: '💚 WhatsApp', onPress: () => Linking.openURL(`whatsapp://send?phone=${contact.phone}&text=${encodeURIComponent(INVITE_MSG)}`) },
-      { text: '💬 SMS', onPress: () => Linking.openURL(`sms:${contact.phone}?body=${encodeURIComponent(INVITE_MSG)}`) },
-      { text: 'Cancel', style: 'cancel' }
-    ])
-  }
-
   const formatTime = (ts: string) => {
     const diff = Date.now() - new Date(ts).getTime()
     if (diff < 60000) return 'now'
@@ -174,8 +167,8 @@ export default function ChatsScreen() {
     const hasUnread = item.unread > 0
     const isOpen = item.status === 'open'
     return (
-      <Pressable style={s.row} onPress={() => { markGroupRead(item.id); if (isOpen) router.push({ pathname: '/chat', params: { id: item.id, name: item.name, members: item.member_count?.toString() || '0' } }); else router.push({ pathname: '/lobby', params: { id: item.id, name: item.name } }) }} onLongPress={() => Alert.alert(item.name, '', [{ text: '🚪 Leave', style: 'destructive', onPress: () => leaveGroup(item) }, { text: 'Cancel', style: 'cancel' }])}>
-        <View style={[s.avatar, { backgroundColor: '#EEF0FF' }]}>
+      <Pressable style={s.row} onPress={() => { markGroupRead(item.id); if (isOpen) router.push({ pathname: '/chat', params: { id: item.id, name: item.name, members: item.member_count?.toString() || '0' } }); else router.push({ pathname: '/lobby', params: { id: item.id, name: item.name } }) }} onLongPress={() => Alert.alert(item.name, '', [{ text: '🚪 Leave', style: 'destructive', onPress: async () => { await supabase.from('group_members').delete().eq('group_id', item.id).eq('user_id', userId); setGroups(prev => prev.filter(g => g.id !== item.id)) } }, { text: 'Cancel', style: 'cancel' }])}>
+        <View style={[s.avatarWrap, isOpen && s.avatarWrapLive]}>
           <Text style={s.avatarText}>{item.avatar}</Text>
           {isOpen && <View style={s.liveDot} />}
         </View>
@@ -185,43 +178,29 @@ export default function ChatsScreen() {
             {item.last_message_at && <Text style={[s.rowTime, hasUnread && { color: PRIMARY }]}>{formatTime(item.last_message_at)}</Text>}
           </View>
           <View style={s.rowBottom}>
-            <Text style={[s.rowLastMsg, hasUnread && s.rowLastMsgBold]} numberOfLines={1}>{item.last_message || (isOpen ? '🟢 Live now' : `⏳ ${item.member_count}/${item.min_members} to unlock`)}</Text>
-            {hasUnread && <View style={s.unreadBadge}><Text style={s.unreadBadgeText}>{item.unread > 99 ? '99+' : item.unread}</Text></View>}
+            <Text style={[s.rowLastMsg, hasUnread && s.rowLastMsgBold]} numberOfLines={1}>{item.last_message || (isOpen ? '🟢 Live now' : `⏳ Lobby`)}</Text>
+            {hasUnread && (
+              <View style={s.unreadBadge}>
+                <Text style={s.unreadBadgeText}>{item.unread > 99 ? '99+' : item.unread}</Text>
+              </View>
+            )}
           </View>
         </View>
       </Pressable>
     )
   }
 
-  const renderDMRow = (item: ChatItem) => (
-    <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: item.other_user_id, userName: item.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
-      <View style={[s.avatar, { backgroundColor: '#E8F5F3' }]}>
-        <Text style={s.avatarText}>{item.avatar}</Text>
-      </View>
-      <View style={s.rowInfo}>
-        <View style={s.rowTop}>
-          <Text style={s.rowName} numberOfLines={1}>{item.name}</Text>
-          {item.last_message_at && <Text style={s.rowTime}>{formatTime(item.last_message_at)}</Text>}
-        </View>
-        <Text style={s.rowLastMsg} numberOfLines={1}>{item.last_message || 'Start chatting'}</Text>
-      </View>
-    </Pressable>
-  )
-
-  const chatsData = [
-    ...dms.map(d => ({ type: 'dm' as const, data: d })),
-    { type: 'divider' as const },
-    { type: 'search' as const },
-    ...filteredContacts.map(c => ({ type: 'contact' as const, data: c })),
-  ]
-
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" backgroundColor={CARD} />
       <View style={s.header}>
         <View style={s.headerLeft}>
-          <Text style={s.logo}>tryber</Text>
-          {totalUnread > 0 && <View style={s.totalUnread}><Text style={s.totalUnreadText}>{totalUnread > 99 ? '99+' : totalUnread}</Text></View>}
+          <Text style={s.logo}>try<Text style={s.logoAccent}>ber</Text></Text>
+          {totalUnread > 0 && (
+            <View style={s.totalBadge}>
+              <Text style={s.totalBadgeText}>{totalUnread > 99 ? '99+' : totalUnread}</Text>
+            </View>
+          )}
         </View>
         <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
           <Text style={s.createBtnText}>+ Trybe</Text>
@@ -260,41 +239,54 @@ export default function ChatsScreen() {
         />
       ) : (
         <FlatList
-          data={chatsData}
+          data={[
+            ...dms.map(d => ({ type: 'dm' as const, data: d })),
+            { type: 'divider' as const },
+            { type: 'search' as const },
+            ...filteredContacts.map(c => ({ type: 'contact' as const, data: c })),
+          ]}
           keyExtractor={(item, i) => item.type === 'dm' ? item.data.id : item.type === 'contact' ? item.data.id : `${item.type}_${i}`}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadAll() }} tintColor={PRIMARY} />}
           contentContainerStyle={{ paddingVertical: 8 }}
           renderItem={({ item }) => {
-            if (item.type === 'dm') return renderDMRow(item.data)
-            if (item.type === 'divider') return (
-              <View style={s.sectionDivider}>
-                <Text style={s.sectionDividerText}>{contactsLoading ? 'Loading contacts...' : `Contacts · ${contacts.filter(c => c.onTryber).length} on Tryber`}</Text>
-              </View>
-            )
-            if (item.type === 'search') return (
-              <View style={s.searchRow}>
-                <TextInput style={s.searchInput} value={contactSearch} onChangeText={setContactSearch} placeholder="Search contacts..." placeholderTextColor="#B4B2A9" />
-              </View>
-            )
+            if (item.type === 'dm') {
+              const d = item.data
+              return (
+                <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: d.other_user_id, userName: d.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
+                  <View style={s.avatarWrap}>
+                    <Text style={s.avatarText}>{d.avatar}</Text>
+                  </View>
+                  <View style={s.rowInfo}>
+                    <View style={s.rowTop}>
+                      <Text style={s.rowName} numberOfLines={1}>{d.name}</Text>
+                      {d.last_message_at && <Text style={s.rowTime}>{formatTime(d.last_message_at)}</Text>}
+                    </View>
+                    <Text style={s.rowLastMsg} numberOfLines={1}>{d.last_message || 'Start chatting'}</Text>
+                  </View>
+                </Pressable>
+              )
+            }
+            if (item.type === 'divider') return <View style={s.sectionDivider}><Text style={s.sectionDividerText}>{contactsLoading ? 'Loading contacts...' : `Contacts · ${contacts.filter(c => c.onTryber).length} on Tryber`}</Text></View>
+            if (item.type === 'search') return <View style={s.searchRow}><TextInput style={s.searchInput} value={contactSearch} onChangeText={setContactSearch} placeholder="Search contacts..." placeholderTextColor="#B4B2A9" /></View>
             if (item.type === 'contact') {
               const c = item.data
               return (
                 <View style={s.contactRow}>
-                  <View style={[s.avatar, c.onTryber ? { backgroundColor: '#E8F5F3', borderWidth: 2, borderColor: TEAL } : { backgroundColor: '#F0F0F8' }]}>
+                  <View style={[s.avatarWrap, c.onTryber && s.avatarWrapOnTryber]}>
                     <Text style={s.avatarText}>{c.avatar_char || c.initials}</Text>
-                    {c.onTryber && <View style={[s.liveDot, { backgroundColor: TEAL }]} />}
+                    {c.onTryber && <View style={s.liveDot} />}
                   </View>
                   <View style={s.rowInfo}>
                     <Text style={s.rowName}>{c.name}</Text>
-                    <Text style={[s.rowLastMsg, c.onTryber && { color: TEAL }]}>{c.onTryber ? '✦ On Tryber' : c.phone}</Text>
+                    <Text style={[s.rowLastMsg, c.onTryber && { color: PRIMARY }]}>{c.onTryber ? '✦ On Tryber' : c.phone}</Text>
                   </View>
                   {c.onTryber ? (
-                    <TouchableOpacity style={s.contactActionBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: c.tryberUserId, userName: c.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
-                      <Text style={s.contactActionText}>Message</Text>
+                    <TouchableOpacity style={s.contactBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: c.tryberUserId, userName: c.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
+                      <Text style={s.contactBtnText}>Message</Text>
                     </TouchableOpacity>
                   ) : (
-                    <TouchableOpacity style={[s.contactActionBtn, { backgroundColor: '#F0F0F8' }]} onPress={() => inviteContact(c)}>
-                      <Text style={[s.contactActionText, { color: PRIMARY }]}>Invite</Text>
+                    <TouchableOpacity style={[s.contactBtn, s.contactBtnInvite]} onPress={() => Alert.alert(`Invite ${c.name}`, '', [{ text: '💚 WhatsApp', onPress: () => Linking.openURL(`whatsapp://send?phone=${c.phone}&text=${encodeURIComponent(INVITE_MSG)}`) }, { text: 'Cancel', style: 'cancel' }])}>
+                      <Text style={[s.contactBtnText, { color: GRAY }]}>Invite</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -312,45 +304,49 @@ export default function ChatsScreen() {
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: BG },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: 'rgba(108,99,255,0.08)' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  logo: { fontSize: 28, fontWeight: '900', color: PRIMARY, letterSpacing: -1 },
-  totalUnread: { backgroundColor: RED, borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
-  totalUnreadText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  logo: { fontSize: 28, fontWeight: '700', color: TEXT, letterSpacing: -0.5 },
+  logoAccent: { color: PRIMARY },
+  totalBadge: { width: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
+  totalBadgeText: { fontSize: 10, fontWeight: '600', color: PRIMARY },
   createBtn: { backgroundColor: PRIMARY, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
-  createBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  tabRow: { flexDirection: 'row', backgroundColor: CARD, paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  tabBtn: { flex: 1, paddingVertical: 9, borderRadius: 12, backgroundColor: '#F0F0F8', alignItems: 'center' },
+  createBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  tabRow: { flexDirection: 'row', backgroundColor: CARD, paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 0.5, borderColor: 'rgba(108,99,255,0.08)' },
+  tabBtn: { flex: 1, paddingVertical: 9, borderRadius: 12, backgroundColor: 'rgba(108,99,255,0.05)', alignItems: 'center' },
   tabBtnActive: { backgroundColor: PRIMARY },
-  tabBtnText: { fontSize: 13, fontWeight: '700', color: GRAY },
+  tabBtnText: { fontSize: 13, fontWeight: '600', color: GRAY },
   tabBtnTextActive: { color: '#fff' },
   listEmpty: { flex: 1 },
   emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32, gap: 12 },
-  emptyEmoji: { fontSize: 52, marginBottom: 8 },
-  emptyTitle: { fontSize: 22, fontWeight: '800', color: TEXT },
+  emptyEmoji: { fontSize: 52 },
+  emptyTitle: { fontSize: 22, fontWeight: '700', color: TEXT },
   emptySub: { fontSize: 14, color: GRAY, textAlign: 'center' },
   emptyBtn: { backgroundColor: PRIMARY, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20, width: '100%', alignItems: 'center' },
-  emptyBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  emptyBtnText: { color: '#fff', fontSize: 15, fontWeight: '600' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD },
-  avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  avatarWrap: { width: 52, height: 52, borderRadius: 16, backgroundColor: 'rgba(108,99,255,0.06)', alignItems: 'center', justifyContent: 'center', position: 'relative', borderWidth: 1, borderColor: 'rgba(108,99,255,0.08)' },
+  avatarWrapLive: { borderColor: 'rgba(108,99,255,0.2)', borderWidth: 1.5 },
+  avatarWrapOnTryber: { borderColor: PRIMARY, borderWidth: 1.5 },
   avatarText: { fontSize: 24 },
-  liveDot: { position: 'absolute', bottom: 1, right: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: TEAL, borderWidth: 2, borderColor: CARD },
+  liveDot: { position: 'absolute', bottom: -2, right: -2, width: 12, height: 12, borderRadius: 6, backgroundColor: PRIMARY, borderWidth: 2, borderColor: CARD },
   rowInfo: { flex: 1 },
   rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  rowName: { fontSize: 15, fontWeight: '600', color: TEXT, flex: 1 },
-  rowNameBold: { fontWeight: '800' },
+  rowName: { fontSize: 15, fontWeight: '500', color: TEXT, flex: 1 },
+  rowNameBold: { fontWeight: '700' },
   rowTime: { fontSize: 11, color: GRAY },
   rowBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowLastMsg: { fontSize: 13, color: GRAY, flex: 1 },
-  rowLastMsgBold: { color: TEXT, fontWeight: '600' },
-  unreadBadge: { backgroundColor: PRIMARY, borderRadius: 12, minWidth: 22, height: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
-  unreadBadgeText: { color: '#fff', fontSize: 12, fontWeight: '800' },
-  separator: { height: 0.5, backgroundColor: '#EBEBEB', marginLeft: 80 },
-  sectionDivider: { backgroundColor: '#F0F0F8', paddingHorizontal: 16, paddingVertical: 8 },
-  sectionDividerText: { fontSize: 12, color: GRAY, fontWeight: '600', letterSpacing: 0.3 },
-  searchRow: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  searchInput: { backgroundColor: '#F0F0F8', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: TEXT },
+  rowLastMsgBold: { color: TEXT, fontWeight: '500' },
+  unreadBadge: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
+  unreadBadgeText: { fontSize: 11, fontWeight: '600', color: PRIMARY },
+  separator: { height: 0.5, backgroundColor: 'rgba(108,99,255,0.06)', marginLeft: 80 },
+  sectionDivider: { backgroundColor: 'rgba(108,99,255,0.04)', paddingHorizontal: 16, paddingVertical: 8 },
+  sectionDividerText: { fontSize: 12, color: GRAY, fontWeight: '500' },
+  searchRow: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: CARD },
+  searchInput: { backgroundColor: 'rgba(108,99,255,0.05)', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: TEXT, borderWidth: 1, borderColor: 'rgba(108,99,255,0.08)' },
   contactRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD },
-  contactActionBtn: { backgroundColor: '#E8F5F3', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16 },
-  contactActionText: { fontSize: 13, color: TEAL, fontWeight: '700' },
+  contactBtn: { backgroundColor: PRIMARY, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16 },
+  contactBtnInvite: { backgroundColor: 'rgba(108,99,255,0.06)', borderWidth: 1, borderColor: 'rgba(108,99,255,0.12)' },
+  contactBtnText: { fontSize: 13, color: '#fff', fontWeight: '600' },
 })

@@ -4,14 +4,16 @@ import { useState, useEffect } from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { supabase } from '../../lib/supabase'
 
-const ACCENT = '#1D9E75'
+const PRIMARY = '#6C63FF'
 const GRAY = '#8A8A9A'
-const BG = '#fff'
+const BG = '#FAFAFE'
 
-function TabIcon({ emoji, count, focused }: { emoji: string; count?: number; focused: boolean }) {
+function TabIcon({ emoji, count, focused, label }: { emoji: string; count?: number; focused: boolean; label: string }) {
   return (
     <View style={s.iconWrap}>
-      <Text style={[s.iconEmoji, focused && s.iconEmojiFocused]}>{emoji}</Text>
+      <View style={[s.iconBox, focused && s.iconBoxActive]}>
+        <Text style={[s.iconEmoji, focused && s.iconEmojiFocused]}>{emoji}</Text>
+      </View>
       {(count || 0) > 0 && (
         <View style={s.badge}>
           <Text style={s.badgeText}>{(count || 0) > 99 ? '99+' : count}</Text>
@@ -28,11 +30,6 @@ export default function TabsLayout() {
   useEffect(() => {
     checkUnread()
     const interval = setInterval(checkUnread, 30000)
-// Also check when app comes to foreground
-const { AppState } = require('react-native')
-AppState.addEventListener('change', (state: string) => {
-  if (state === 'active') checkUnread()
-})
     const channel = supabase.channel('unread-monitor')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => checkUnread())
       .subscribe()
@@ -61,7 +58,7 @@ AppState.addEventListener('change', (state: string) => {
     } catch {}
   }
 
-  const tabBarHeight = 60 + insets.bottom
+  const tabBarHeight = 64 + insets.bottom
 
   return (
     <Tabs screenOptions={{
@@ -69,43 +66,44 @@ AppState.addEventListener('change', (state: string) => {
       tabBarStyle: {
         backgroundColor: BG,
         borderTopWidth: 0.5,
-        borderTopColor: '#E8E8E8',
+        borderTopColor: 'rgba(108,99,255,0.1)',
         height: tabBarHeight,
-        paddingBottom: insets.bottom + 6,
+        paddingBottom: insets.bottom + 8,
         paddingTop: 8,
-        elevation: 12,
-        shadowColor: '#000',
-        shadowOpacity: 0.08,
+        elevation: 0,
+        shadowColor: PRIMARY,
+        shadowOpacity: 0.06,
         shadowRadius: 12,
         shadowOffset: { width: 0, height: -2 },
       },
-      tabBarActiveTintColor: ACCENT,
+      tabBarActiveTintColor: PRIMARY,
       tabBarInactiveTintColor: GRAY,
-      tabBarLabelStyle: { fontSize: 10, fontWeight: '600', letterSpacing: 0.2, marginTop: 2 },
+      tabBarLabelStyle: { fontSize: 10, fontWeight: '500', letterSpacing: 0.2, marginTop: 2 },
+      tabBarShowLabel: true,
     }}>
       <Tabs.Screen name="index" options={{
         title: 'Chats',
-        tabBarIcon: ({ focused }) => <TabIcon emoji="💬" count={unread} focused={focused} />,
+        tabBarIcon: ({ focused }) => <TabIcon emoji="💬" count={unread} focused={focused} label="Chats" />,
       }} />
       <Tabs.Screen name="feed" options={{
         title: 'Feed',
-        tabBarIcon: ({ focused }) => <TabIcon emoji="🌐" focused={focused} />,
+        tabBarIcon: ({ focused }) => <TabIcon emoji="🌐" focused={focused} label="Feed" />,
       }} />
       <Tabs.Screen name="marketplace" options={{
         title: 'Market',
-        tabBarIcon: ({ focused }) => <TabIcon emoji="🛍️" focused={focused} />,
+        tabBarIcon: ({ focused }) => <TabIcon emoji="🛍️" focused={focused} label="Market" />,
       }} />
       <Tabs.Screen name="explore" options={{
         title: 'Explore',
-        tabBarIcon: ({ focused }) => <TabIcon emoji="📡" focused={focused} />,
+        tabBarIcon: ({ focused }) => <TabIcon emoji="📡" focused={focused} label="Explore" />,
       }} />
       <Tabs.Screen name="agent" options={{
         title: 'Teeby',
-        tabBarIcon: ({ focused }) => <TabIcon emoji="✦" focused={focused} />,
+        tabBarIcon: ({ focused }) => <TabIcon emoji="✦" focused={focused} label="Teeby" />,
       }} />
       <Tabs.Screen name="profile" options={{
         title: 'Me',
-        tabBarIcon: ({ focused }) => <TabIcon emoji="👤" focused={focused} />,
+        tabBarIcon: ({ focused }) => <TabIcon emoji="👤" focused={focused} label="Me" />,
       }} />
       <Tabs.Screen name="radar" options={{ href: null }} />
       <Tabs.Screen name="chats" options={{ href: null }} />
@@ -114,9 +112,11 @@ AppState.addEventListener('change', (state: string) => {
 }
 
 const s = StyleSheet.create({
-  iconWrap: { alignItems: 'center', justifyContent: 'center', position: 'relative', width: 32, height: 26 },
+  iconWrap: { alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  iconBox: { width: 40, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  iconBoxActive: { backgroundColor: 'rgba(108,99,255,0.1)' },
   iconEmoji: { fontSize: 20, opacity: 0.45 },
   iconEmojiFocused: { opacity: 1 },
-  badge: { position: 'absolute', top: -5, right: -10, backgroundColor: '#FF3B30', borderRadius: 10, minWidth: 17, height: 17, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4, borderWidth: 1.5, borderColor: '#fff' },
-  badgeText: { fontSize: 9, fontWeight: '800', color: '#fff' },
+  badge: { position: 'absolute', top: -4, right: -6, width: 18, height: 18, borderRadius: 9, backgroundColor: 'transparent', borderWidth: 1.5, borderColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
+  badgeText: { fontSize: 9, fontWeight: '600', color: PRIMARY },
 })
