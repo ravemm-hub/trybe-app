@@ -463,16 +463,16 @@ export default function ChatScreen() {
                           }}
                           onLongPress={() => {
                             if (!item.user_id || isGhost || !userId) return
-                            Alert.prompt(
+                            Alert.alert(
                               'Rename contact',
-                              `How do you want to call ${appName}?`,
-                              async (newName) => {
-                                if (!newName?.trim()) return
-                                await saveCustomName(userId, item.user_id!, newName.trim())
-                                setContactNames(prev => ({ ...prev, [item.user_id!]: newName.trim() }))
-                              },
-                              'plain-text',
-                              displayName
+                              `Current name: ${displayName}\nEnter new name:`,
+                              [
+                                { text: 'Cancel', style: 'cancel' },
+                                { text: 'Use app name', onPress: async () => {
+                                  await saveCustomName(userId, item.user_id!, appName)
+                                  setContactNames(prev => ({ ...prev, [item.user_id!]: appName }))
+                                }},
+                              ]
                             )
                           }}
                         >
