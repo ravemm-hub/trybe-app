@@ -8,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Contacts from 'expo-contacts'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
-import { saveContactPhoneMap } from '../../lib/contactNames'
+import { saveContactPhoneMap, saveCustomName } from '../../lib/contactNames'
 
 const INVITE_MSG = `Hey! Join me on Tryber 🚀\nDownload: https://ravemm-hub.github.io/trybe-app`
 const PRIMARY = '#6C63FF'
@@ -127,6 +127,10 @@ export default function ChatsScreen() {
           if (raw.startsWith('00972')) normalized = '0' + raw.slice(5)
           const withPrefix = normalized.startsWith('0') ? '+972' + normalized.slice(1) : normalized
           const t = tryberMap.get(c.phone) || tryberMap.get(normalized) || tryberMap.get(withPrefix)
+          // Save userId→contactName mapping for DM screen
+          if (t?.id && c.name) {
+            saveCustomName(user.id, t.id, c.name).catch(() => {})
+          }
           return { ...c, onTryber: !!t, tryberUserId: t?.id, tryberUsername: t?.display_name || t?.username, avatar_char: t?.avatar_char }
         })
         enriched.sort((a, b) => a.onTryber === b.onTryber ? a.name.localeCompare(b.name) : a.onTryber ? -1 : 1)
