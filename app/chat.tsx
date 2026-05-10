@@ -564,7 +564,7 @@ export default function ChatScreen() {
     </View>
   )
 }
-
+const PRIMARY = '#6C63FF'
 const GREEN = '#1D9E75'
 const ORANGE = '#FF6B35'
 const PURPLE = '#7F77DD'
