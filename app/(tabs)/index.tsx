@@ -256,7 +256,15 @@ export default function ChatsScreen() {
             if (item.type === 'dm') {
               const d = item.data
               return (
-                <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: d.other_user_id, userName: d.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
+                <Pressable style={s.row} onPress={async () => {
+                  let displayName = d.name
+                  try {
+                    const { getCustomName } = require('../../lib/contactNames')
+                    const contactName = await getCustomName(d.other_user_id)
+                    if (contactName) displayName = contactName
+                  } catch {}
+                  router.push({ pathname: '/dm', params: { userId: d.other_user_id, userName: displayName, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })
+                }}>
                   <View style={s.avatarWrap}>
                     <Text style={s.avatarText}>{d.avatar}</Text>
                   </View>
