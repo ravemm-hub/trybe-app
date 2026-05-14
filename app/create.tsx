@@ -56,7 +56,33 @@ export default function CreateScreen() {
   const [contactSearch, setContactSearch] = useState('')
   const [createdGroupId, setCreatedGroupId] = useState<string | null>(null)
   const [createdGroupName, setCreatedGroupName] = useState('')
-  const [radius, setRadius] = useState(500)
+  const [teebyLoading, setTeebyLoading] = useState(false)
+
+  const askTeebySuggest = async () => {
+    if (!coords) { Alert.alert('Location needed', 'Please wait for location to load'); return }
+    setTeebyLoading(true)
+    try {
+      const hour = new Date().getHours()
+      const timeOfDay = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night'
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': process.env.EXPO_PUBLIC_ANTHROPIC_KEY || '', 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001', max_tokens: 200,
+          messages: [{ role: 'user', content: `I'm creating a live social group at ${locationName || 'my location'} on a ${timeOfDay}. Suggest 3 creative, fun, short group names (max 5 words each) that would attract people nearby. Format: just the names, one per line, no numbering.` }],
+        }),
+      })
+      const data = await res.json()
+      const suggestions = data.content?.[0]?.text?.trim().split('\n').filter(Boolean) || []
+      if (suggestions.length > 0) {
+        Alert.alert('✦ Teeby suggests:', suggestions.join('\n\n'), [
+          ...suggestions.map((s: string) => ({ text: s, onPress: () => setName(s) })),
+          { text: 'Cancel', style: 'cancel' }
+        ])
+      }
+    } catch {}
+    finally { setTeebyLoading(false) }
+  }
   const [userId, setUserId] = useState<string | null>(null)
   const [inviteTab, setInviteTab] = useState<'radar' | 'contacts'>('radar')
 
@@ -155,9 +181,9 @@ export default function CreateScreen() {
     // Add selected nearby users (agents/real)
     for (const uid of selectedIds) {
       if (AGENT_IDS.includes(uid)) {
-        try { await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }) } catch {}
+        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }).catch(() => {})
       } else {
-        try { await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }) } catch {}
+        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }).catch(() => {})
       }
     }
 
@@ -167,7 +193,7 @@ export default function CreateScreen() {
       const phones = selectedContacts.map(c => c.phone)
       const { data: tryberUsers } = await supabase.from('profiles').select('id, phone').in('phone', phones)
       for (const u of tryberUsers || []) {
-        try { await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: u.id, role: 'member' }) } catch {}
+        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: u.id, role: 'member' }).catch(() => {})
       }
     }
 
@@ -197,7 +223,12 @@ export default function CreateScreen() {
             </View>
           )}
 
-          <Text style={s.label}>NAME</Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <Text style={s.label}>NAME</Text>
+            <TouchableOpacity onPress={askTeebySuggest} disabled={teebyLoading} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              {teebyLoading ? <ActivityIndicator size="small" color={PRIMARY} /> : <Text style={{ fontSize: 13, color: PRIMARY, fontWeight: '600' }}>✦ Teeby suggest</Text>}
+            </TouchableOpacity>
+          </View>
           <TextInput style={s.input} value={name} onChangeText={setName} placeholder="What's the vibe?" placeholderTextColor="#B4B2A9" maxLength={60} />
 
           <Text style={s.label}>LOCATION</Text>

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, Pressable, TextInput,
   StatusBar, TouchableOpacity, Switch, ActivityIndicator, Alert,
@@ -34,11 +34,6 @@ export default function ExploreScreen() {
   const [loading, setLoading] = useState(false)
   const [joiningId, setJoiningId] = useState<string | null>(null)
   const [radarLoading, setRadarLoading] = useState(false)
-  const radarIntervalRef = useRef<any>(null)
-
-  useEffect(() => {
-    return () => { if (radarIntervalRef.current) clearInterval(radarIntervalRef.current) }
-  }, [])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -132,24 +127,11 @@ export default function ExploreScreen() {
   const toggleRadar = async (val: boolean) => {
     setRadarOn(val)
     if (!val) {
-      if (radarIntervalRef.current) { clearInterval(radarIntervalRef.current); radarIntervalRef.current = null }
       if (userId) await supabase.from('user_locations').update({ radar_on: false }).eq('user_id', userId)
       setNearbyUsers([])
       return
     }
     await activateRadar()
-    // Update location every 30 seconds while radar is on
-    radarIntervalRef.current = setInterval(async () => {
-      if (!userId) return
-      try {
-        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
-        const { latitude, longitude } = loc.coords
-        await supabase.from('user_locations').update({ 
-          location: `POINT(${longitude} ${latitude})`,
-          updated_at: new Date().toISOString()
-        }).eq('user_id', userId)
-      } catch {}
-    }, 30000)
   }
 
   const filteredGroups = groups.filter(g =>
@@ -301,7 +283,10 @@ export default function ExploreScreen() {
             const displayName = item.identity_mode === 'ghost' ? 'Anonymous' : (item.display_name || item.username)
             const avatar = item.identity_mode === 'ghost' ? (item.avatar_char || '👻') : (item.avatar_char || item.display_name?.[0] || '?')
             return (
-              <View style={s.userCard}>
+              <Pressable style={s.userCard} onPress={() => router.push({
+                  pathname: '/dm',
+                  params: { userId: item.id, userName: item.identity_mode === 'ghost' ? (item.avatar_char || '👻') : (item.display_name || item.username), myMode, myAvatar: '📡', isAgent: item.is_agent ? '1' : '0' }
+                })}>
                 <View style={[s.userAvatar, item.is_agent && { backgroundColor: '#EEF0FF', borderColor: PRIMARY, borderWidth: 2 }]}>
                   <Text style={{ fontSize: 24 }}>{avatar}</Text>
                 </View>
@@ -313,13 +298,8 @@ export default function ExploreScreen() {
                   </View>
                   <Text style={s.userDist}>{item.distance_m < 1000 ? `${Math.round(item.distance_m)}m` : `${(item.distance_m / 1000).toFixed(1)}km`} away</Text>
                 </View>
-                <TouchableOpacity style={s.dmBtn} onPress={() => router.push({
-                  pathname: '/dm',
-                  params: { userId: item.id, userName: item.identity_mode === 'ghost' ? (item.avatar_char || '👻') : (item.display_name || item.username), myMode, myAvatar: '📡', isAgent: item.is_agent ? '1' : '0' }
-                })}>
-                  <Text style={{ fontSize: 20 }}>💬</Text>
-                </TouchableOpacity>
-              </View>
+                <Text style={{ fontSize: 20 }}>💬</Text>
+              </Pressable>
             )
           }}
         />
