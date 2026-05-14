@@ -6,6 +6,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { supabase } from '../lib/supabase'
 import type { Session } from '@supabase/supabase-js'
 
+import { loadCustomNamesFromDB } from '../lib/contactNames'
+
 async function checkTeebyProactive(userId: string) {
   try {
     const { data: lastMsg } = await supabase
@@ -48,6 +50,7 @@ export default function RootLayout() {
       setSession(session)
       if (session?.user) {
         checkTeebyProactive(session.user.id)
+        loadCustomNamesFromDB(session.user.id)
       }
     })
 
