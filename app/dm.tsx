@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator,
+  KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator, Modal,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
@@ -133,6 +133,48 @@ export default function DMScreen() {
     finally { setAgentTyping(false) }
   }
 
+  const [sharedList, setSharedList] = useState<{ id: string; title: string; items: { text: string; done: boolean }[] } | null>(null)
+  const [showList, setShowList] = useState(false)
+  const [newListItem, setNewListItem] = useState('')
+
+  const openSharedList = async () => {
+    if (!myId) return
+    const participants = [myId, otherUserId].sort()
+    const { data } = await supabase.from('shared_lists').select('*')
+      .contains('dm_between', participants).order('created_at', { ascending: false }).limit(1)
+    if (data?.[0]) {
+      setSharedList({ id: data[0].id, title: data[0].title, items: data[0].items || [] })
+    } else {
+      const { data: newList } = await supabase.from('shared_lists').insert({
+        dm_between: participants, title: 'Shopping List', items: [], created_by: myId
+      }).select().single()
+      if (newList) setSharedList({ id: newList.id, title: newList.title, items: [] })
+    }
+    setShowList(true)
+  }
+
+  const addListItem = async () => {
+    if (!newListItem.trim() || !sharedList) return
+    const newItems = [...sharedList.items, { text: newListItem.trim(), done: false }]
+    await supabase.from('shared_lists').update({ items: newItems, updated_at: new Date().toISOString() }).eq('id', sharedList.id)
+    setSharedList(prev => prev ? { ...prev, items: newItems } : null)
+    setNewListItem('')
+  }
+
+  const toggleListItem = async (idx: number) => {
+    if (!sharedList) return
+    const newItems = sharedList.items.map((item, i) => i === idx ? { ...item, done: !item.done } : item)
+    await supabase.from('shared_lists').update({ items: newItems }).eq('id', sharedList.id)
+    setSharedList(prev => prev ? { ...prev, items: newItems } : null)
+  }
+
+  const deleteListItem = async (idx: number) => {
+    if (!sharedList) return
+    const newItems = sharedList.items.filter((_, i) => i !== idx)
+    await supabase.from('shared_lists').update({ items: newItems }).eq('id', sharedList.id)
+    setSharedList(prev => prev ? { ...prev, items: newItems } : null)
+  }
+
   const sendMessage = async () => {
     if (!draft.trim() || !myId) return
     const text = draft.trim()
@@ -242,6 +284,11 @@ export default function DMScreen() {
         )}
 
         <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+          {!talkingToAgent && (
+            <TouchableOpacity style={s.listBtn} onPress={openSharedList}>
+              <Text style={{ fontSize: 18 }}>📋</Text>
+            </TouchableOpacity>
+          )}
           <TextInput
             style={s.input}
             value={draft}
@@ -256,6 +303,36 @@ export default function DMScreen() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Shared List Modal */}
+      <Modal visible={showList} animationType="slide" onRequestClose={() => setShowList(false)}>
+        <View style={[s.container, { paddingTop: insets.top }]}>
+          <View style={s.header}>
+            <TouchableOpacity onPress={() => setShowList(false)}><Text style={s.backText}>‹</Text></TouchableOpacity>
+            <Text style={{ flex: 1, fontSize: 17, fontWeight: '700', color: TEXT }}>📋 {sharedList?.title || 'Shopping List'}</Text>
+          </View>
+          <View style={{ flex: 1, padding: 16 }}>
+            {sharedList?.items.map((item, idx) => (
+              <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 0.5, borderColor: '#EBEBEB' }}>
+                <TouchableOpacity onPress={() => toggleListItem(idx)} style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 1.5, borderColor: item.done ? PRIMARY : '#EBEBEB', backgroundColor: item.done ? PRIMARY : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                  {item.done && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>✓</Text>}
+                </TouchableOpacity>
+                <Text style={{ flex: 1, fontSize: 15, color: item.done ? GRAY : TEXT, textDecorationLine: item.done ? 'line-through' : 'none' }}>{item.text}</Text>
+                <TouchableOpacity onPress={() => deleteListItem(idx)}>
+                  <Text style={{ fontSize: 18, color: GRAY }}>×</Text>
+                </TouchableOpacity>
+              </View>
+            ))}
+            {(!sharedList?.items.length) && <View style={s.center}><Text style={{ fontSize: 40 }}>📋</Text><Text style={{ color: GRAY, marginTop: 8 }}>List is empty — add items below</Text></View>}
+          </View>
+          <View style={[{ flexDirection: 'row', gap: 8, padding: 16, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#EBEBEB' }, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            <TextInput style={[s.input, { flex: 1 }]} value={newListItem} onChangeText={setNewListItem} placeholder="Add item..." placeholderTextColor="#B4B2A9" onSubmitEditing={addListItem} returnKeyType="done" />
+            <TouchableOpacity style={[s.sendBtn, !newListItem.trim() && s.sendBtnOff]} onPress={addListItem} disabled={!newListItem.trim()}>
+              <Text style={s.sendIcon}>+</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   )
 }
@@ -298,6 +375,7 @@ const s = StyleSheet.create({
   statusText: { fontSize: 12, fontWeight: '600' },
   typingRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
   typingDots: { fontSize: 18, color: PRIMARY, letterSpacing: 4 },
+  listBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#F0F0F8', alignItems: 'center', justifyContent: 'center' },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#EBEBEB' },
   input: { flex: 1, minHeight: 40, maxHeight: 100, backgroundColor: '#F0F0F8', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: TEXT },
   sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
