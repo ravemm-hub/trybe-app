@@ -1,11 +1,10 @@
-import { useEffect, useState } from 'react'
+﻿import { useEffect, useState } from 'react'
 import { Stack, useRouter, useSegments } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { supabase } from '../lib/supabase'
 import type { Session } from '@supabase/supabase-js'
-
 import { loadCustomNamesFromDB } from '../lib/contactNames'
 
 async function checkTeebyProactive(userId: string) {
@@ -25,13 +24,13 @@ async function checkTeebyProactive(userId: string) {
       .from('groups').select('id, name, member_count').eq('status', 'open')
       .order('member_count', { ascending: false }).limit(3)
 
-    let text = `Hey${userName ? ` ${userName}` : ''}! 👋 `
+    let text = `Hey${userName ? ` ${userName}` : ''}! נ‘‹ `
     if (groups?.length) {
       text += `There are ${groups.length} active groups right now:\n`
-      groups.forEach((g: any) => { text += `⚡ ${g.name} — ${g.member_count} people\n` })
+      groups.forEach((g: any) => { text += `ג¡ ${g.name} ג€” ${g.member_count} people\n` })
       text += '\nWant me to find something near you?'
     } else {
-      text += `I'm here whenever you need me. Ask me anything! ✦`
+      text += `I'm here whenever you need me. Ask me anything! ג¦`
     }
 
     await supabase.from('agent_messages').insert({ user_id: userId, role: 'assistant', content: text })
@@ -95,3 +94,5 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   )
 }
+
+
