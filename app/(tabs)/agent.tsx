@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator,
-  Alert, Linking,
+  Alert, ScrollView,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Location from 'expo-location'
@@ -12,366 +12,208 @@ import { supabase } from '../../lib/supabase'
 
 const ANTHROPIC_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_KEY || ''
 const TAVILY_KEY = process.env.EXPO_PUBLIC_TAVILY_KEY || ''
+const PRIMARY = '#6C63FF'
+const TEAL = '#00BFA6'
+const BG = '#F8F7FF'
+const CARD = '#FFFFFF'
+const TEXT = '#1A1A2E'
+const GRAY = '#8A8A9A'
 
-type Message = {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  created_at: string
-}
+type Message = { id: string; role: 'user' | 'assistant'; content: string; timestamp: string }
 
-const QUICK_PROMPTS = [
-  '📬 What did I miss?',
-  '🍕 Find food near me',
-  '📅 Add to my calendar',
-  '⚡ Active groups nearby',
-  '🌐 Search the web for me',
+const QUICK_ACTIONS = [
+  { emoji: '📍', label: 'Groups nearby' },
+  { emoji: '📅', label: 'Add to calendar' },
+  { emoji: '🛒', label: 'Shopping list' },
+  { emoji: '🌐', label: 'Search web' },
+  { emoji: '💬', label: 'Find people' },
+  { emoji: '⚡', label: 'Create group' },
 ]
 
 export default function AgentScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const [messages, setMessages] = useState<Message[]>([])
-  const [draft, setDraft] = useState('')
+  const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
-  const [userName, setUserName] = useState('there')
-  const [teebyName, setTeebyName] = useState('Teeby')
-  const [memoryFacts, setMemoryFacts] = useState<any>({})
+  const [userName, setUserName] = useState('')
   const [locationCtx, setLocationCtx] = useState('')
-  const [coords, setCoords] = useState<{lat: number, lon: number} | null>(null)
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
+  const [credits, setCredits] = useState(20)
   const listRef = useRef<FlatList>(null)
 
-  useEffect(() => { init() }, [])
+  useEffect(() => {
+    init()
+  }, [])
 
   const init = async () => {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
     setUserId(user.id)
-
-    const { data: profile } = await supabase.from('profiles').select('display_name, username').eq('id', user.id).single()
-    const name = profile?.display_name || profile?.username || 'there'
-    setUserName(name)
-
-    const { data: pa } = await supabase.from('personal_agents').select('*').eq('user_id', user.id).single()
-    if (pa?.name) setTeebyName(pa.name)
-
-    const { data: mem } = await supabase.from('teeby_memory').select('facts').eq('user_id', user.id).single()
-    if (mem?.facts) setMemoryFacts(mem.facts)
-
-    const { data: history } = await supabase.from('agent_messages')
-      .select('*').eq('user_id', user.id)
-      .gte('created_at', new Date(new Date().setHours(0,0,0,0)).toISOString())
-      .order('created_at', { ascending: true }).limit(50)
-
-    if (history?.length) {
-      setMessages(history as Message[])
-      setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 200)
-    } else {
-      const greeting: Message = {
-        id: 'greeting', role: 'assistant',
-        content: `Hey ${name}! ✦\n\nI'm ${pa?.name || 'Teeby'} — your personal AI on Tryber.\n\nHere's what I can do for you:\n🍕 Find restaurants & places nearby\n📅 Add events to your calendar\n📬 Summarize missed messages\n🌐 Search the web for anything\n✦ Post on the feed for you\n\nWhat do you need?`,
-        created_at: new Date().toISOString()
-      }
-      setMessages([greeting])
+    const { data: profile } = await supabase.from('profiles').select('display_name, username, teeby_credits').eq('id', user.id).single()
+    if (profile) {
+      setUserName(profile.display_name || profile.username || '')
+      setCredits(profile.teeby_credits ?? 20)
     }
-
-    // Get location
     try {
       const { status } = await Location.requestForegroundPermissionsAsync()
       if (status === 'granted') {
         const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
         setCoords({ lat: loc.coords.latitude, lon: loc.coords.longitude })
         const [place] = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude })
-        if (place) {
-          const locStr = [place.name, place.street, place.city, place.country].filter(Boolean).join(', ')
-          setLocationCtx(locStr)
-        }
+        if (place) setLocationCtx([place.city, place.district].filter(Boolean).join(', '))
       }
     } catch {}
+    const { data: history } = await supabase.from('agent_messages').select('*').eq('user_id', user.id).order('created_at', { ascending: true }).limit(30)
+    if (history?.length) {
+      setMessages(history.map((m: any) => ({ id: m.id, role: m.role, content: m.content, timestamp: m.created_at })))
+    } else {
+      const welcome = `שלום${userName ? ` ${userName}` : ''}! ✦ אני Teeby, הסוכן האישי שלך.\n\nאני יכול לעזור לך:\n📍 למצוא קבוצות וחברים בקרבתך\n📅 להוסיף אירועים לקלנדר\n🛒 לנהל רשימות קניות\n🌐 לחפש מידע באינטרנט\n💬 לשלוח הודעות לחברים\n⚡ ליצור קבוצות חדשות\n\nמה אעשה בשבילך?`
+      addMessage('assistant', welcome)
+    }
   }
+
+  const addMessage = useCallback((role: 'user' | 'assistant', content: string) => {
+    const msg: Message = { id: Date.now().toString(), role, content, timestamp: new Date().toISOString() }
+    setMessages(prev => [...prev, msg])
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
+    if (userId) supabase.from('agent_messages').insert({ user_id: userId, role, content }).catch(() => {})
+  }, [userId])
 
   const webSearch = async (query: string): Promise<string> => {
     try {
       const res = await fetch('https://api.tavily.com/search', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          api_key: TAVILY_KEY,
-          query,
-          max_results: 5,
-          search_depth: 'advanced',
-          include_answer: true,
-        }),
+        body: JSON.stringify({ api_key: TAVILY_KEY, query, max_results: 3, search_depth: 'basic' }),
       })
       const data = await res.json()
-      let result = ''
-      if (data.answer) result += `Answer: ${data.answer}\n\n`
-      if (data.results?.length) {
-        result += data.results.slice(0, 4).map((r: any) =>
-          `• ${r.title}: ${r.content?.slice(0, 300)}`
-        ).join('\n\n')
-      }
-      return result || ''
-    } catch { return '' }
+      return data.results?.map((r: any) => `${r.title}: ${r.content}`).join('\n') || 'No results'
+    } catch { return 'Search failed' }
   }
 
   const addToCalendar = async (title: string, dateStr: string, notes?: string): Promise<boolean> => {
     try {
       const { status } = await Calendar.requestCalendarPermissionsAsync()
-      if (status !== 'granted') {
-        Alert.alert('Permission needed', 'Allow calendar access to add events')
-        return false
-      }
+      if (status !== 'granted') return false
       const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
       const defaultCal = calendars.find(c => c.allowsModifications) || calendars[0]
       if (!defaultCal) return false
       const date = new Date(dateStr)
       if (isNaN(date.getTime())) return false
+      const end = new Date(date.getTime() + 60 * 60 * 1000)
       await Calendar.createEventAsync(defaultCal.id, {
-        title,
-        startDate: date,
-        endDate: new Date(date.getTime() + 60 * 60 * 1000),
-        notes: notes || 'Added by Teeby on Tryber',
+        title, startDate: date, endDate: end, notes: notes || '',
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       })
       return true
     } catch { return false }
   }
 
-  const publishPost = async (content: string): Promise<boolean> => {
-    if (!userId) return false
+  const getNearbyGroups = async (): Promise<string> => {
     try {
-      await supabase.from('posts').insert({ user_id: userId, content, likes: 0, is_anonymous: false })
-      return true
-    } catch { return false }
+      if (!coords) return 'Location not available'
+      const { data } = await supabase.rpc('nearby_users', { p_lat: coords.lat, p_lon: coords.lon, radius_m: 2000 })
+      const { data: groups } = await supabase.from('groups').select('id, name, member_count').eq('status', 'open').limit(5)
+      if (!groups?.length) return 'No open groups nearby'
+      return groups.map((g: any) => `• ${g.name} (${g.member_count} members)`).join('\n')
+    } catch { return 'Could not load groups' }
   }
 
-  const send = async (text?: string) => {
-    const msg = (text || draft).trim()
-    if (!msg || !userId || loading) return
-    setDraft('')
+  const sendTeebyMessage = async (userMsg: string) => {
+    if (!userMsg.trim() || loading) return
+    setInput('')
     setLoading(true)
-
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', content: msg, created_at: new Date().toISOString() }
-    setMessages(prev => [...prev, userMsg])
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
-    await supabase.from('agent_messages').insert({ user_id: userId, role: 'user', content: msg })
+    addMessage('user', userMsg)
 
     try {
-      const lower = msg.toLowerCase()
-      const now = new Date()
-      const timeStr = now.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })
-      const dateStr = now.toLocaleDateString('en', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+      // Build context
+      const nearbyGroups = await getNearbyGroups()
+      const history = messages.slice(-6).map(m => ({ role: m.role, content: m.content }))
 
-      let context = `You are ${teebyName}, a smart and proactive AI assistant in the Tryber social app.
-User: ${userName} | Location: ${locationCtx || 'unknown'} | Coordinates: ${coords ? `${coords.lat.toFixed(4)},${coords.lon.toFixed(4)}` : 'unknown'}
-Current time: ${timeStr} | Date: ${dateStr}
-
-You have access to:
-- Web search results (provided below when relevant)
-- User's unread messages summary (provided below when relevant)
-- Nearby groups on Tryber
-
-Rules:
-- Always reply in the same language as the user (Hebrew or English)
-- Be direct, helpful, and proactive
-- When you have search results, summarize them clearly with bullet points
-- For food/places: give specific names, ratings if available, and why you recommend them
-- For calendar: confirm what you'll add, then include [CALENDAR:title|ISO-date] at the end
-- For posting: include [POST:content] at the end when user confirms
-- Keep responses under 150 words unless listing items
-
-`
-      // Web search for location-based queries
-      const needsSearch = lower.includes('food') || lower.includes('restaurant') || lower.includes('eat') ||
-        lower.includes('אוכל') || lower.includes('מסעדה') || lower.includes('cafe') || lower.includes('קפה') ||
-        lower.includes('find') || lower.includes('search') || lower.includes('חפש') || lower.includes('מה זה') ||
-        lower.includes('what is') || lower.includes('news') || lower.includes('חדשות') || lower.includes('open') ||
-        lower.includes('activity') || lower.includes('פעילות') || lower.includes('recommend') || lower.includes('המלץ')
-
+      // Check if need web search
+      const needsSearch = /חפש|search|מה זה|what is|מתי|when|איפה|where|חדשות|news|מחיר|price/i.test(userMsg)
+      let searchResult = ''
       if (needsSearch) {
-        const searchQuery = locationCtx ? `${msg} near ${locationCtx}` : msg
-        const searchResult = await webSearch(searchQuery)
-        if (searchResult) context += `\n🌐 Web search results for "${msg}":\n${searchResult}\n\n`
+        searchResult = await webSearch(userMsg)
       }
 
-      // Summary of unread
-      const needsSummary = lower.includes('missed') || lower.includes('פספסתי') || lower.includes('summary') ||
-        lower.includes('סכם') || lower.includes('unread') || lower.includes('לא קראתי')
-      if (needsSummary) {
-        const { data: myGroups } = await supabase.from('group_members').select('group_id, last_read_at, groups(name)').eq('user_id', userId)
-        if (myGroups?.length) {
-          let summaryCtx = '\n📬 Unread messages:\n'
-          let hasUnread = false
-          for (const m of myGroups) {
-            if (!m.last_read_at) continue
-            const { data: msgs } = await supabase.from('messages').select('content').eq('group_id', m.group_id).neq('user_id', userId).gt('created_at', m.last_read_at).limit(5)
-            if (msgs?.length) {
-              summaryCtx += `\n${(m as any).groups?.name}: ${msgs.map((x: any) => x.content).join(' | ')}`
-              hasUnread = true
-            }
-          }
-          if (hasUnread) context += summaryCtx + '\n\n'
-          else context += '\n📬 No unread messages.\n\n'
-        }
-      }
+      const systemPrompt = `You are Teeby, a smart personal AI agent in the Tryber social app.
+User: ${userName} | Location: ${locationCtx || 'Tel Aviv'} | Credits: ${credits}
+Nearby groups:\n${nearbyGroups}
+${searchResult ? `Web search results:\n${searchResult}` : ''}
 
-      // Nearby groups
-      const needsGroups = lower.includes('group') || lower.includes('קבוצה') || lower.includes('nearby') ||
-        lower.includes('קרוב') || lower.includes('active') || lower.includes('פעיל')
-      if (needsGroups) {
-        const { data: groups } = await supabase.from('groups').select('name, status, member_count, location_name').eq('status', 'open').order('member_count', { ascending: false }).limit(5)
-        if (groups?.length) {
-          context += `\n⚡ Active Trybes:\n${groups.map((g: any) => `• ${g.name} — ${g.member_count} people${g.location_name ? ` @ ${g.location_name}` : ''}`).join('\n')}\n\n`
-        }
-      }
-
-      // Calendar intent
-      const needsCalendar = lower.includes('calendar') || lower.includes('קלנדר') || lower.includes('remind') ||
-        lower.includes('תזכורת') || lower.includes('schedule') || lower.includes('event') || lower.includes('אירוע') || lower.includes('add')
-      if (needsCalendar) {
-        context += '\nFor calendar requests: if the user gave a title and time, add [CALENDAR:title|YYYY-MM-DDTHH:mm] at the end of your reply. Be smart about parsing dates from natural language.\n\n'
-      }
-
-      // Post intent
-      const needsPost = lower.includes('post') || lower.includes('פרסם') || lower.includes('publish') || lower.includes('share on feed')
-      if (needsPost) {
-        context += '\nFor posting: if ready to post, include [POST:exact content to post] at the end.\n\n'
-      }
-
-      // Memory
-      if (Object.keys(memoryFacts).length > 0) {
-        context += `\nWhat I know about ${userName}: ${JSON.stringify(memoryFacts)}\n`
-      }
-
-      const recentMessages = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
+CAPABILITIES:
+1. CALENDAR - When user wants to add event, respond with exactly: [CAL:title|date_iso]
+   Example: [CAL:Coffee with Maya|2025-05-20T10:00:00]
+2. GROUP CREATION - suggest creating groups with: [CREATE_GROUP:name]
+3. DM - to message someone: [DM:userId]
+4. Always respond in the SAME language as the user (Hebrew or English)
+5. Be proactive, warm, and genuinely helpful
+6. For shopping lists, help organize and remember items
+7. Keep responses concise but helpful (max 3-4 sentences)
+8. If user shares location, find relevant groups and people nearby`
 
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-haiku-4-5-20251001',
-          max_tokens: 600,
-          system: context,
-          messages: [...recentMessages, { role: 'user', content: msg }],
+          max_tokens: 400,
+          system: systemPrompt,
+          messages: [...history, { role: 'user', content: userMsg }],
         }),
       })
-
       const data = await res.json()
-      let reply = data.content?.[0]?.text?.trim() || 'Something went wrong. Try again!'
+      let reply = data.content?.[0]?.text?.trim() || 'אני לא מצליח לענות כרגע, נסה שוב.'
 
       // Handle calendar action
-      const calMatch = reply.match(/\[CALENDAR:([^\|]+)\|([^\]]+)\]/)
+      const calMatch = reply.match(/\[CAL:([^\|]+)\|([^\]]+)\]/)
       if (calMatch) {
-        reply = reply.replace(calMatch[0], '').trim()
         const added = await addToCalendar(calMatch[1].trim(), calMatch[2].trim())
-        reply += added
-          ? `\n\n✅ Added "${calMatch[1].trim()}" to your calendar!`
-          : `\n\n⚠️ Couldn't add to calendar. Check permissions in Settings.`
+        reply = reply.replace(calMatch[0], '')
+        reply += added ? '\n\n✅ הוספתי לקלנדר שלך!' : '\n\n❌ לא הצלחתי להוסיף לקלנדר. בדוק הרשאות.'
       }
 
-      // Handle shopping list
-      const shopMatch = reply.match(/\[SHOPPING:([^\]]+)\]/)
-      if (shopMatch) {
-        reply = reply.replace(shopMatch[0], '').trim()
-        const items = shopMatch[1].split(',').map((i: string) => i.trim()).filter(Boolean)
-        const existing: string[] = memoryFacts.shopping_list || []
-        const newList = [...new Set([...existing, ...items])]
-        const newFacts = { ...memoryFacts, shopping_list: newList }
-        setMemoryFacts(newFacts)
-        await supabase.from('teeby_memory').upsert({ user_id: userId, facts: newFacts }, { onConflict: 'user_id' })
-        reply += `\n\n🛒 Shopping list (${newList.length} items):\n${newList.map((i: string, n: number) => `${n+1}. ${i}`).join('\n')}`
+      // Handle group creation
+      const groupMatch = reply.match(/\[CREATE_GROUP:([^\]]+)\]/)
+      if (groupMatch) {
+        reply = reply.replace(groupMatch[0], '')
+        reply += `\n\n⚡ [לחץ כאן ליצירת הקבוצה "${groupMatch[1].trim()}"]`
       }
 
-      // Handle matchmaking
-      const matchMatch = reply.match(/\[MATCH:([^\]]+)\]/)
-      if (matchMatch) {
-        reply = reply.replace(matchMatch[0], '').trim()
-        const { data: users } = await supabase.from('profiles').select('id, display_name, username, bio').neq('id', userId).limit(10)
-        const matches = (users || []).filter((u: any) => u.bio && u.bio.length > 0).slice(0, 3)
-        if (matches.length > 0) {
-          reply += `\n\n🤝 Found ${matches.length} people you might connect with:\n${matches.map((u: any) => `• ${u.display_name || u.username}${u.bio ? ': ' + u.bio.slice(0, 50) : ''}`).join('\n')}`
-        } else {
-          reply += `\n\n🔍 No matches yet — invite friends to Tryber!`
-        }
-      }
+      addMessage('assistant', reply.trim())
 
-      // Handle post action
-      const postMatch = reply.match(/\[POST:([^\]]+)\]/)
-      if (postMatch) {
-        reply = reply.replace(postMatch[0], '').trim()
-        const postContent = postMatch[1].trim()
-        Alert.alert('Post to Feed?', postContent, [
-          { text: 'Cancel', style: 'cancel' },
-          { text: '✓ Post it!', onPress: async () => {
-            const posted = await publishPost(postContent)
-            if (posted) Alert.alert('✅ Posted!', 'Your post is live on the feed.')
-          }}
-        ])
-        reply += '\n\n📝 Tap "Post it!" to publish.'
+      // Update credits
+      if (userId) {
+        const newCredits = Math.max(0, credits - 1)
+        setCredits(newCredits)
+        await supabase.from('profiles').update({ teeby_credits: newCredits }).eq('id', userId)
       }
-
-      // Save facts to memory
-      const factPatterns = [
-        { key: 'job', regex: /i (work|am) (at|as|a|an) (.+?)(?:\.|,|$)/i },
-        { key: 'likes', regex: /i (like|love|enjoy) (.+?)(?:\.|,|$)/i },
-        { key: 'lives', regex: /i (live|am) in (.+?)(?:\.|,|$)/i },
-      ]
-      const newFacts: any = { ...memoryFacts }
-      let factsChanged = false
-      for (const { key, regex } of factPatterns) {
-        const match = msg.match(regex)
-        if (match && match[match.length - 1]) {
-          newFacts[key] = match[match.length - 1].trim()
-          factsChanged = true
-        }
-      }
-      if (factsChanged) {
-        setMemoryFacts(newFacts)
-        await supabase.from('teeby_memory').upsert({ user_id: userId, facts: newFacts }, { onConflict: 'user_id' })
-      }
-
-      const assistantMsg: Message = {
-        id: (Date.now() + 1).toString(), role: 'assistant',
-        content: reply, created_at: new Date().toISOString()
-      }
-      setMessages(prev => [...prev, assistantMsg])
-      await supabase.from('agent_messages').insert({ user_id: userId, role: 'assistant', content: reply })
-      setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
-
-    } catch {
-      const errMsg: Message = {
-        id: (Date.now() + 1).toString(), role: 'assistant',
-        content: 'Sorry, something went wrong. Try again!',
-        created_at: new Date().toISOString()
-      }
-      setMessages(prev => [...prev, errMsg])
+    } catch (err) {
+      addMessage('assistant', 'משהו השתבש. נסה שוב בעוד רגע.')
     } finally {
       setLoading(false)
     }
   }
 
-  const formatTime = (ts: string) => new Date(ts).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })
+  const formatTime = (ts: string) => new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="dark-content" backgroundColor={CARD} />
       <View style={s.header}>
         <View style={s.headerLeft}>
-          <View style={s.agentAvatar}>
-            <Text style={s.agentAvatarText}>✦</Text>
-          </View>
+          <View style={s.agentAvatar}><Text style={s.agentAvatarText}>✦</Text></View>
           <View>
-            <Text style={s.agentName}>{teebyName}</Text>
-            <Text style={s.agentSub}>{locationCtx ? `📍 ${locationCtx.split(',')[0]}` : 'Your Personal AI'}</Text>
+            <Text style={s.agentName}>Teeby</Text>
+            <Text style={s.agentSub}>{locationCtx ? `📍 ${locationCtx}` : 'Your Personal AI'}</Text>
           </View>
         </View>
-        <TouchableOpacity style={s.settingsBtn} onPress={() => Alert.alert(
-          `${teebyName} Info`,
-          `📍 ${locationCtx || 'Location unknown'}\n🧠 ${Object.keys(memoryFacts).length} memories\n🌐 Web search: enabled\n📅 Calendar: enabled`
-        )}>
-          <Text style={s.settingsBtnText}>ⓘ</Text>
-        </TouchableOpacity>
+        <View style={s.creditsWrap}>
+          <Text style={s.creditsText}>{credits} ✦</Text>
+        </View>
       </View>
 
       <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 56}>
@@ -380,65 +222,78 @@ Rules:
           data={messages}
           keyExtractor={m => m.id}
           contentContainerStyle={s.messageList}
+          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
           ListHeaderComponent={
-            messages.length <= 1 ? (
-              <View style={s.quickPromptsWrap}>
-                {QUICK_PROMPTS.map(p => (
-                  <TouchableOpacity key={p} style={s.quickPrompt} onPress={() => send(p)}>
-                    <Text style={s.quickPromptText}>{p}</Text>
+            messages.length === 0 ? null : (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.quickActions} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
+                {QUICK_ACTIONS.map(a => (
+                  <TouchableOpacity key={a.label} style={s.quickBtn} onPress={() => sendTeebyMessage(a.label)}>
+                    <Text style={s.quickBtnEmoji}>{a.emoji}</Text>
+                    <Text style={s.quickBtnText}>{a.label}</Text>
                   </TouchableOpacity>
                 ))}
-              </View>
-            ) : null
-          }
-          ListFooterComponent={
-            loading ? (
-              <View style={s.typingRow}>
-                <View style={s.agentAvatarSmall}><Text style={s.agentAvatarSmallText}>✦</Text></View>
-                <View style={s.typingBubble}>
-                  <Text style={s.typingDots}>· · ·</Text>
-                </View>
-              </View>
-            ) : null
+              </ScrollView>
+            )
           }
           renderItem={({ item }) => {
-            const isUser = item.role === 'user'
+            const isMe = item.role === 'user'
             return (
-              <View style={[s.bubbleRow, isUser && s.bubbleRowMe]}>
-                {!isUser && (
-                  <View style={s.agentAvatarSmall}>
-                    <Text style={s.agentAvatarSmallText}>✦</Text>
-                  </View>
-                )}
+              <View style={[s.bubbleRow, isMe && s.bubbleRowMe]}>
+                {!isMe && <View style={s.agentAvatarSmall}><Text style={{ fontSize: 12, color: PRIMARY, fontWeight: '700' }}>✦</Text></View>}
                 <View style={s.bubbleCol}>
-                  <View style={[s.bubble, isUser ? s.bubbleMe : s.bubbleThem]}>
-                    <Text style={[s.bubbleText, isUser && s.bubbleTextMe]}>{item.content}</Text>
+                  <View style={[s.bubble, isMe ? s.bubbleMe : s.bubbleBot]}>
+                    <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{item.content}</Text>
                   </View>
-                  <Text style={[s.timeText, isUser && s.timeTextMe]}>{formatTime(item.created_at)}</Text>
+                  <Text style={[s.timeText, isMe && { textAlign: 'right' }]}>{formatTime(item.timestamp)}</Text>
                 </View>
               </View>
             )
           }}
         />
 
+        {messages.length === 0 && (
+          <View style={s.emptyState}>
+            <View style={s.emptyAvatar}><Text style={{ fontSize: 40, color: PRIMARY }}>✦</Text></View>
+            <Text style={s.emptyTitle}>Teeby</Text>
+            <Text style={s.emptySub}>Your personal AI — always here</Text>
+            <View style={s.quickActionsGrid}>
+              {QUICK_ACTIONS.map(a => (
+                <TouchableOpacity key={a.label} style={s.quickBtnLarge} onPress={() => sendTeebyMessage(a.label)}>
+                  <Text style={s.quickBtnLargeEmoji}>{a.emoji}</Text>
+                  <Text style={s.quickBtnLargeText}>{a.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {loading && (
+          <View style={s.typingRow}>
+            <View style={s.agentAvatarSmall}><Text style={{ fontSize: 12, color: PRIMARY, fontWeight: '700' }}>✦</Text></View>
+            <View style={[s.bubble, s.bubbleBot, { paddingVertical: 14 }]}>
+              <Text style={{ fontSize: 18, color: PRIMARY, letterSpacing: 4 }}>· · ·</Text>
+            </View>
+          </View>
+        )}
+
         <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           <TextInput
             style={s.input}
-            value={draft}
-            onChangeText={setDraft}
-            placeholder={`Ask ${teebyName} anything...`}
+            value={input}
+            onChangeText={setInput}
+            placeholder="Ask Teeby anything..."
             placeholderTextColor="#B4B2A9"
             multiline
             maxLength={500}
             returnKeyType="send"
-            onSubmitEditing={() => send()}
+            onSubmitEditing={() => sendTeebyMessage(input)}
           />
           <TouchableOpacity
-            style={[s.sendBtn, (!draft.trim() || loading) && s.sendBtnOff]}
-            onPress={() => send()}
-            disabled={!draft.trim() || loading}
+            style={[s.sendBtn, (!input.trim() || loading) && s.sendBtnOff]}
+            onPress={() => sendTeebyMessage(input)}
+            disabled={!input.trim() || loading}
           >
-            <Text style={s.sendIcon}>↑</Text>
+            {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={s.sendIcon}>↑</Text>}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -446,43 +301,44 @@ Rules:
   )
 }
 
-const PURPLE = '#7F77DD'
-const DARK = '#1A1A2E'
-const GRAY = '#888780'
-
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: DARK },
+  container: { flex: 1, backgroundColor: BG },
   flex: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: '#FFFFFF', borderBottomWidth: 0.5, borderColor: 'rgba(255,255,255,0.08)' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: 'rgba(108,99,255,0.08)' },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  agentAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF0FF', borderWidth: 1.5, borderColor: PURPLE, alignItems: 'center', justifyContent: 'center' },
-  agentAvatarText: { fontSize: 18, color: PURPLE, fontWeight: '700' },
-  agentName: { fontSize: 16, fontWeight: '700', color: '#1A1A2E' },
-  agentSub: { fontSize: 11, color: '#8A8A9A' },
-  settingsBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center' },
-  settingsBtnText: { fontSize: 18, color: '#8A8A9A' },
+  agentAvatar: { width: 42, height: 42, borderRadius: 14, backgroundColor: 'rgba(108,99,255,0.1)', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: PRIMARY },
+  agentAvatarText: { fontSize: 20, color: PRIMARY, fontWeight: '700' },
+  agentName: { fontSize: 17, fontWeight: '700', color: TEXT },
+  agentSub: { fontSize: 11, color: GRAY, marginTop: 1 },
+  creditsWrap: { backgroundColor: 'rgba(108,99,255,0.08)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(108,99,255,0.15)' },
+  creditsText: { fontSize: 13, color: PRIMARY, fontWeight: '600' },
   messageList: { padding: 16, gap: 12, flexGrow: 1 },
-  quickPromptsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
-  quickPrompt: { backgroundColor: 'rgba(127,119,221,0.15)', borderWidth: 1, borderColor: '#6C63FF', borderRadius: 20, paddingHorizontal: 14, paddingVertical: 8 },
-  quickPromptText: { fontSize: 13, color: '#A89EF5', fontWeight: '500' },
+  quickActions: { marginBottom: 8 },
+  quickBtn: { backgroundColor: CARD, borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 5, borderWidth: 1, borderColor: 'rgba(108,99,255,0.1)' },
+  quickBtnEmoji: { fontSize: 14 },
+  quickBtnText: { fontSize: 12, color: PRIMARY, fontWeight: '500' },
   bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   bubbleRowMe: { flexDirection: 'row-reverse' },
-  agentAvatarSmall: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#6C63FF' },
-  agentAvatarSmallText: { fontSize: 12, color: PURPLE, fontWeight: '700' },
-  bubbleCol: { maxWidth: '80%' },
-  bubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
-  bubbleMe: { backgroundColor: PURPLE, borderBottomRightRadius: 4 },
-  bubbleThem: { backgroundColor: '#F0F0F8', borderBottomLeftRadius: 4, borderWidth: 0.5, borderColor: '#EBEBEB' },
-  bubbleText: { fontSize: 15, lineHeight: 22, color: '#1A1A2E' },
+  agentAvatarSmall: { width: 28, height: 28, borderRadius: 9, backgroundColor: 'rgba(108,99,255,0.08)', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(108,99,255,0.15)' },
+  bubbleCol: { maxWidth: '78%' },
+  bubble: { borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10 },
+  bubbleBot: { backgroundColor: CARD, borderBottomLeftRadius: 4, borderWidth: 1, borderColor: 'rgba(108,99,255,0.08)' },
+  bubbleMe: { backgroundColor: PRIMARY, borderBottomRightRadius: 4 },
+  bubbleText: { fontSize: 15, lineHeight: 22, color: TEXT },
   bubbleTextMe: { color: '#fff' },
-  timeText: { fontSize: 10, color: '#B4B2A9', marginTop: 4, marginLeft: 4 },
-  timeTextMe: { textAlign: 'right', marginRight: 4 },
-  typingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 4, paddingBottom: 8 },
-  typingBubble: { backgroundColor: '#F0F0F8', borderRadius: 18, paddingHorizontal: 16, paddingVertical: 12, borderWidth: 0.5, borderColor: '#EBEBEB' },
-  typingDots: { fontSize: 18, color: PURPLE, letterSpacing: 4 },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, gap: 8, backgroundColor: '#FFFFFF', borderTopWidth: 0.5, borderColor: 'rgba(255,255,255,0.08)' },
-  input: { flex: 1, minHeight: 40, maxHeight: 100, backgroundColor: '#F0F0F8', borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: '#1A1A2E', borderWidth: 1, borderColor: '#EBEBEB' },
-  sendBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: PURPLE, alignItems: 'center', justifyContent: 'center' },
-  sendBtnOff: { opacity: 0.3 },
-  sendIcon: { color: '#fff', fontSize: 18, fontWeight: '700' },
+  timeText: { fontSize: 10, color: GRAY, marginTop: 3, marginLeft: 4 },
+  typingRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
+  inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, gap: 8, backgroundColor: CARD, borderTopWidth: 0.5, borderColor: 'rgba(108,99,255,0.08)' },
+  input: { flex: 1, minHeight: 42, maxHeight: 100, backgroundColor: BG, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: 'rgba(108,99,255,0.1)' },
+  sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
+  sendBtnOff: { opacity: 0.35 },
+  sendIcon: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 },
+  emptyAvatar: { width: 80, height: 80, borderRadius: 24, backgroundColor: 'rgba(108,99,255,0.08)', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: PRIMARY, marginBottom: 16 },
+  emptyTitle: { fontSize: 28, fontWeight: '700', color: TEXT, marginBottom: 4 },
+  emptySub: { fontSize: 14, color: GRAY, marginBottom: 32 },
+  quickActionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' },
+  quickBtnLarge: { width: '45%', backgroundColor: CARD, borderRadius: 16, padding: 16, alignItems: 'center', gap: 8, borderWidth: 1, borderColor: 'rgba(108,99,255,0.08)' },
+  quickBtnLargeEmoji: { fontSize: 28 },
+  quickBtnLargeText: { fontSize: 13, color: TEXT, fontWeight: '500', textAlign: 'center' },
 })
