@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, Alert, ActivityIndicator,
@@ -56,6 +56,7 @@ export default function CreateScreen() {
   const [contactSearch, setContactSearch] = useState('')
   const [createdGroupId, setCreatedGroupId] = useState<string | null>(null)
   const [createdGroupName, setCreatedGroupName] = useState('')
+  const [radius, setRadius] = useState(500)
   const [teebyLoading, setTeebyLoading] = useState(false)
 
   const askTeebySuggest = async () => {
@@ -75,7 +76,7 @@ export default function CreateScreen() {
       const data = await res.json()
       const suggestions = data.content?.[0]?.text?.trim().split('\n').filter(Boolean) || []
       if (suggestions.length > 0) {
-        Alert.alert('✦ Teeby suggests:', suggestions.join('\n\n'), [
+        Alert.alert('ג¦ Teeby suggests:', suggestions.join('\n\n'), [
           ...suggestions.map((s: string) => ({ text: s, onPress: () => setName(s) })),
           { text: 'Cancel', style: 'cancel' }
         ])
@@ -104,10 +105,10 @@ export default function CreateScreen() {
         setLocationName(placeName)
         const now = new Date()
         const hour = now.getHours()
-        const vibes = ['🔥 Hot Spot', '⚡ Live at', '🎯 Meetup at', '🌟 Happening at', '🎪 Gathering at', '🚀 Squad at']
+        const vibes = ['נ”¥ Hot Spot', 'ג¡ Live at', 'נ¯ Meetup at', 'נ Happening at', 'נ× Gathering at', 'נ€ Squad at']
         const vibe = vibes[Math.floor(Math.random() * vibes.length)]
         setName(`${vibe} ${placeName}`)
-        setLocationName(`${placeName} · ${now.toLocaleDateString('en', { weekday: 'long', day: 'numeric', month: 'short' })}`)      }
+        setLocationName(`${placeName} ֲ· ${now.toLocaleDateString('en', { weekday: 'long', day: 'numeric', month: 'short' })}`)      }
     } catch {}
     finally { setLocLoading(false) }
   }
@@ -145,7 +146,7 @@ export default function CreateScreen() {
 
       await supabase.from('group_members').insert({ group_id: data.id, user_id: user.id, role: 'admin' })
       await supabase.from('group_agents').insert({ group_id: data.id, enabled: true })
-      await supabase.from('messages').insert({ group_id: data.id, type: 'system', content: `"${data.name}" created ${isPrivate ? '🔒' : '🌐'}` })
+      await supabase.from('messages').insert({ group_id: data.id, type: 'system', content: `"${data.name}" created ${isPrivate ? 'נ”’' : 'נ'}` })
 
       setCreatedGroupId(data.id)
       setCreatedGroupName(data.name)
@@ -226,7 +227,7 @@ export default function CreateScreen() {
           <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
             <Text style={s.label}>NAME</Text>
             <TouchableOpacity onPress={askTeebySuggest} disabled={teebyLoading} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              {teebyLoading ? <ActivityIndicator size="small" color={PRIMARY} /> : <Text style={{ fontSize: 13, color: PRIMARY, fontWeight: '600' }}>✦ Teeby suggest</Text>}
+              {teebyLoading ? <ActivityIndicator size="small" color={PRIMARY} /> : <Text style={{ fontSize: 13, color: PRIMARY, fontWeight: '600' }}>ג¦ Teeby suggest</Text>}
             </TouchableOpacity>
           </View>
           <TextInput style={s.input} value={name} onChangeText={setName} placeholder="What's the vibe?" placeholderTextColor="#B4B2A9" maxLength={60} />
@@ -237,26 +238,26 @@ export default function CreateScreen() {
           <Text style={s.label}>PRIVACY</Text>
           <View style={s.privacyRow}>
             <TouchableOpacity style={[s.privacyBtn, !isPrivate && s.privacyBtnActive]} onPress={() => setIsPrivate(false)}>
-              <Text style={s.privacyEmoji}>🌐</Text>
+              <Text style={s.privacyEmoji}>נ</Text>
               <Text style={[s.privacyBtnText, !isPrivate && { color: TEAL }]}>Public</Text>
               <Text style={s.privacyDesc}>Anyone can join</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[s.privacyBtn, isPrivate && s.privacyBtnPrivate]} onPress={() => setIsPrivate(true)}>
-              <Text style={s.privacyEmoji}>🔒</Text>
+              <Text style={s.privacyEmoji}>נ”’</Text>
               <Text style={[s.privacyBtnText, isPrivate && { color: PRIMARY }]}>Private</Text>
               <Text style={s.privacyDesc}>Invite only</Text>
             </TouchableOpacity>
           </View>
 
           <View style={s.infoBox}>
-            <Text style={s.infoText}>⚡ Your Trybe opens immediately — invite people from Radar or your contacts</Text>
+            <Text style={s.infoText}>ג¡ Your Trybe opens immediately ג€” invite people from Radar or your contacts</Text>
           </View>
 
           <TouchableOpacity
             style={[s.submitBtn, (loading || locLoading) && s.submitBtnDisabled]}
             onPress={handleCreate} disabled={loading || locLoading}
           >
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>⚡ Drop the Trybe</Text>}
+            {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}>ג¡ Drop the Trybe</Text>}
           </TouchableOpacity>
           <View style={{ height: 60 }} />
         </ScrollView>
@@ -266,17 +267,17 @@ export default function CreateScreen() {
       <Modal visible={showInvite} animationType="slide" onRequestClose={() => setShowInvite(false)}>
         <View style={[s.inviteContainer, { paddingTop: insets.top }]}>
           <View style={s.inviteHeader}>
-            <Text style={s.inviteTitle}>🎉 Trybe Created!</Text>
+            <Text style={s.inviteTitle}>נ‰ Trybe Created!</Text>
             <Text style={s.inviteSub}>Invite people to join</Text>
           </View>
 
           {/* Tabs */}
           <View style={s.inviteTabs}>
             <TouchableOpacity style={[s.inviteTab, inviteTab === 'radar' && s.inviteTabActive]} onPress={() => { setInviteTab('radar'); loadNearbyUsers(radius) }}>
-              <Text style={[s.inviteTabText, inviteTab === 'radar' && s.inviteTabTextActive]}>📡 Radar Nearby</Text>
+              <Text style={[s.inviteTabText, inviteTab === 'radar' && s.inviteTabTextActive]}>נ“¡ Radar Nearby</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[s.inviteTab, inviteTab === 'contacts' && s.inviteTabActive]} onPress={() => { setInviteTab('contacts'); loadContacts() }}>
-              <Text style={[s.inviteTabText, inviteTab === 'contacts' && s.inviteTabTextActive]}>👥 Contacts</Text>
+              <Text style={[s.inviteTabText, inviteTab === 'contacts' && s.inviteTabTextActive]}>נ‘¥ Contacts</Text>
             </TouchableOpacity>
           </View>
 
@@ -295,7 +296,7 @@ export default function CreateScreen() {
               {/* Nearby users map placeholder */}
               {coords && (
                 <View style={s.radarPreview}>
-                  <Text style={s.radarPreviewText}>📡 Showing users within {radius < 1000 ? `${radius}m` : `${radius/1000}km`}</Text>
+                  <Text style={s.radarPreviewText}>נ“¡ Showing users within {radius < 1000 ? `${radius}m` : `${radius/1000}km`}</Text>
                   <Text style={s.radarPreviewSub}>{nearbyUsers.length} people found nearby</Text>
                 </View>
               )}
@@ -305,18 +306,18 @@ export default function CreateScreen() {
                 data={nearbyUsers}
                 keyExtractor={u => u.id}
                 style={{ maxHeight: 160 }}
-                ListEmptyComponent={<Text style={s.emptyNearby}>No one nearby — try increasing the radius</Text>}
+                ListEmptyComponent={<Text style={s.emptyNearby}>No one nearby ג€” try increasing the radius</Text>}
                 renderItem={({ item }) => (
                   <TouchableOpacity style={s.nearbyRow} onPress={() => toggleSelect(item.id)}>
                     <View style={[s.nearbyAvatar, item.is_agent && { borderColor: PRIMARY, borderWidth: 2 }]}>
-                      <Text style={{ fontSize: 20 }}>{item.avatar_char || '👤'}</Text>
+                      <Text style={{ fontSize: 20 }}>{item.avatar_char || 'נ‘₪'}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
-                      <Text style={s.nearbyName}>{item.identity_mode === 'ghost' ? '👻 Anonymous' : (item.display_name || item.username)}</Text>
-                      <Text style={s.nearbyDist}>{item.distance_m < 1000 ? `${Math.round(item.distance_m)}m` : `${(item.distance_m/1000).toFixed(1)}km`} away{item.is_agent ? ' · AI Agent' : ''}</Text>
+                      <Text style={s.nearbyName}>{item.identity_mode === 'ghost' ? 'נ‘» Anonymous' : (item.display_name || item.username)}</Text>
+                      <Text style={s.nearbyDist}>{item.distance_m < 1000 ? `${Math.round(item.distance_m)}m` : `${(item.distance_m/1000).toFixed(1)}km`} away{item.is_agent ? ' ֲ· AI Agent' : ''}</Text>
                     </View>
                     <View style={[s.checkbox, selectedIds.has(item.id) && s.checkboxSelected]}>
-                      {selectedIds.has(item.id) && <Text style={{ color: '#fff', fontSize: 12 }}>✓</Text>}
+                      {selectedIds.has(item.id) && <Text style={{ color: '#fff', fontSize: 12 }}>ג“</Text>}
                     </View>
                   </TouchableOpacity>
                 )}
@@ -329,7 +330,7 @@ export default function CreateScreen() {
               </View>
               {contacts.length === 0 ? (
                 <TouchableOpacity style={s.loadContactsBtn} onPress={loadContacts}>
-                  <Text style={s.loadContactsBtnText}>📱 Load Contacts</Text>
+                  <Text style={s.loadContactsBtnText}>נ“± Load Contacts</Text>
                 </TouchableOpacity>
               ) : (
                 <FlatList
@@ -342,7 +343,7 @@ export default function CreateScreen() {
                       </View>
                       <Text style={[s.nearbyName, { flex: 1 }]}>{item.name}</Text>
                       <View style={[s.checkbox, selectedIds.has(item.id) && s.checkboxSelected]}>
-                        {selectedIds.has(item.id) && <Text style={{ color: '#fff', fontSize: 12 }}>✓</Text>}
+                        {selectedIds.has(item.id) && <Text style={{ color: '#fff', fontSize: 12 }}>ג“</Text>}
                       </View>
                     </TouchableOpacity>
                   )}
@@ -356,7 +357,7 @@ export default function CreateScreen() {
               <Text style={s.skipBtnText}>Skip</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[s.inviteSendBtn, selectedIds.size === 0 && { opacity: 0.6 }]} onPress={inviteAndOpen}>
-              <Text style={s.inviteSendText}>{selectedIds.size > 0 ? `Add ${selectedIds.size} & Open →` : 'Open Group →'}</Text>
+              <Text style={s.inviteSendText}>{selectedIds.size > 0 ? `Add ${selectedIds.size} & Open ג†’` : 'Open Group ג†’'}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -424,3 +425,4 @@ const s = StyleSheet.create({
   inviteSendBtn: { flex: 1, backgroundColor: TEAL, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
   inviteSendText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 })
+
