@@ -36,7 +36,6 @@ async function loadContactsInBackground(userId) {
   } catch {}
 }
 import type { Session } from '@supabase/supabase-js'
-import { loadCustomNamesFromDB } from '../lib/contactNames'
 
 async function checkTeebyProactive(userId: string) {
   try {
@@ -82,7 +81,6 @@ export default function RootLayout() {
         checkTeebyProactive(session.user.id)
         loadCustomNamesFromDB(session.user.id)
         loadContactsInBackground(session.user.id)
-        loadCustomNamesFromDB(session.user.id)
       }
     })
 
@@ -127,6 +125,9 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   )
 }
+
+
+
 
 
 
