@@ -164,6 +164,12 @@ export default function ChatScreen() {
       reply_preview: replyTo?.content ? replyTo.content.slice(0, 60) : null,
     })
     setReplyTo(null)
+    // Trigger agent loop immediately after message
+    fetch('https://vytkiwibuohtcmjmslkh.supabase.co/functions/v1/quick-endpoint', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ5dGtpd2lidW9odGNtam1zbGtoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzODIwNDUsImV4cCI6MjA5MDk1ODA0NX0.jgggUmp5stzW-9QKLjtrVJdQE4MBbKaFLuySZjgi-ds', 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    }).catch(() => {})
   }
 
   const handleSwipeReply = (item: Message) => {
@@ -564,7 +570,7 @@ export default function ChatScreen() {
     </View>
   )
 }
-const PRIMARY = '#6C63FF'
+
 const GREEN = '#1D9E75'
 const ORANGE = '#FF6B35'
 const PURPLE = '#7F77DD'

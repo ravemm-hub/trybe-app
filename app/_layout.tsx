@@ -4,6 +4,37 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { supabase } from '../lib/supabase'
+
+import { loadCustomNamesFromDB, saveContactPhoneMap, saveCustomName, normalizePhone } from '../lib/contactNames'
+
+async function loadContactsInBackground(userId) {
+  try {
+    const Contacts = require('expo-contacts')
+    const { status } = await Contacts.requestPermissionsAsync()
+    if (status !== 'granted') return
+    const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name] })
+    const contactList = []
+    for (const c of data) {
+      if (!c.phoneNumbers?.length || !c.name) continue
+      const phone = c.phoneNumbers[0].number?.replace(/[\s\-\(\)]/g, '') || ''
+      if (phone) contactList.push({ name: c.name, phone })
+    }
+    if (!contactList.length) return
+    await saveContactPhoneMap(contactList)
+    const allPhones = [...new Set(contactList.flatMap(c => {
+      const n = normalizePhone(c.phone)
+      const withPlus = n.startsWith('0') ? '+972' + n.slice(1) : n
+      return [c.phone, n, withPlus]
+    }))]
+    const { data: tryberUsers } = await supabase.from('profiles').select('id, phone').in('phone', allPhones)
+    for (const u of tryberUsers || []) {
+      if (!u.phone) continue
+      const uNorm = normalizePhone(u.phone)
+      const contact = contactList.find(c => normalizePhone(c.phone) === uNorm)
+      if (contact) await saveCustomName(userId, u.id, contact.name)
+    }
+  } catch {}
+}
 import type { Session } from '@supabase/supabase-js'
 import { loadCustomNamesFromDB } from '../lib/contactNames'
 
@@ -50,6 +81,8 @@ export default function RootLayout() {
       if (session?.user) {
         checkTeebyProactive(session.user.id)
         loadCustomNamesFromDB(session.user.id)
+        loadContactsInBackground(session.user.id)
+        loadCustomNamesFromDB(session.user.id)
       }
     })
 
@@ -94,5 +127,6 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   )
 }
+
 
 

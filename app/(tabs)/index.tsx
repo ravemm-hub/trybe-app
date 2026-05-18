@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   StatusBar, Pressable, RefreshControl, ActivityIndicator,
@@ -8,9 +8,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Contacts from 'expo-contacts'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../lib/supabase'
-import { saveContactPhoneMap, saveCustomName } from '../../lib/contactNames'
+import { saveContactPhoneMap, saveCustomName, getCustomName } from '../../lib/contactNames'
 
-const INVITE_MSG = `Hey! Join me on Tryber 🚀\nDownload: https://ravemm-hub.github.io/trybe-app`
+const INVITE_MSG = `Hey! Join me on Tryber נ€\nDownload: https://ravemm-hub.github.io/trybe-app`
 const PRIMARY = '#6C63FF'
 const BG = '#F8F7FF'
 const CARD = '#FFFFFF'
@@ -41,6 +41,7 @@ export default function ChatsScreen() {
   const [contactsLoading, setContactsLoading] = useState(false)
   const [contactsLoaded, setContactsLoaded] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
+  const [contactNames, setContactNames] = useState<Record<string,string>>({})
   const [userId, setUserId] = useState<string | null>(null)
 
   const loadAll = useCallback(async () => {
@@ -59,7 +60,7 @@ export default function ChatsScreen() {
           const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('group_id', g.id).neq('user_id', user.id).neq('type', 'system').gt('created_at', m.last_read_at)
           unread = count || 0
         }
-        groupItems.push({ id: g.id, type: 'group', name: g.name, avatar: g.is_private ? '🔒' : '⚡', last_message: msgs?.[0]?.content || null, last_message_at: msgs?.[0]?.created_at || g.created_at, unread, status: g.status, member_count: g.member_count, min_members: g.min_members, is_private: g.is_private })
+        groupItems.push({ id: g.id, type: 'group', name: g.name, avatar: g.is_private ? 'נ”’' : 'ג¡', last_message: msgs?.[0]?.content || null, last_message_at: msgs?.[0]?.created_at || g.created_at, unread, status: g.status, member_count: g.member_count, min_members: g.min_members, is_private: g.is_private })
       }
       groupItems.sort((a, b) => new Date(b.last_message_at || '').getTime() - new Date(a.last_message_at || '').getTime())
       setGroups(groupItems)
@@ -77,6 +78,12 @@ export default function ChatsScreen() {
         dmItems.push({ id: `dm_${otherId}`, type: 'dm', name, avatar: p?.avatar_char || name[0] || '?', last_message: lastDm.content, last_message_at: lastDm.created_at, unread: 0, other_user_id: otherId })
       }
       setDms(dmItems)
+      // Load contact names for all DM users
+      const names: Record<string,string> = {}
+      for (const dm of dmItems) {
+        try { const cn = await getCustomName(dm.other_user_id); if (cn) names[dm.other_user_id] = cn } catch {}
+      }
+      setContactNames(names)
     } catch (err: any) { console.error(err.message) }
     finally { setLoading(false); setRefreshing(false) }
   }, [])
@@ -127,7 +134,7 @@ export default function ChatsScreen() {
           if (raw.startsWith('00972')) normalized = '0' + raw.slice(5)
           const withPrefix = normalized.startsWith('0') ? '+972' + normalized.slice(1) : normalized
           const t = tryberMap.get(c.phone) || tryberMap.get(normalized) || tryberMap.get(withPrefix)
-          // Save userId→contactName mapping for DM screen
+          // Save userIdג†’contactName mapping for DM screen
           if (t?.id && c.name) {
             saveCustomName(user.id, t.id, c.name).catch(() => {})
           }
@@ -171,7 +178,7 @@ export default function ChatsScreen() {
     const hasUnread = item.unread > 0
     const isOpen = item.status === 'open'
     return (
-      <Pressable style={s.row} onPress={() => { markGroupRead(item.id); if (isOpen) router.push({ pathname: '/chat', params: { id: item.id, name: item.name, members: item.member_count?.toString() || '0' } }); else router.push({ pathname: '/lobby', params: { id: item.id, name: item.name } }) }} onLongPress={() => Alert.alert(item.name, '', [{ text: '🚪 Leave', style: 'destructive', onPress: async () => { await supabase.from('group_members').delete().eq('group_id', item.id).eq('user_id', userId); setGroups(prev => prev.filter(g => g.id !== item.id)) } }, { text: 'Cancel', style: 'cancel' }])}>
+      <Pressable style={s.row} onPress={() => { markGroupRead(item.id); if (isOpen) router.push({ pathname: '/chat', params: { id: item.id, name: item.name, members: item.member_count?.toString() || '0' } }); else router.push({ pathname: '/lobby', params: { id: item.id, name: item.name } }) }} onLongPress={() => Alert.alert(item.name, '', [{ text: 'נ× Leave', style: 'destructive', onPress: async () => { await supabase.from('group_members').delete().eq('group_id', item.id).eq('user_id', userId); setGroups(prev => prev.filter(g => g.id !== item.id)) } }, { text: 'Cancel', style: 'cancel' }])}>
         <View style={[s.avatarWrap, isOpen && s.avatarWrapLive]}>
           <Text style={s.avatarText}>{item.avatar}</Text>
           {isOpen && <View style={s.liveDot} />}
@@ -182,7 +189,7 @@ export default function ChatsScreen() {
             {item.last_message_at && <Text style={[s.rowTime, hasUnread && { color: PRIMARY }]}>{formatTime(item.last_message_at)}</Text>}
           </View>
           <View style={s.rowBottom}>
-            <Text style={[s.rowLastMsg, hasUnread && s.rowLastMsgBold]} numberOfLines={1}>{item.last_message || (isOpen ? '🟢 Live now' : `⏳ Lobby`)}</Text>
+            <Text style={[s.rowLastMsg, hasUnread && s.rowLastMsgBold]} numberOfLines={1}>{item.last_message || (isOpen ? 'נ¢ Live now' : `ג³ Lobby`)}</Text>
             {hasUnread && (
               <View style={s.unreadBadge}>
                 <Text style={s.unreadBadgeText}>{item.unread > 99 ? '99+' : item.unread}</Text>
@@ -213,10 +220,10 @@ export default function ChatsScreen() {
 
       <View style={s.tabRow}>
         <TouchableOpacity style={[s.tabBtn, activeTab === 'trybes' && s.tabBtnActive]} onPress={() => setActiveTab('trybes')}>
-          <Text style={[s.tabBtnText, activeTab === 'trybes' && s.tabBtnTextActive]}>⚡ Trybes {groups.length > 0 ? `(${groups.length})` : ''}</Text>
+          <Text style={[s.tabBtnText, activeTab === 'trybes' && s.tabBtnTextActive]}>ג¡ Trybes {groups.length > 0 ? `(${groups.length})` : ''}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[s.tabBtn, activeTab === 'chats' && s.tabBtnActive]} onPress={() => setActiveTab('chats')}>
-          <Text style={[s.tabBtnText, activeTab === 'chats' && s.tabBtnTextActive]}>💬 Chats {dms.length > 0 ? `(${dms.length})` : ''}</Text>
+          <Text style={[s.tabBtnText, activeTab === 'chats' && s.tabBtnTextActive]}>נ’¬ Chats {dms.length > 0 ? `(${dms.length})` : ''}</Text>
         </TouchableOpacity>
       </View>
 
@@ -230,11 +237,11 @@ export default function ChatsScreen() {
           contentContainerStyle={groups.length === 0 ? s.listEmpty : { paddingVertical: 8 }}
           ListEmptyComponent={
             <View style={s.emptyState}>
-              <Text style={s.emptyEmoji}>⚡</Text>
+              <Text style={s.emptyEmoji}>ג¡</Text>
               <Text style={s.emptyTitle}>No trybes yet</Text>
               <Text style={s.emptySub}>Join groups on Explore or create your own</Text>
               <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/(tabs)/explore')}>
-                <Text style={s.emptyBtnText}>📡 Explore Trybes</Text>
+                <Text style={s.emptyBtnText}>נ“¡ Explore Trybes</Text>
               </TouchableOpacity>
             </View>
           }
@@ -258,19 +265,21 @@ export default function ChatsScreen() {
               return (
                 <Pressable style={s.row} onPress={async () => {
                   let displayName = d.name
+                  try { const { getCustomName } = require('../../lib/contactNames'); const cn = await getCustomName(d.other_user_id); if (cn) displayName = cn } catch {}
+                  let displayName = d.name
                   try {
                     const { getCustomName } = require('../../lib/contactNames')
                     const contactName = await getCustomName(d.other_user_id)
                     if (contactName) displayName = contactName
                   } catch {}
-                  router.push({ pathname: '/dm', params: { userId: d.other_user_id, userName: displayName, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })
+                  router.push({ pathname: '/dm', params: { userId: d.other_user_id, userName: displayName, myMode: 'lit', myAvatar: 'נ’¬', isAgent: '0' } })
                 }}>
                   <View style={s.avatarWrap}>
                     <Text style={s.avatarText}>{d.avatar}</Text>
                   </View>
                   <View style={s.rowInfo}>
                     <View style={s.rowTop}>
-                      <Text style={s.rowName} numberOfLines={1}>{d.name}</Text>
+                      <Text style={s.rowName} numberOfLines={1}>{contactNames[d.other_user_id] || d.name}</Text>
                       {d.last_message_at && <Text style={s.rowTime}>{formatTime(d.last_message_at)}</Text>}
                     </View>
                     <Text style={s.rowLastMsg} numberOfLines={1}>{d.last_message || 'Start chatting'}</Text>
@@ -278,7 +287,7 @@ export default function ChatsScreen() {
                 </Pressable>
               )
             }
-            if (item.type === 'divider') return <View style={s.sectionDivider}><Text style={s.sectionDividerText}>{contactsLoading ? 'Loading contacts...' : `Contacts · ${contacts.filter(c => c.onTryber).length} on Tryber`}</Text></View>
+            if (item.type === 'divider') return <View style={s.sectionDivider}><Text style={s.sectionDividerText}>{contactsLoading ? 'Loading contacts...' : `Contacts ֲ· ${contacts.filter(c => c.onTryber).length} on Tryber`}</Text></View>
             if (item.type === 'search') return <View style={s.searchRow}><TextInput style={s.searchInput} value={contactSearch} onChangeText={setContactSearch} placeholder="Search contacts..." placeholderTextColor="#B4B2A9" /></View>
             if (item.type === 'contact') {
               const c = item.data
@@ -290,14 +299,14 @@ export default function ChatsScreen() {
                   </View>
                   <View style={s.rowInfo}>
                     <Text style={s.rowName}>{c.name}</Text>
-                    <Text style={[s.rowLastMsg, c.onTryber && { color: PRIMARY }]}>{c.onTryber ? '✦ On Tryber' : c.phone}</Text>
+                    <Text style={[s.rowLastMsg, c.onTryber && { color: PRIMARY }]}>{c.onTryber ? 'ג¦ On Tryber' : c.phone}</Text>
                   </View>
                   {c.onTryber ? (
-                    <TouchableOpacity style={s.contactBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: c.tryberUserId, userName: c.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
+                    <TouchableOpacity style={s.contactBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: c.tryberUserId, userName: c.name, myMode: 'lit', myAvatar: 'נ’¬', isAgent: '0' } })}>
                       <Text style={s.contactBtnText}>Message</Text>
                     </TouchableOpacity>
                   ) : (
-                    <TouchableOpacity style={[s.contactBtn, s.contactBtnInvite]} onPress={() => Alert.alert(`Invite ${c.name}`, '', [{ text: '💚 WhatsApp', onPress: () => Linking.openURL(`whatsapp://send?phone=${c.phone}&text=${encodeURIComponent(INVITE_MSG)}`) }, { text: 'Cancel', style: 'cancel' }])}>
+                    <TouchableOpacity style={[s.contactBtn, s.contactBtnInvite]} onPress={() => Alert.alert(`Invite ${c.name}`, '', [{ text: 'נ’ WhatsApp', onPress: () => Linking.openURL(`whatsapp://send?phone=${c.phone}&text=${encodeURIComponent(INVITE_MSG)}`) }, { text: 'Cancel', style: 'cancel' }])}>
                       <Text style={[s.contactBtnText, { color: GRAY }]}>Invite</Text>
                     </TouchableOpacity>
                   )}
@@ -362,3 +371,7 @@ const s = StyleSheet.create({
   contactBtnInvite: { backgroundColor: 'rgba(108,99,255,0.06)', borderWidth: 1, borderColor: 'rgba(108,99,255,0.12)' },
   contactBtnText: { fontSize: 13, color: '#fff', fontWeight: '600' },
 })
+
+
+
+
