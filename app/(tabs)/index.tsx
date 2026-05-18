@@ -266,12 +266,7 @@ export default function ChatsScreen() {
                 <Pressable style={s.row} onPress={async () => {
                   let displayName = d.name
                   try { const { getCustomName } = require('../../lib/contactNames'); const cn = await getCustomName(d.other_user_id); if (cn) displayName = cn } catch {}
-                  let displayName = d.name
-                  try {
-                    const { getCustomName } = require('../../lib/contactNames')
-                    const contactName = await getCustomName(d.other_user_id)
-                    if (contactName) displayName = contactName
-                  } catch {}
+                  
                   router.push({ pathname: '/dm', params: { userId: d.other_user_id, userName: displayName, myMode: 'lit', myAvatar: 'נ’¬', isAgent: '0' } })
                 }}>
                   <View style={s.avatarWrap}>
@@ -371,6 +366,7 @@ const s = StyleSheet.create({
   contactBtnInvite: { backgroundColor: 'rgba(108,99,255,0.06)', borderWidth: 1, borderColor: 'rgba(108,99,255,0.12)' },
   contactBtnText: { fontSize: 13, color: '#fff', fontWeight: '600' },
 })
+
 
 
 
