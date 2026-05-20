@@ -133,7 +133,7 @@ export default function AgentScreen() {
       const history = messages.slice(-6).map(m => ({ role: m.role, content: m.content }))
 
       // Check if need web search
-      const needsSearch = /חפש|search|מה זה|what is|מתי|when|איפה|where|חדשות|news|מחיר|price/i.test(userMsg)
+      const needsSearch = /חפש|search|what is|when|where|news|price|מה זה|מתי|איפה|חדשות|מחיר|найти|поиск|chercher|buscar|بحث/i.test(userMsg)
       let searchResult = ''
       if (needsSearch) {
         searchResult = await webSearch(userMsg)
@@ -151,7 +151,8 @@ ${searchResult ? `- Web search results: ${searchResult}` : ''}
 
 YOUR PERSONALITY:
 - You are warm, proactive, witty and genuinely helpful
-- You speak Hebrew when user speaks Hebrew, English when English
+- Always respond in the SAME language the user writes in (Hebrew, English, Arabic, Russian, French, Spanish, or any other language)
+- Never switch language unless the user asks you to
 - You are like a smart friend who knows the local area well
 
 YOUR CAPABILITIES:

@@ -4,6 +4,7 @@ import {
   SafeAreaView, StatusBar, ActivityIndicator,
 } from 'react-native'
 import { useRouter } from 'expo-router'
+import { getCustomName } from '../../lib/contactNames'
 import { supabase } from '../../lib/supabase'
 
 type DM = {
@@ -23,6 +24,7 @@ export default function ChatsScreen() {
   const [dms, setDms] = useState<DM[]>([])
   const [loading, setLoading] = useState(true)
   const [myId, setMyId] = useState<string | null>(null)
+  const [contactNames, setContactNames] = useState<Record<string,string>>({})
 
   const loadDMs = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -68,6 +70,12 @@ export default function ChatsScreen() {
     }
 
     setDms(conversations)
+    // Load contact names
+    const names: Record<string,string> = {}
+    for (const conv of conversations) {
+      try { const cn = await getCustomName(conv.user_id); if (cn) names[conv.user_id] = cn } catch {}
+    }
+    setContactNames(names)
     setLoading(false)
   }, [])
 
@@ -116,7 +124,7 @@ export default function ChatsScreen() {
                 pathname: '/dm',
                 params: {
                   userId: item.user_id,
-                  userName: item.their_mode === 'ghost' ? (item.avatar_char || '👻') : (item.display_name || item.username),
+                  userName: item.their_mode === 'ghost' ? (item.avatar_char || '👻') : (contactNames[item.user_id] || item.display_name || item.username),
                   myMode: item.my_mode,
                   myAvatar: '🦊',
                 }
@@ -130,7 +138,7 @@ export default function ChatsScreen() {
               <View style={s.dmInfo}>
                 <View style={s.dmTop}>
                   <Text style={s.dmName}>
-                    {item.their_mode === 'ghost' ? 'Ghost' : (item.display_name || item.username)}
+                    {item.their_mode === 'ghost' ? 'Ghost' : (contactNames[item.user_id] || item.display_name || item.username)}
                   </Text>
                   {item.last_time && <Text style={s.dmTime}>{formatTime(item.last_time)}</Text>}
                 </View>

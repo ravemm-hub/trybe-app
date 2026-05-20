@@ -59,17 +59,35 @@ export default function ContactsScreen() {
         contactList.push({ id: c.id || phone, name: c.name, phone, initials, onTryber: false })
       }
 
-      // Check who's on Tryber by phone
-      const phones = contactList.map(c => c.phone)
+      // Check who's on Tryber by phone - with normalization
+      const normalizeP = (p: string) => {
+        p = p.replace(/[\s\-\(\)\.]/g, '')
+        if (p.startsWith('00972')) p = '0' + p.slice(5)
+        if (p.startsWith('+972')) p = '0' + p.slice(4)
+        if (p.startsWith('972') && p.length >= 12) p = '0' + p.slice(3)
+        return p
+      }
+      const allPhones = [...new Set(contactList.flatMap(c => {
+        const n = normalizeP(c.phone)
+        return [c.phone, n, '+972' + n.slice(1), '972' + n.slice(1)]
+      }))]
       const { data: tryberUsers } = await supabase
         .from('profiles')
         .select('id, username, display_name, phone')
-        .in('phone', phones)
+        .in('phone', allPhones)
 
-      const tryberMap = new Map((tryberUsers || []).map((u: any) => [u.phone, u]))
+      const tryberMap = new Map()
+      for (const u of tryberUsers || []) {
+        if (!u.phone) continue
+        const n = normalizeP(u.phone)
+        tryberMap.set(u.phone, u)
+        tryberMap.set(n, u)
+        tryberMap.set('+972' + n.slice(1), u)
+      }
 
       const enriched = contactList.map(c => {
-        const tryberUser = tryberMap.get(c.phone)
+        const n = normalizeP(c.phone)
+        const tryberUser = tryberMap.get(c.phone) || tryberMap.get(n) || tryberMap.get('+972' + n.slice(1))
         return {
           ...c,
           onTryber: !!tryberUser,

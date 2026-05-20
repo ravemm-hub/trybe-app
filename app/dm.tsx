@@ -45,6 +45,25 @@ export default function DMScreen() {
   const [myId, setMyId] = useState<string | null>(null)
   const [otherProfile, setOtherProfile] = useState<any>(null)
   const [agentTyping, setAgentTyping] = useState(false)
+  const [translateTo, setTranslateTo] = useState<string | null>(null)
+  const [showTranslateMenu, setShowTranslateMenu] = useState(false)
+
+  const LANGUAGES = ['English', 'Hebrew', 'Arabic', 'Russian', 'French', 'Spanish', 'German']
+
+  const translateMessage = async (text: string, targetLang: string): Promise<string> => {
+    try {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'x-api-key': process.env.EXPO_PUBLIC_ANTHROPIC_KEY || '', 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-haiku-4-5-20251001', max_tokens: 200,
+          messages: [{ role: 'user', content: `Translate to ${targetLang}. Return ONLY the translation, nothing else: "${text}"` }],
+        }),
+      })
+      const data = await res.json()
+      return data.content?.[0]?.text?.trim() || text
+    } catch { return text }
+  }
   const listRef = useRef<FlatList>(null)
   const talkingToAgent = isAgent === '1' || AGENT_IDS.includes(otherUserId || '')
 
@@ -205,8 +224,15 @@ export default function DMScreen() {
     }
     setMessages(prev => [...prev, tempMsg])
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
+    // Translate if user has translation enabled
+    let contentToSend = text
+    let translatedFrom = null
+    if (translateTo && !talkingToAgent) {
+      contentToSend = await translateMessage(text, translateTo)
+      translatedFrom = translateTo
+    }
     const { error } = await supabase.from('dm_messages').insert({
-      sender_id: myId, receiver_id: otherUserId, content: text,
+      sender_id: myId, receiver_id: otherUserId, content: contentToSend,
       sender_mode: myMode || 'lit', receiver_mode: 'lit',
     })
     if (error) setMessages(prev => prev.filter(m => m.id !== tempMsg.id))
@@ -215,23 +241,23 @@ export default function DMScreen() {
 
   const formatTime = (ts: string) => new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
 
-  // WhatsApp-style status: ג“ sent (temp), ג“ג“ gray (delivered), ג“ג“ blue (read)
+  // WhatsApp-style status: “ sent (temp), ““ gray (delivered), ““ blue (read)
   const getStatus = (msg: DmMessage) => {
-    if (msg.id.startsWith('temp_')) return { text: 'ג“', color: 'rgba(0,0,0,0.3)' }
-    if (msg.read_at) return { text: 'ג“ג“', color: TEAL }
-    return { text: 'ג“ג“', color: 'rgba(0,0,0,0.3)' }
+    if (msg.id.startsWith('temp_')) return { text: '“', color: 'rgba(0,0,0,0.3)' }
+    if (msg.read_at) return { text: '““', color: TEAL }
+    return { text: '““', color: 'rgba(0,0,0,0.3)' }
   }
 
   // userName is contact name (from contacts list) - prefer it over app display name
   const displayName = talkingToAgent ? userName : (userName || otherProfile?._contactName || otherProfile?.display_name || otherProfile?.username || 'Unknown')
-  const avatarChar = talkingToAgent ? 'ג¦' : (otherProfile?.avatar_char || displayName?.[0] || '?')
+  const avatarChar = talkingToAgent ? '' : (otherProfile?.avatar_char || displayName?.[0] || '?')
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" backgroundColor="#fff" />
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <Text style={s.backText}>ג€¹</Text>
+          <Text style={s.backText}>‹</Text>
         </TouchableOpacity>
         <View style={[s.headerAvatar, talkingToAgent && s.headerAvatarAgent]}>
           <Text style={s.headerAvatarText}>{avatarChar}</Text>
@@ -257,7 +283,7 @@ export default function DMScreen() {
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
             ListEmptyComponent={
               <View style={s.center}>
-                <Text style={s.emptyEmoji}>{talkingToAgent ? 'ג¦' : 'נ‘‹'}</Text>
+                <Text style={s.emptyEmoji}>{talkingToAgent ? '' : '‘‹'}</Text>
                 <Text style={s.emptyTitle}>{talkingToAgent ? `Chat with ${displayName}` : `Say hi to ${displayName}!`}</Text>
                 <Text style={s.emptyText}>{talkingToAgent ? 'Your personal AI is ready' : 'Start the conversation'}</Text>
               </View>
@@ -290,7 +316,7 @@ export default function DMScreen() {
         {agentTyping && (
           <View style={s.typingRow}>
             <View style={[s.avatar, s.avatarAgent]}>
-              <Text style={s.avatarText}>ג¦</Text>
+              <Text style={s.avatarText}></Text>
             </View>
             <View style={[s.bubble, s.bubbleAgent, { paddingVertical: 12 }]}>
               <Text style={s.typingDots}>ֲ· ֲ· ֲ·</Text>
@@ -301,7 +327,7 @@ export default function DMScreen() {
         <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           {!talkingToAgent && (
             <TouchableOpacity style={s.listBtn} onPress={openSharedList}>
-              <Text style={{ fontSize: 18 }}>נ“‹</Text>
+              <Text style={{ fontSize: 18 }}>“‹</Text>
             </TouchableOpacity>
           )}
           <TextInput
@@ -314,7 +340,7 @@ export default function DMScreen() {
             maxLength={500}
           />
           <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={sendMessage} disabled={!draft.trim()}>
-            <Text style={s.sendIcon}>ג†‘</Text>
+            <Text style={s.sendIcon}>↗‘</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -323,14 +349,14 @@ export default function DMScreen() {
       <Modal visible={showList} animationType="slide" onRequestClose={() => setShowList(false)}>
         <View style={[s.container, { paddingTop: insets.top }]}>
           <View style={s.header}>
-            <TouchableOpacity onPress={() => setShowList(false)}><Text style={s.backText}>ג€¹</Text></TouchableOpacity>
-            <Text style={{ flex: 1, fontSize: 17, fontWeight: '700', color: TEXT }}>נ“‹ {sharedList?.title || 'Shopping List'}</Text>
+            <TouchableOpacity onPress={() => setShowList(false)}><Text style={s.backText}>‹</Text></TouchableOpacity>
+            <Text style={{ flex: 1, fontSize: 17, fontWeight: '700', color: TEXT }}>“‹ {sharedList?.title || 'Shopping List'}</Text>
           </View>
           <View style={{ flex: 1, padding: 16 }}>
             {sharedList?.items.map((item, idx) => (
               <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 0.5, borderColor: '#EBEBEB' }}>
                 <TouchableOpacity onPress={() => toggleListItem(idx)} style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 1.5, borderColor: item.done ? PRIMARY : '#EBEBEB', backgroundColor: item.done ? PRIMARY : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-                  {item.done && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>ג“</Text>}
+                  {item.done && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>“</Text>}
                 </TouchableOpacity>
                 <Text style={{ flex: 1, fontSize: 15, color: item.done ? GRAY : TEXT, textDecorationLine: item.done ? 'line-through' : 'none' }}>{item.text}</Text>
                 <TouchableOpacity onPress={() => deleteListItem(idx)}>
@@ -338,7 +364,7 @@ export default function DMScreen() {
                 </TouchableOpacity>
               </View>
             ))}
-            {(!sharedList?.items.length) && <View style={s.center}><Text style={{ fontSize: 40 }}>נ“‹</Text><Text style={{ color: GRAY, marginTop: 8 }}>List is empty ג€” add items below</Text></View>}
+            {(!sharedList?.items.length) && <View style={s.center}><Text style={{ fontSize: 40 }}>“‹</Text><Text style={{ color: GRAY, marginTop: 8 }}>List is empty €” add items below</Text></View>}
           </View>
           <View style={[{ flexDirection: 'row', gap: 8, padding: 16, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#EBEBEB' }, { paddingBottom: Math.max(insets.bottom, 16) }]}>
             <TextInput style={[s.input, { flex: 1 }]} value={newListItem} onChangeText={setNewListItem} placeholder="Add item..." placeholderTextColor="#B4B2A9" onSubmitEditing={addListItem} returnKeyType="done" />
@@ -390,6 +416,15 @@ const s = StyleSheet.create({
   statusText: { fontSize: 12, fontWeight: '600' },
   typingRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
   typingDots: { fontSize: 18, color: PRIMARY, letterSpacing: 4 },
+  translateBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#F0F0F8', alignItems: 'center', justifyContent: 'center', position: 'relative' },
+  translateActive: { position: 'absolute', top: -2, right: -2, width: 16, height: 16, borderRadius: 8, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
+  translateActiveText: { fontSize: 7, color: '#fff', fontWeight: '700' },
+  translateMenu: { position: 'absolute', bottom: 60, left: 12, right: 12, backgroundColor: '#fff', borderRadius: 16, padding: 12, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 12, elevation: 8, zIndex: 100, borderWidth: 1, borderColor: 'rgba(108,99,255,0.1)' },
+  translateMenuTitle: { fontSize: 12, color: GRAY, fontWeight: '600', marginBottom: 8 },
+  translateMenuBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginBottom: 4, backgroundColor: '#F8F7FF' },
+  translateMenuBtnActive: { backgroundColor: PRIMARY },
+  translateMenuBtnText: { fontSize: 14, color: TEXT, fontWeight: '500' },
+  translatedLabel: { fontSize: 10, color: 'rgba(255,255,255,0.6)', marginTop: 3 },
   listBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#F0F0F8', alignItems: 'center', justifyContent: 'center' },
   inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#EBEBEB' },
   input: { flex: 1, minHeight: 40, maxHeight: 100, backgroundColor: '#F0F0F8', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: TEXT },

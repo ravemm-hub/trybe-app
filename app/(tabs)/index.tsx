@@ -1,4 +1,4 @@
-﻿import { supabase } from '../../lib/supabase'
+import { supabase } from '../../lib/supabase'
 import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
@@ -8,7 +8,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Contacts from 'expo-contacts'
 import { useRouter } from 'expo-router'
-import { saveContactPhoneMap } from '../../lib/contactNames'
+import { saveContactPhoneMap, saveCustomName, getCustomName } from '../../lib/contactNames'
 
 
 const INVITE_MSG = `Hey! Join me on Tryber נ€\nDownload: https://ravemm-hub.github.io/trybe-app`
@@ -45,6 +45,7 @@ export default function ChatsScreen() {
   const [contactsLoaded, setContactsLoaded] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [userId, setUserId] = useState<string | null>(null)
+  const [contactNames, setContactNames] = useState<Record<string,string>>({})
 
   const loadAll = useCallback(async () => {
     try {
@@ -79,6 +80,12 @@ export default function ChatsScreen() {
         dmItems.push({ id: `dm_${otherId}`, type: 'dm', name, avatar: p?.avatar_char || name[0] || '?', last_message: lastDm.content, last_message_at: lastDm.created_at, unread: 0, other_user_id: otherId })
       }
       setDms(dmItems)
+      // Load contact names for DM list
+      const names: Record<string,string> = {}
+      for (const dm of dmItems) {
+        try { const cn = await getCustomName(dm.other_user_id); if (cn) names[dm.other_user_id] = cn } catch {}
+      }
+      setContactNames(names)
     } catch (err: any) { console.error(err.message) }
     finally { setLoading(false); setRefreshing(false) }
   }, [])
