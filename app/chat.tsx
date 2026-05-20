@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+﻿import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, ActivityIndicator,
@@ -125,7 +125,7 @@ export default function ChatScreen() {
     await supabase.from('user_group_teeby').upsert({ user_id: userId, group_id: id, enabled: myTeebyEnabled, instructions: myTeebyInstructions.trim() || null, auto_reply: myTeebyAutoReply }, { onConflict: 'user_id,group_id' })
     setSavingMyTeeby(false)
     setShowMyTeeby(false)
-    Alert.alert('✓ Saved', myTeebyEnabled ? 'Teeby is now active in this group!' : 'Teeby deactivated.')
+    Alert.alert('ג“ Saved', myTeebyEnabled ? 'Teeby is now active in this group!' : 'Teeby deactivated.')
   }
 
   const saveAgentSettings = async () => {
@@ -133,7 +133,7 @@ export default function ChatScreen() {
     await supabase.from('group_agents').upsert({ group_id: id, enabled: agentEnabled, instructions: agentInstructions.trim() || null }, { onConflict: 'group_id' })
     setSavingAgent(false)
     setShowAgentSettings(false)
-    Alert.alert('✓ Saved', 'Agent settings updated.')
+    Alert.alert('ג“ Saved', 'Agent settings updated.')
   }
 
   useEffect(() => {
@@ -181,7 +181,7 @@ export default function ChatScreen() {
     if (!userId) return
     const { error } = await supabase.from('message_reports').insert({ message_id: msg.id, reporter_id: userId, group_id: id, reason: 'inappropriate' })
     if (error?.code === '23505') Alert.alert('Already reported', 'You already reported this message.')
-    else Alert.alert('✓ Reported', 'Admins will review this.')
+    else Alert.alert('ג“ Reported', 'Admins will review this.')
     setShowMenu(false); setSelectedMsg(null)
   }
 
@@ -190,7 +190,7 @@ export default function ChatScreen() {
     await supabase.from('group_members').delete().eq('group_id', id).eq('user_id', targetUserId)
     setBlockedUsers(prev => [...prev, targetUserId])
     setShowMenu(false); setSelectedMsg(null)
-    Alert.alert('✓ Blocked', 'User removed from group.')
+    Alert.alert('ג“ Blocked', 'User removed from group.')
   }
 
   const deleteMessage = async (msg: Message) => {
@@ -230,8 +230,8 @@ export default function ChatScreen() {
 
   const showImageOptions = () => {
     Alert.alert('Add photo', '', [
-      { text: '📷 Camera', onPress: () => pickImage(true) },
-      { text: '🖼️ Gallery', onPress: () => pickImage(false) },
+      { text: 'נ“· Camera', onPress: () => pickImage(true) },
+      { text: 'נ–¼ן¸ Gallery', onPress: () => pickImage(false) },
       { text: 'Cancel', style: 'cancel' },
     ])
   }
@@ -243,7 +243,7 @@ export default function ChatScreen() {
   const renderSwipeAction = (item: Message, isMe: boolean) => {
     return (
       <View style={[s.swipeAction, isMe ? s.swipeActionMe : s.swipeActionThem]}>
-        <Text style={s.swipeActionText}>↩</Text>
+        <Text style={s.swipeActionText}>ג†©</Text>
       </View>
     )
   }
@@ -254,19 +254,19 @@ export default function ChatScreen() {
 
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <Text style={s.backText}>‹</Text>
+          <Text style={s.backText}>ג€¹</Text>
         </TouchableOpacity>
         <View style={s.headerInfo}>
           <Text style={s.headerName} numberOfLines={1}>{name}</Text>
-          <Text style={s.headerSub}>{memberCount} people · LIVE</Text>
+          <Text style={s.headerSub}>{memberCount} people ֲ· LIVE</Text>
         </View>
         {isAdmin && (
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity style={s.settingsBtn} onPress={() => setShowMyTeeby(true)}>
-              <Text style={s.settingsBtnText}>✦</Text>
+              <Text style={s.settingsBtnText}>ג¦</Text>
             </TouchableOpacity>
             <TouchableOpacity style={s.settingsBtn} onPress={() => setShowAgentSettings(true)}>
-              <Text style={s.settingsBtnText}>⚙️</Text>
+              <Text style={s.settingsBtnText}>ג™ן¸</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -277,7 +277,7 @@ export default function ChatScreen() {
         <View style={[s.agentModal, { paddingTop: insets.top }]}>
           <View style={s.agentModalHeader}>
             <TouchableOpacity onPress={() => setShowMyTeeby(false)}><Text style={s.agentModalCancel}>Cancel</Text></TouchableOpacity>
-            <Text style={s.agentModalTitle}>My Teeby ✦</Text>
+            <Text style={s.agentModalTitle}>My Teeby ג¦</Text>
             <TouchableOpacity onPress={saveMyTeeby} disabled={savingMyTeeby}>
               {savingMyTeeby ? <ActivityIndicator color={PRIMARY} /> : <Text style={s.agentModalSave}>Save</Text>}
             </TouchableOpacity>
@@ -305,10 +305,10 @@ export default function ChatScreen() {
             <TextInput style={s.agentInstructionsInput} value={myTeebyInstructions} onChangeText={setMyTeebyInstructions} placeholder="e.g. Reply in Hebrew, welcome newcomers, alert me about deals..." placeholderTextColor="#B4B2A9" multiline maxLength={500} />
             <Text style={s.agentPresetsLabel}>QUICK PRESETS</Text>
             {[
-              { label: '👋 Welcome mode', text: 'Welcome new members and introduce me to them. Be friendly.' },
-              { label: '🔔 Alert mode', text: 'Alert me about important messages or events. Summarize what I missed.' },
-              { label: '💬 Reply mode', text: 'Reply on my behalf when I am away. Keep my tone casual and friendly.' },
-              { label: '🤝 Network mode', text: 'Help me connect with people who share my interests.' },
+              { label: 'נ‘‹ Welcome mode', text: 'Welcome new members and introduce me to them. Be friendly.' },
+              { label: 'נ”” Alert mode', text: 'Alert me about important messages or events. Summarize what I missed.' },
+              { label: 'נ’¬ Reply mode', text: 'Reply on my behalf when I am away. Keep my tone casual and friendly.' },
+              { label: 'נ₪ Network mode', text: 'Help me connect with people who share my interests.' },
             ].map(preset => (
               <TouchableOpacity key={preset.label} style={s.presetBtn} onPress={() => setMyTeebyInstructions(preset.text)}>
                 <Text style={s.presetBtnText}>{preset.label}</Text>
@@ -322,7 +322,7 @@ export default function ChatScreen() {
         <View style={[s.agentModal, { paddingTop: insets.top }]}>
           <View style={s.agentModalHeader}>
             <TouchableOpacity onPress={() => setShowAgentSettings(false)}><Text style={s.agentModalCancel}>Cancel</Text></TouchableOpacity>
-            <Text style={s.agentModalTitle}>Group Agent ✦</Text>
+            <Text style={s.agentModalTitle}>Group Agent ג¦</Text>
             <TouchableOpacity onPress={saveAgentSettings} disabled={savingAgent}>
               {savingAgent ? <ActivityIndicator color={GREEN} /> : <Text style={s.agentModalSave}>Save</Text>}
             </TouchableOpacity>
@@ -341,10 +341,10 @@ export default function ChatScreen() {
             <TextInput style={s.agentInstructionsInput} value={agentInstructions} onChangeText={setAgentInstructions} placeholder="e.g. Speak only English, welcome new members..." placeholderTextColor="#B4B2A9" multiline maxLength={500} />
             <Text style={s.agentPresetsLabel}>QUICK PRESETS</Text>
             {[
-              { label: '🏘️ Neighborhood', text: 'Help neighbors with local info, businesses, and services. Keep a friendly tone.' },
-              { label: '🎵 Event/Party', text: 'Share schedule, answer logistics questions, keep the energy high!' },
-              { label: '🎓 Study Group', text: 'Help with questions, share reminders, keep discussions on topic.' },
-              { label: '💼 Work Team', text: 'Professional tone. Help with task coordination.' },
+              { label: 'נ˜ן¸ Neighborhood', text: 'Help neighbors with local info, businesses, and services. Keep a friendly tone.' },
+              { label: 'נµ Event/Party', text: 'Share schedule, answer logistics questions, keep the energy high!' },
+              { label: 'נ“ Study Group', text: 'Help with questions, share reminders, keep discussions on topic.' },
+              { label: 'נ’¼ Work Team', text: 'Professional tone. Help with task coordination.' },
             ].map(preset => (
               <TouchableOpacity key={preset.label} style={s.presetBtn} onPress={() => setAgentInstructions(preset.text)}>
                 <Text style={s.presetBtnText}>{preset.label}</Text>
@@ -358,7 +358,7 @@ export default function ChatScreen() {
         <Pressable style={s.menuOverlay} onPress={() => setShowMenu(false)}>
           <View style={[s.menu, { paddingBottom: insets.bottom + 16 }]}>
             <TouchableOpacity style={s.menuItem} onPress={() => { setReplyTo(selectedMsg!); setShowMenu(false); setSelectedMsg(null) }}>
-              <Text style={s.menuItemText}>↩ Reply</Text>
+              <Text style={s.menuItemText}>ג†© Reply</Text>
             </TouchableOpacity>
             {selectedMsg?.user_id !== userId && selectedMsg?.user_id && (
               <TouchableOpacity style={s.menuItem} onPress={() => {
@@ -370,27 +370,27 @@ export default function ChatScreen() {
                     userId: selectedMsg!.user_id!,
                     userName: selectedMsg!.profile?.display_name || selectedMsg!.profile?.username || 'User',
                     myMode: 'lit',
-                    myAvatar: '💬',
+                    myAvatar: 'נ’¬',
                     isAgent: AGENT_IDS.includes(selectedMsg!.user_id!) ? '1' : '0',
                   }
                 })
               }}>
-                <Text style={s.menuItemText}>💬 Send DM</Text>
+                <Text style={s.menuItemText}>נ’¬ Send DM</Text>
               </TouchableOpacity>
             )}
             {selectedMsg && canEdit(selectedMsg) && (
               <TouchableOpacity style={s.menuItem} onPress={() => startEdit(selectedMsg)}>
-                <Text style={s.menuItemText}>✏️ Edit</Text>
+                <Text style={s.menuItemText}>גן¸ Edit</Text>
               </TouchableOpacity>
             )}
             {selectedMsg?.user_id === userId && !selectedMsg?.deleted && (
               <TouchableOpacity style={s.menuItem} onPress={() => deleteMessage(selectedMsg)}>
-                <Text style={[s.menuItemText, { color: '#E24B4A' }]}>🗑️ Delete</Text>
+                <Text style={[s.menuItemText, { color: '#E24B4A' }]}>נ—‘ן¸ Delete</Text>
               </TouchableOpacity>
             )}
             {selectedMsg?.user_id !== userId && (
               <TouchableOpacity style={s.menuItem} onPress={() => reportMessage(selectedMsg!)}>
-                <Text style={[s.menuItemText, { color: '#FF6B35' }]}>🚩 Report</Text>
+                <Text style={[s.menuItemText, { color: '#FF6B35' }]}>נ© Report</Text>
               </TouchableOpacity>
             )}
             {isAdmin && selectedMsg?.user_id !== userId && selectedMsg?.user_id && !AGENT_IDS.includes(selectedMsg.user_id) && (
@@ -400,7 +400,7 @@ export default function ChatScreen() {
                   { text: 'Block', style: 'destructive', onPress: () => blockUser(selectedMsg.user_id!) }
                 ])
               }}>
-                <Text style={[s.menuItemText, { color: '#E24B4A' }]}>🚫 Block from group</Text>
+                <Text style={[s.menuItemText, { color: '#E24B4A' }]}>נ« Block from group</Text>
               </TouchableOpacity>
             )}
             <TouchableOpacity style={s.menuItem} onPress={() => setShowMenu(false)}>
@@ -420,21 +420,21 @@ export default function ChatScreen() {
             keyExtractor={m => m.id}
             contentContainerStyle={s.messageList}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-            ListEmptyComponent={<View style={s.center}><Text style={s.emptyText}>No messages yet — say hi! 👋</Text></View>}
+            ListEmptyComponent={<View style={s.center}><Text style={s.emptyText}>No messages yet ג€” say hi! נ‘‹</Text></View>}
             renderItem={({ item }) => {
               const isMe = item.user_id === userId
               const isSystem = item.type === 'system'
               const agent = isAgentMsg(item.user_id)
               const isGhost = item.sender_mode === 'ghost'
               const appName = item.profile?.display_name || item.profile?.username || 'Unknown'
-              const displayName = isGhost && !isMe ? '👻 Anonymous' : (contactNames[item.user_id || ''] || appName)
-              const avatarChar = isGhost && !isMe ? '👻' : (item.profile?.avatar_char || displayName[0] || '?')
+              const displayName = isGhost && !isMe ? 'נ‘» Anonymous' : (contactNames[item.user_id || ''] || appName)
+              const avatarChar = isGhost && !isMe ? 'נ‘»' : (item.profile?.avatar_char || displayName[0] || '?')
 
               if (isSystem) return <View style={s.systemMsg}><Text style={s.systemText}>{item.content}</Text></View>
 
               if (item.deleted) return (
                 <View style={[s.bubbleRow, isMe && s.bubbleRowMe]}>
-                  <View style={s.deletedMsg}><Text style={s.deletedText}>🚫 Message deleted</Text></View>
+                  <View style={s.deletedMsg}><Text style={s.deletedText}>נ« Message deleted</Text></View>
                 </View>
               )
 
@@ -466,7 +466,7 @@ export default function ChatScreen() {
                                 userId: item.user_id,
                                 userName: displayName,
                                 myMode: 'lit',
-                                myAvatar: '💬',
+                                myAvatar: 'נ’¬',
                                 isAgent: AGENT_IDS.includes(item.user_id) ? '1' : '0',
                               }
                             })
@@ -491,10 +491,10 @@ export default function ChatScreen() {
                           {isGhost && !agent && <View style={s.ghostBadge}><Text style={s.ghostBadgeText}>anon</Text></View>}
                         </TouchableOpacity>
                       )}
-                      {isMe && isGhost && <Text style={s.myGhostLabel}>👻 sent anonymously</Text>}
+                      {isMe && isGhost && <Text style={s.myGhostLabel}>נ‘» sent anonymously</Text>}
                       {item.reply_preview && (
                         <View style={[s.replyPreview, isMe && s.replyPreviewMe]}>
-                          <Text style={s.replyPreviewText} numberOfLines={1}>↩ {item.reply_preview}</Text>
+                          <Text style={s.replyPreviewText} numberOfLines={1}>ג†© {item.reply_preview}</Text>
                         </View>
                       )}
                       <View style={[s.bubble, isMe ? (isGhost ? s.bubbleMeGhost : s.bubbleMe) : agent ? s.bubbleAgent : s.bubbleThem]}>
@@ -505,7 +505,7 @@ export default function ChatScreen() {
                       </View>
                       <View style={[s.msgMeta, isMe && s.msgMetaMe]}>
                         <Text style={s.timeText}>{formatTime(item.created_at)}</Text>
-                        {item.edited && <Text style={s.editedTag}>· edited</Text>}
+                        {item.edited && <Text style={s.editedTag}>ֲ· edited</Text>}
                       </View>
                     </View>
                   </Pressable>
@@ -517,24 +517,24 @@ export default function ChatScreen() {
 
         {isReadOnly && (
           <View style={s.readOnlyBar}>
-            <Text style={s.readOnlyText}>👁️ Viewing only — join to participate</Text>
+            <Text style={s.readOnlyText}>נ‘ן¸ Viewing only ג€” join to participate</Text>
             <TouchableOpacity style={s.readOnlyJoinBtn} onPress={() => router.back()}>
-              <Text style={s.readOnlyJoinText}>← Back</Text>
+              <Text style={s.readOnlyJoinText}>ג† Back</Text>
             </TouchableOpacity>
           </View>
         )}
 
         {replyTo && (
           <View style={s.replyBar}>
-            <Text style={s.replyBarLabel}>↩ Replying to</Text>
+            <Text style={s.replyBarLabel}>ג†© Replying to</Text>
             <Text style={s.replyBarText} numberOfLines={1}>{replyTo.content}</Text>
-            <TouchableOpacity onPress={() => setReplyTo(null)}><Text style={s.replyBarClose}>✕</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setReplyTo(null)}><Text style={s.replyBarClose}>ג•</Text></TouchableOpacity>
           </View>
         )}
 
         {!isReadOnly && editingMsg ? (
           <View style={[s.editBar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-            <Text style={s.editBarLabel}>✏️ Editing</Text>
+            <Text style={s.editBarLabel}>גן¸ Editing</Text>
             <TextInput style={s.editInput} value={editDraft} onChangeText={setEditDraft} autoFocus multiline />
             <View style={s.editActions}>
               <TouchableOpacity onPress={() => setEditingMsg(null)} style={s.editCancel}><Text style={s.editCancelText}>Cancel</Text></TouchableOpacity>
@@ -544,13 +544,13 @@ export default function ChatScreen() {
         ) : (
           <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
             <TouchableOpacity style={s.mediaBtn} onPress={showImageOptions} disabled={uploading}>
-              {uploading ? <ActivityIndicator color={GREEN} size="small" /> : <Text style={s.mediaBtnText}>📷</Text>}
+              {uploading ? <ActivityIndicator color={GREEN} size="small" /> : <Text style={s.mediaBtnText}>נ“·</Text>}
             </TouchableOpacity>
             <TextInput
               style={s.input}
               value={draft}
               onChangeText={setDraft}
-              placeholder={senderMode === 'ghost' ? '👻 Anonymous message...' : 'Message...'}
+              placeholder={senderMode === 'ghost' ? 'נ‘» Anonymous message...' : 'Message...'}
               placeholderTextColor="#B4B2A9"
               multiline
               maxLength={500}
@@ -559,10 +559,10 @@ export default function ChatScreen() {
               style={[s.modeToggle, senderMode === 'ghost' && s.modeToggleGhost]}
               onPress={() => setSenderMode(senderMode === 'lit' ? 'ghost' : 'lit')}
             >
-              <Text style={s.modeToggleText}>{senderMode === 'lit' ? '🔥' : '👻'}</Text>
+              <Text style={s.modeToggleText}>{senderMode === 'lit' ? 'נ”¥' : 'נ‘»'}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={sendMessage} disabled={!draft.trim()}>
-              <Text style={s.sendIcon}>↑</Text>
+              <Text style={s.sendIcon}>ג†‘</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -571,6 +571,7 @@ export default function ChatScreen() {
   )
 }
 
+const PRIMARY = '#6C63FF'
 const GREEN = '#1D9E75'
 const ORANGE = '#FF6B35'
 const PURPLE = '#7F77DD'
@@ -679,3 +680,4 @@ const s = StyleSheet.create({
   readOnlyJoinText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   sendIcon: { color: '#fff', fontSize: 18, fontWeight: '700' },
 })
+
