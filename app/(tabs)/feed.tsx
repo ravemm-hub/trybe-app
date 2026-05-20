@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity, Image,
   TextInput, Alert, RefreshControl, StatusBar, Pressable, Modal,
@@ -132,6 +132,11 @@ export default function FeedScreen() {
 
   const createPost = async () => {
     if (!draft.trim() && !mediaUrl) return
+    const banned = ['spam','hate','violence','xxx','porn']
+    if (banned.some(w => draft.toLowerCase().includes(w))) {
+      Alert.alert('Content Policy', 'Inappropriate content detected.')
+      return
+    }
     if (!userId) return
     setPosting(true)
     try {
@@ -171,7 +176,7 @@ export default function FeedScreen() {
         contentContainerStyle={{ paddingBottom: 20 }}
         ListEmptyComponent={
           <View style={s.emptyState}>
-            <Text style={s.emptyEmoji}>🌍</Text>
+            <Text style={s.emptyEmoji}>נ</Text>
             <Text style={s.emptyTitle}>No posts yet</Text>
             <Text style={s.emptySub}>Be the first to share something</Text>
             <TouchableOpacity style={s.emptyBtn} onPress={() => setShowCreate(true)}>
@@ -182,8 +187,8 @@ export default function FeedScreen() {
         renderItem={({ item }) => {
           const isOwn = item.user_id === userId
           const isFollowing = followingIds.has(item.user_id)
-          const displayName = item.is_anonymous ? 'Anonymous 👻' : (item.profile?.display_name || item.profile?.username || 'Unknown')
-          const avatarChar = item.is_anonymous ? '👻' : (item.profile?.avatar_char || displayName[0] || '?')
+          const displayName = item.is_anonymous ? 'Anonymous נ‘»' : (item.profile?.display_name || item.profile?.username || 'Unknown')
+          const avatarChar = item.is_anonymous ? 'נ‘»' : (item.profile?.avatar_char || displayName[0] || '?')
 
           return (
             <View style={s.postCard}>
@@ -198,7 +203,7 @@ export default function FeedScreen() {
                 </View>
                 {!isOwn && !item.is_anonymous && (
                   <TouchableOpacity style={[s.followBtn, isFollowing && s.followingBtn]} onPress={() => followUser(item.user_id)}>
-                    <Text style={[s.followBtnText, isFollowing && s.followingBtnText]}>{isFollowing ? '✓ Following' : '+ Follow'}</Text>
+                    <Text style={[s.followBtnText, isFollowing && s.followingBtnText]}>{isFollowing ? 'ג“ Following' : '+ Follow'}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -210,15 +215,15 @@ export default function FeedScreen() {
               {/* Actions */}
               <View style={s.postActions}>
                 <TouchableOpacity style={s.actionBtn} onPress={() => likePost(item)}>
-                  <Text style={s.actionIcon}>{item.liked ? '❤️' : '🤍'}</Text>
+                  <Text style={s.actionIcon}>{item.liked ? 'ג₪ן¸' : 'נ₪'}</Text>
                   <Text style={s.actionCount}>{item.likes}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={s.actionBtn} onPress={() => openComments(item)}>
-                  <Text style={s.actionIcon}>💬</Text>
+                  <Text style={s.actionIcon}>נ’¬</Text>
                   <Text style={s.actionCount}>{item.comment_count || 0}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={s.actionBtn}>
-                  <Text style={s.actionIcon}>↗️</Text>
+                  <Text style={s.actionIcon}>ג†—ן¸</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -253,10 +258,10 @@ export default function FeedScreen() {
 
           <View style={s.createFooter}>
             <TouchableOpacity style={s.createFooterBtn} onPress={pickImage} disabled={uploading}>
-              {uploading ? <ActivityIndicator color={GREEN} size="small" /> : <Text style={s.createFooterIcon}>🖼️</Text>}
+              {uploading ? <ActivityIndicator color={GREEN} size="small" /> : <Text style={s.createFooterIcon}>נ–¼ן¸</Text>}
             </TouchableOpacity>
             <TouchableOpacity style={[s.createFooterBtn, isAnon && s.createFooterBtnActive]} onPress={() => setIsAnon(!isAnon)}>
-              <Text style={s.createFooterIcon}>👻</Text>
+              <Text style={s.createFooterIcon}>נ‘»</Text>
               <Text style={[s.createFooterText, isAnon && { color: PURPLE }]}>{isAnon ? 'Anonymous' : 'Anonymous?'}</Text>
             </TouchableOpacity>
           </View>
@@ -267,7 +272,7 @@ export default function FeedScreen() {
       <Modal visible={!!selectedPost} animationType="slide" onRequestClose={() => setSelectedPost(null)}>
         <View style={[s.commentsContainer, { paddingTop: insets.top }]}>
           <View style={s.commentsHeader}>
-            <TouchableOpacity onPress={() => setSelectedPost(null)}><Text style={s.commentsBack}>‹</Text></TouchableOpacity>
+            <TouchableOpacity onPress={() => setSelectedPost(null)}><Text style={s.commentsBack}>ג€¹</Text></TouchableOpacity>
             <Text style={s.commentsTitle}>Comments</Text>
             <View style={{ width: 40 }} />
           </View>
@@ -276,14 +281,14 @@ export default function FeedScreen() {
               data={comments}
               keyExtractor={c => c.id}
               contentContainerStyle={{ padding: 16, gap: 12 }}
-              ListEmptyComponent={<Text style={{ textAlign: 'center', color: GRAY, marginTop: 40 }}>No comments yet — be first!</Text>}
+              ListEmptyComponent={<Text style={{ textAlign: 'center', color: GRAY, marginTop: 40 }}>No comments yet ג€” be first!</Text>}
               renderItem={({ item }) => (
                 <View style={s.commentRow}>
                   <View style={s.commentAvatar}>
                     <Text style={{ fontSize: 16 }}>{item.profile?.avatar_char || item.profile?.display_name?.[0] || '?'}</Text>
                   </View>
                   <View style={s.commentBubble}>
-                    <Text style={s.commentName}>{(item as any).is_anonymous ? '👻 Anonymous' : (item.profile?.display_name || item.profile?.username)}</Text>
+                    <Text style={s.commentName}>{(item as any).is_anonymous ? 'נ‘» Anonymous' : (item.profile?.display_name || item.profile?.username)}</Text>
                     <Text style={s.commentText}>{item.content}</Text>
                   </View>
                 </View>
@@ -291,7 +296,7 @@ export default function FeedScreen() {
             />
             <View style={[s.commentInput, { paddingBottom: Math.max(insets.bottom, 8) }]}>
               <TouchableOpacity style={[s.anonToggle, commentAnon && s.anonToggleOn]} onPress={() => setCommentAnon(!commentAnon)}>
-                <Text style={s.anonToggleText}>{commentAnon ? '👻' : '🔥'}</Text>
+                <Text style={s.anonToggleText}>{commentAnon ? 'נ‘»' : 'נ”¥'}</Text>
               </TouchableOpacity>
               <TextInput
                 style={s.commentTextInput}
@@ -302,7 +307,7 @@ export default function FeedScreen() {
                 multiline
               />
               <TouchableOpacity style={[s.commentSendBtn, !commentDraft.trim() && { opacity: 0.4 }]} onPress={sendComment} disabled={!commentDraft.trim()}>
-                <Text style={s.commentSendText}>↑</Text>
+                <Text style={s.commentSendText}>ג†‘</Text>
               </TouchableOpacity>
             </View>
           </KeyboardAvoidingView>
@@ -375,3 +380,6 @@ const s = StyleSheet.create({
   commentSendBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: GREEN, alignItems: 'center', justifyContent: 'center' },
   commentSendText: { color: '#fff', fontSize: 18, fontWeight: '700' },
 })
+
+
+
