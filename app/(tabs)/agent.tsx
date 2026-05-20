@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
   KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator,
@@ -22,12 +22,12 @@ const GRAY = '#8A8A9A'
 type Message = { id: string; role: 'user' | 'assistant'; content: string; timestamp: string }
 
 const QUICK_ACTIONS = [
-  { emoji: 'נ“', label: 'Groups nearby' },
-  { emoji: 'נ“…', label: 'Add to calendar' },
-  { emoji: 'נ›’', label: 'Shopping list' },
-  { emoji: 'נ', label: 'Search web' },
-  { emoji: 'נ’¬', label: 'Find people' },
-  { emoji: 'ג¡', label: 'Create group' },
+  { emoji: '📍', label: 'Groups nearby' },
+  { emoji: '📅', label: 'Add to calendar' },
+  { emoji: '🛒', label: 'Shopping list' },
+  { emoji: '🌐', label: 'Search web' },
+  { emoji: '💬', label: 'Find people' },
+  { emoji: '⚡', label: 'Create group' },
 ]
 
 export default function AgentScreen() {
@@ -69,7 +69,7 @@ export default function AgentScreen() {
     if (history?.length) {
       setMessages(history.map((m: any) => ({ id: m.id, role: m.role, content: m.content, timestamp: m.created_at })))
     } else {
-      const welcome = `׳©׳׳•׳${userName ? ` ${userName}` : ''}! ג¦ ׳׳ ׳™ Teeby, ׳”׳¡׳•׳›׳ ׳”׳׳™׳©׳™ ׳©׳׳.\n\n׳׳ ׳™ ׳™׳›׳•׳ ׳׳¢׳–׳•׳¨ ׳׳:\nנ“ ׳׳׳¦׳•׳ ׳§׳‘׳•׳¦׳•׳× ׳•׳—׳‘׳¨׳™׳ ׳‘׳§׳¨׳‘׳×׳\nנ“… ׳׳”׳•׳¡׳™׳£ ׳׳™׳¨׳•׳¢׳™׳ ׳׳§׳׳ ׳“׳¨\nנ›’ ׳׳ ׳”׳ ׳¨׳©׳™׳׳•׳× ׳§׳ ׳™׳•׳×\nנ ׳׳—׳₪׳© ׳׳™׳“׳¢ ׳‘׳׳™׳ ׳˜׳¨׳ ׳˜\nנ’¬ ׳׳©׳׳•׳— ׳”׳•׳“׳¢׳•׳× ׳׳—׳‘׳¨׳™׳\nג¡ ׳׳™׳¦׳•׳¨ ׳§׳‘׳•׳¦׳•׳× ׳—׳“׳©׳•׳×\n\n׳׳” ׳׳¢׳©׳” ׳‘׳©׳‘׳™׳׳?`
+      const welcome = `שלום${userName ? ` ${userName}` : ''}! ✦ אני Teeby, הסוכן האישי שלך.\n\nאני יכול לעזור לך:\n📍 למצוא קבוצות וחברים בקרבתך\n📅 להוסיף אירועים לקלנדר\n🛒 לנהל רשימות קניות\n🌐 לחפש מידע באינטרנט\n💬 לשלוח הודעות לחברים\n⚡ ליצור קבוצות חדשות\n\nמה אעשה בשבילך?`
       addMessage('assistant', welcome)
     }
   }
@@ -117,7 +117,7 @@ export default function AgentScreen() {
       const { data } = await supabase.rpc('nearby_users', { p_lat: coords.lat, p_lon: coords.lon, radius_m: 2000 })
       const { data: groups } = await supabase.from('groups').select('id, name, member_count').eq('status', 'open').limit(5)
       if (!groups?.length) return 'No open groups nearby'
-      return groups.map((g: any) => `ג€¢ ${g.name} (${g.member_count} members)`).join('\n')
+      return groups.map((g: any) => `• ${g.name} (${g.member_count} members)`).join('\n')
     } catch { return 'Could not load groups' }
   }
 
@@ -133,27 +133,39 @@ export default function AgentScreen() {
       const history = messages.slice(-6).map(m => ({ role: m.role, content: m.content }))
 
       // Check if need web search
-      const needsSearch = /׳—׳₪׳©|search|׳׳” ׳–׳”|what is|׳׳×׳™|when|׳׳™׳₪׳”|where|׳—׳“׳©׳•׳×|news|׳׳—׳™׳¨|price/i.test(userMsg)
+      const needsSearch = /חפש|search|מה זה|what is|מתי|when|איפה|where|חדשות|news|מחיר|price/i.test(userMsg)
       let searchResult = ''
       if (needsSearch) {
         searchResult = await webSearch(userMsg)
       }
 
-      const systemPrompt = `You are Teeby, a smart personal AI agent in the Tryber social app.
-User: ${userName} | Location: ${locationCtx || 'Tel Aviv'} | Credits: ${credits}
-Nearby groups:\n${nearbyGroups}
-${searchResult ? `Web search results:\n${searchResult}` : ''}
+      const systemPrompt = `You are Teeby, a highly intelligent personal AI assistant in the Tryber social app.
 
-CAPABILITIES:
-1. CALENDAR - When user wants to add event, respond with exactly: [CAL:title|date_iso]
-   Example: [CAL:Coffee with Maya|2025-05-20T10:00:00]
-2. GROUP CREATION - suggest creating groups with: [CREATE_GROUP:name]
-3. DM - to message someone: [DM:userId]
-4. Always respond in the SAME language as the user (Hebrew or English)
-5. Be proactive, warm, and genuinely helpful
-6. For shopping lists, help organize and remember items
-7. Keep responses concise but helpful (max 3-4 sentences)
-8. If user shares location, find relevant groups and people nearby`
+USER CONTEXT:
+- Name: ${userName || 'Friend'}
+- Location: ${locationCtx || 'Israel'}
+- Coordinates: ${coords ? `${coords.lat.toFixed(4)},${coords.lon.toFixed(4)}` : 'unknown'}
+- Credits remaining: ${credits}/20
+- Nearby groups: ${nearbyGroups}
+${searchResult ? `- Web search results: ${searchResult}` : ''}
+
+YOUR PERSONALITY:
+- You are warm, proactive, witty and genuinely helpful
+- You speak Hebrew when user speaks Hebrew, English when English
+- You are like a smart friend who knows the local area well
+
+YOUR CAPABILITIES:
+1. CALENDAR: To add event respond with [CAL:title|YYYY-MM-DDTHH:MM:SS]
+   Example: [CAL:ארוחת ערב|2025-05-25T19:00:00]
+2. WEB SEARCH: Already done if needed - results above
+3. GROUPS: Use [CREATE_GROUP:name] to help create one
+4. SHOPPING LIST: Help organize lists, remember items
+
+RESPONSE STYLE:
+- Be concise but helpful (2-4 sentences max)
+- Be proactive - suggest relevant actions
+- Use emojis naturally
+- Always end with a helpful follow-up suggestion`
 
       const res = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
@@ -166,21 +178,21 @@ CAPABILITIES:
         }),
       })
       const data = await res.json()
-      let reply = data.content?.[0]?.text?.trim() || '׳׳ ׳™ ׳׳ ׳׳¦׳׳™׳— ׳׳¢׳ ׳•׳× ׳›׳¨׳’׳¢, ׳ ׳¡׳” ׳©׳•׳‘.'
+      let reply = data.content?.[0]?.text?.trim() || 'אני לא מצליח לענות כרגע, נסה שוב.'
 
       // Handle calendar action
       const calMatch = reply.match(/\[CAL:([^\|]+)\|([^\]]+)\]/)
       if (calMatch) {
         const added = await addToCalendar(calMatch[1].trim(), calMatch[2].trim())
         reply = reply.replace(calMatch[0], '')
-        reply += added ? '\n\nג… ׳”׳•׳¡׳₪׳×׳™ ׳׳§׳׳ ׳“׳¨ ׳©׳׳!' : '\n\nג ׳׳ ׳”׳¦׳׳—׳×׳™ ׳׳”׳•׳¡׳™׳£ ׳׳§׳׳ ׳“׳¨. ׳‘׳“׳•׳§ ׳”׳¨׳©׳׳•׳×.'
+        reply += added ? '\n\n✅ הוספתי לקלנדר שלך!' : '\n\n❌ לא הצלחתי להוסיף לקלנדר. בדוק הרשאות.'
       }
 
       // Handle group creation
       const groupMatch = reply.match(/\[CREATE_GROUP:([^\]]+)\]/)
       if (groupMatch) {
         reply = reply.replace(groupMatch[0], '')
-        reply += `\n\nג¡ [׳׳—׳¥ ׳›׳׳ ׳׳™׳¦׳™׳¨׳× ׳”׳§׳‘׳•׳¦׳” "${groupMatch[1].trim()}"]`
+        reply += `\n\n⚡ [לחץ כאן ליצירת הקבוצה "${groupMatch[1].trim()}"]`
       }
 
       addMessage('assistant', reply.trim())
@@ -192,7 +204,7 @@ CAPABILITIES:
         await supabase.from('profiles').update({ teeby_credits: newCredits }).eq('id', userId)
       }
     } catch (err) {
-      addMessage('assistant', '׳׳©׳”׳• ׳”׳©׳×׳‘׳©. ׳ ׳¡׳” ׳©׳•׳‘ ׳‘׳¢׳•׳“ ׳¨׳’׳¢.')
+      addMessage('assistant', 'משהו השתבש. נסה שוב בעוד רגע.')
     } finally {
       setLoading(false)
     }
@@ -205,14 +217,14 @@ CAPABILITIES:
       <StatusBar barStyle="dark-content" backgroundColor={CARD} />
       <View style={s.header}>
         <View style={s.headerLeft}>
-          <View style={s.agentAvatar}><Text style={s.agentAvatarText}>ג¦</Text></View>
+          <View style={s.agentAvatar}><Text style={s.agentAvatarText}>✦</Text></View>
           <View>
             <Text style={s.agentName}>Teeby</Text>
-            <Text style={s.agentSub}>{locationCtx ? `נ“ ${locationCtx}` : 'Your Personal AI'}</Text>
+            <Text style={s.agentSub}>{locationCtx ? `📍 ${locationCtx}` : 'Your Personal AI'}</Text>
           </View>
         </View>
         <View style={s.creditsWrap}>
-          <Text style={s.creditsText}>{credits} ג¦</Text>
+          <Text style={s.creditsText}>{credits} ✦</Text>
         </View>
       </View>
 
@@ -222,8 +234,7 @@ CAPABILITIES:
           data={messages}
           keyExtractor={m => m.id}
           contentContainerStyle={s.messageList}
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
           ListHeaderComponent={
             messages.length === 0 ? null : (
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={s.quickActions} contentContainerStyle={{ paddingHorizontal: 16, gap: 8 }}>
@@ -240,7 +251,7 @@ CAPABILITIES:
             const isMe = item.role === 'user'
             return (
               <View style={[s.bubbleRow, isMe && s.bubbleRowMe]}>
-                {!isMe && <View style={s.agentAvatarSmall}><Text style={{ fontSize: 12, color: PRIMARY, fontWeight: '700' }}>ג¦</Text></View>}
+                {!isMe && <View style={s.agentAvatarSmall}><Text style={{ fontSize: 12, color: PRIMARY, fontWeight: '700' }}>✦</Text></View>}
                 <View style={s.bubbleCol}>
                   <View style={[s.bubble, isMe ? s.bubbleMe : s.bubbleBot]}>
                     <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{item.content}</Text>
@@ -254,9 +265,9 @@ CAPABILITIES:
 
         {messages.length === 0 && (
           <View style={s.emptyState}>
-            <View style={s.emptyAvatar}><Text style={{ fontSize: 40, color: PRIMARY }}>ג¦</Text></View>
+            <View style={s.emptyAvatar}><Text style={{ fontSize: 40, color: PRIMARY }}>✦</Text></View>
             <Text style={s.emptyTitle}>Teeby</Text>
-            <Text style={s.emptySub}>Your personal AI ג€” always here</Text>
+            <Text style={s.emptySub}>Your personal AI — always here</Text>
             <View style={s.quickActionsGrid}>
               {QUICK_ACTIONS.map(a => (
                 <TouchableOpacity key={a.label} style={s.quickBtnLarge} onPress={() => sendTeebyMessage(a.label)}>
@@ -270,9 +281,9 @@ CAPABILITIES:
 
         {loading && (
           <View style={s.typingRow}>
-            <View style={s.agentAvatarSmall}><Text style={{ fontSize: 12, color: PRIMARY, fontWeight: '700' }}>ג¦</Text></View>
+            <View style={s.agentAvatarSmall}><Text style={{ fontSize: 12, color: PRIMARY, fontWeight: '700' }}>✦</Text></View>
             <View style={[s.bubble, s.bubbleBot, { paddingVertical: 14 }]}>
-              <Text style={{ fontSize: 18, color: PRIMARY, letterSpacing: 4 }}>ֲ· ֲ· ֲ·</Text>
+              <Text style={{ fontSize: 18, color: PRIMARY, letterSpacing: 4 }}>· · ·</Text>
             </View>
           </View>
         )}
@@ -294,7 +305,7 @@ CAPABILITIES:
             onPress={() => sendTeebyMessage(input)}
             disabled={!input.trim() || loading}
           >
-            {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={s.sendIcon}>ג†‘</Text>}
+            {loading ? <ActivityIndicator color="#fff" size="small" /> : <Text style={s.sendIcon}>↑</Text>}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
@@ -343,4 +354,3 @@ const s = StyleSheet.create({
   quickBtnLargeEmoji: { fontSize: 28 },
   quickBtnLargeText: { fontSize: 13, color: TEXT, fontWeight: '500', textAlign: 'center' },
 })
-
