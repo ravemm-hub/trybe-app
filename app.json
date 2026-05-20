@@ -1,4 +1,4 @@
-{
+﻿{
   "expo": {
     "name": "Tryber",
     "slug": "trybe",
@@ -26,6 +26,13 @@
     "plugins": [
       "expo-router",
       [
+        "expo-notifications",
+        {
+          "color": "#6C63FF",
+          "defaultChannel": "default"
+        }
+      ],
+      [
         "expo-location",
         {
           "locationAlwaysAndWhenInUsePermission": "Tryber uses your location to find nearby groups.",
@@ -46,3 +53,4 @@
     "owner": "ravemm"
   }
 }
+

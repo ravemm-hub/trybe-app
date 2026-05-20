@@ -3,10 +3,20 @@ import { Stack, useRouter, useSegments } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
+import * as Notifications from 'expo-notifications'
 import { supabase } from '../lib/supabase'
 
 import type { Session } from '@supabase/supabase-js'
 import { loadCustomNamesFromDB, saveContactPhoneMap, saveCustomName, normalizePhone } from '../lib/contactNames'
+
+async function registerPushToken(userId: string) {
+  try {
+    const { status } = await Notifications.requestPermissionsAsync()
+    if (status !== 'granted') return
+    const token = await Notifications.getExpoPushTokenAsync({ projectId: 'f39665fe-cfb2-460a-bfa6-826d501d7333' })
+    if (token?.data) await supabase.from('profiles').update({ push_token: token.data }).eq('id', userId)
+  } catch {}
+}
 
 async function loadContactsInBackground(userId) {
   try {
@@ -81,6 +91,7 @@ export default function RootLayout() {
         checkTeebyProactive(session.user.id)
         loadCustomNamesFromDB(session.user.id)
         loadContactsInBackground(session.user.id)
+        registerPushToken(session.user.id)
       }
     })
 
