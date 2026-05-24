@@ -1,51 +1,58 @@
-﻿{
+{
   "expo": {
     "name": "Tryber",
     "slug": "trybe",
-    "scheme": "trybe",
-    "version": "0.2.0",
+    "version": "2.0.0",
     "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "trybe",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#6C63FF"
+    },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.trybe.app",
-      "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "Tryber uses your location to find and create groups near you.",
-        "NSLocationAlwaysUsageDescription": "Tryber uses your location in the background to alert you when a group opens nearby."
-      }
+      "bundleIdentifier": "com.tryber.app"
     },
     "android": {
-      "package": "com.trybe.app",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#6C63FF"
+      },
+      "package": "com.tryber.app",
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
+        "READ_CONTACTS",
+        "POST_NOTIFICATIONS",
         "RECEIVE_BOOT_COMPLETED",
         "VIBRATE",
-        
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE"
       ]
     },
     "plugins": [
       "expo-router",
-      [
-        "expo-notifications",
-        {
-          "color": "#6C63FF",
-          "defaultChannel": "default"
-        }
-      ],
-      [
-        "expo-location",
-        {
-          "locationAlwaysAndWhenInUsePermission": "Tryber uses your location to find nearby groups.",
-          "locationWhenInUsePermission": "Tryber uses your location to find nearby groups."
-        }
-      ],
-      
-      "@react-native-community/datetimepicker"
+      ["expo-notifications", {
+        "color": "#6C63FF",
+        "defaultChannel": "default"
+      }],
+      ["expo-location", {
+        "locationAlwaysAndWhenInUsePermission": "Allow Tryber to use your location to find people nearby."
+      }],
+      ["expo-contacts", {
+        "contactsPermission": "Allow Tryber to access your contacts to find friends."
+      }],
+      ["expo-calendar", {
+        "calendarPermission": "Allow Tryber to add events to your calendar."
+      }]
     ],
+    "experiments": {
+      "typedRoutes": true
+    },
     "extra": {
-      "router": {
-        "origin": false
-      },
       "eas": {
         "projectId": "f39665fe-cfb2-460a-bfa6-826d501d7333"
       }
@@ -53,4 +60,3 @@
     "owner": "ravemm"
   }
 }
-

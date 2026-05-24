@@ -1,91 +1,33 @@
-﻿import { useState, useEffect } from 'react'
-import {
-  View, Text, TextInput, TouchableOpacity, StyleSheet,
-  ScrollView, Alert, ActivityIndicator,
-  KeyboardAvoidingView, Platform, StatusBar, FlatList, Modal,
-} from 'react-native'
+import { useState, useEffect } from 'react'
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, StatusBar, ScrollView, Alert, ActivityIndicator } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
-import * as Contacts from 'expo-contacts'
-import { supabase } from '../lib/supabase'
+import { supabase } from '../src/lib/supabase'
+import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../src/constants'
 
-const PRIMARY = '#6C63FF'
-const TEAL = '#00BFA6'
-const BG = '#F8F9FD'
-const CARD = '#FFFFFF'
-const TEXT = '#1A1A2E'
-const GRAY = '#8A8A9A'
+type GroupType = 'open' | 'private' | 'secret'
 
-const AGENT_IDS = [
-  'a1000001-0000-0000-0000-000000000001',
-  'a1000001-0000-0000-0000-000000000002',
-  'a1000001-0000-0000-0000-000000000003',
-  'a1000001-0000-0000-0000-000000000019',
-  'a1000001-0000-0000-0000-000000000020',
-  'a1000001-0000-0000-0000-000000000026',
-  'a1000001-0000-0000-0000-000000000029',
+const GROUP_TYPES = [
+  { type: 'open' as GroupType, emoji: '⚡', label: 'Open', desc: 'Anyone can join instantly. Auto-archived after 30 days with 1 member.' },
+  { type: 'private' as GroupType, emoji: '🔒', label: 'Private', desc: 'Visible in Explore. Members need Admin approval to join.' },
+  { type: 'secret' as GroupType, emoji: '🕵️', label: 'Secret', desc: 'Visible in Explore (member count only). Entry by invite code only.' },
 ]
 
-type NearbyUser = {
-  id: string
-  display_name: string | null
-  username: string
-  avatar_char: string | null
-  identity_mode: 'lit' | 'ghost'
-  distance_m: number
-  lat?: number
-  lon?: number
-  is_agent?: boolean
+function generateCode(): string {
+  return Math.random().toString(36).substring(2, 8).toUpperCase()
 }
 
 export default function CreateScreen() {
-  const router = useRouter()
   const insets = useSafeAreaInsets()
-  const [name, setName] = useState('')
-  const [locationName, setLocationName] = useState('')
-  const [isPrivate, setIsPrivate] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [locLoading, setLocLoading] = useState(true)
-  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
-  const [showInvite, setShowInvite] = useState(false)
-  const [showRadarPicker, setShowRadarPicker] = useState(false)
-  const [contacts, setContacts] = useState<any[]>([])
-  const [nearbyUsers, setNearbyUsers] = useState<NearbyUser[]>([])
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [contactSearch, setContactSearch] = useState('')
-  const [createdGroupId, setCreatedGroupId] = useState<string | null>(null)
-  const [createdGroupName, setCreatedGroupName] = useState('')
-  const [radius, setRadius] = useState(500)
-  const [teebyLoading, setTeebyLoading] = useState(false)
-
-  const askTeebySuggest = async () => {
-    if (!coords) { Alert.alert('Location needed', 'Please wait for location to load'); return }
-    setTeebyLoading(true)
-    try {
-      const hour = new Date().getHours()
-      const timeOfDay = hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : hour < 21 ? 'evening' : 'night'
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': process.env.EXPO_PUBLIC_ANTHROPIC_KEY || '', 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001', max_tokens: 200,
-          messages: [{ role: 'user', content: `I'm creating a live social group at ${locationName || 'my location'} on a ${timeOfDay}. Suggest 3 creative, fun, short group names (max 5 words each) that would attract people nearby. Format: just the names, one per line, no numbering.` }],
-        }),
-      })
-      const data = await res.json()
-      const suggestions = data.content?.[0]?.text?.trim().split('\n').filter(Boolean) || []
-      if (suggestions.length > 0) {
-        Alert.alert(' Teeby suggests:', suggestions.join('\n\n'), [
-          ...suggestions.map((s: string) => ({ text: s, onPress: () => setName(s) })),
-          { text: 'Cancel', style: 'cancel' }
-        ])
-      }
-    } catch {}
-    finally { setTeebyLoading(false) }
-  }
+  const router = useRouter()
   const [userId, setUserId] = useState<string | null>(null)
-  const [inviteTab, setInviteTab] = useState<'radar' | 'contacts'>('radar')
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [groupType, setGroupType] = useState<GroupType>('open')
+  const [locationName, setLocationName] = useState('')
+  const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
+  const [creating, setCreating] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id) })
@@ -93,336 +35,153 @@ export default function CreateScreen() {
   }, [])
 
   const getLocation = async () => {
-    setLocLoading(true)
     try {
       const { status } = await Location.requestForegroundPermissionsAsync()
-      if (status !== 'granted') { setLocLoading(false); return }
+      if (status !== 'granted') return
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
       setCoords({ lat: loc.coords.latitude, lon: loc.coords.longitude })
       const [place] = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude })
-      if (place) {
-        const placeName = [place.name, place.street, place.city].filter(Boolean).slice(0, 2).join(', ')
-        setLocationName(placeName)
-        const now = new Date()
-        const hour = now.getHours()
-        const vibes = ['”¥ Hot Spot', ' Live at', '¯ Meetup at', ' Happening at', '× Gathering at', '€ Squad at']
-        const vibe = vibes[Math.floor(Math.random() * vibes.length)]
-        setName(`${vibe} ${placeName}`)
-        setLocationName(`${placeName} ֲ· ${now.toLocaleDateString('en', { weekday: 'long', day: 'numeric', month: 'short' })}`)      }
-    } catch {}
-    finally { setLocLoading(false) }
-  }
-
-  const loadNearbyUsers = async (r: number) => {
-    if (!coords || !userId) return
-    try {
-      await supabase.rpc('place_agents_near_user', { user_id_input: userId })
-      const { data } = await supabase.rpc('nearby_users', { p_lat: coords.lat, p_lon: coords.lon, radius_m: r })
-      const users = ((data || []) as NearbyUser[])
-        .filter(u => u.id !== userId)
-        .map(u => ({ ...u, is_agent: AGENT_IDS.includes(u.id) }))
-      setNearbyUsers(users)
+      if (place) setLocationName([place.city, place.country].filter(Boolean).join(', '))
     } catch {}
   }
 
-  const handleCreate = async () => {
-    if (!name.trim()) { Alert.alert('Name required'); return }
-    setLoading(true)
+  const create = async () => {
+    if (!name.trim()) { Alert.alert('Name required', 'Please enter a group name'); return }
+    if (!userId) return
+    setCreating(true)
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) throw new Error('Not signed in')
-      const lat = coords?.lat ?? 32.0853
-      const lon = coords?.lon ?? 34.7818
+      const inviteCode = groupType === 'secret' ? generateCode() : null
+      const groupData: any = {
+        name: name.trim(),
+        description: description.trim() || null,
+        status: 'open',
+        is_private: groupType === 'private',
+        is_secret: groupType === 'secret',
+        invite_code: inviteCode,
+        member_count: 1,
+        created_by: userId,
+        location_name: locationName || null,
+        min_members: 1,
+        archive_at: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+      }
+      if (coords) groupData.location = 'POINT(' + coords.lon + ' ' + coords.lat + ')'
 
-      const { data, error } = await supabase.from('groups').insert({
-        name: name.trim(), location_name: locationName.trim() || null,
-        location: `POINT(${lon} ${lat})`,
-        min_members: 1, member_count: 1, status: 'open',
-        type: 'manual', group_type: 'live', is_private: isPrivate,
-        created_by: user.id,
-      }).select().single()
+      const { data: group, error } = await supabase.from('groups').insert(groupData).select().single()
+      if (error || !group) throw error
 
-      if (error) throw error
+      await supabase.from('group_members').insert({ group_id: group.id, user_id: userId, role: 'admin' })
 
-      await supabase.from('group_members').insert({ group_id: data.id, user_id: user.id, role: 'admin' })
-      await supabase.from('group_agents').insert({ group_id: data.id, enabled: true })
-      await supabase.from('messages').insert({ group_id: data.id, type: 'system', content: `"${data.name}" created ${isPrivate ? '”’' : ''}` })
-
-      setCreatedGroupId(data.id)
-      setCreatedGroupName(data.name)
-      await loadNearbyUsers(radius)
-      setShowInvite(true)
-    } catch (err: any) { Alert.alert('Error', err.message) }
-    finally { setLoading(false) }
-  }
-
-  const loadContacts = async () => {
-    const { status } = await Contacts.requestPermissionsAsync()
-    if (status !== 'granted') return
-    const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name], sort: Contacts.SortTypes.FirstName })
-    const list = data.filter(c => c.phoneNumbers?.length && c.name).map(c => ({
-      id: c.id, name: c.name,
-      phone: c.phoneNumbers![0].number?.replace(/[\s\-\(\)]/g, '') || '',
-      initials: c.name!.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase(),
-    }))
-    setContacts(list)
-  }
-
-  const toggleSelect = (id: string) => {
-    setSelectedIds(prev => {
-      const next = new Set(prev)
-      next.has(id) ? next.delete(id) : next.add(id)
-      return next
-    })
-  }
-
-  const inviteAndOpen = async () => {
-    if (!createdGroupId) return
-
-    // Add selected nearby users (agents/real)
-    for (const uid of selectedIds) {
-      if (AGENT_IDS.includes(uid)) {
-        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }).catch(() => {})
+      if (groupType === 'secret' && inviteCode) {
+        Alert.alert(
+          '🕵️ Secret Group Created!',
+          'Invite Code: ' + inviteCode + '\n\nShare this code with people you want to invite. It is valid for 24 hours per use.',
+          [{ text: 'Got it', onPress: () => router.replace({ pathname: '/chat', params: { id: group.id, name: group.name, members: '1' } }) }]
+        )
       } else {
-        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: uid, role: 'member' }).catch(() => {})
+        router.replace({ pathname: '/chat', params: { id: group.id, name: group.name, members: '1' } })
       }
-    }
-
-    // Add selected contacts who are on Tryber
-    const selectedContacts = contacts.filter(c => selectedIds.has(c.id))
-    if (selectedContacts.length > 0) {
-      const phones = selectedContacts.map(c => c.phone)
-      const { data: tryberUsers } = await supabase.from('profiles').select('id, phone').in('phone', phones)
-      for (const u of tryberUsers || []) {
-        await supabase.from('group_members').insert({ group_id: createdGroupId, user_id: u.id, role: 'member' }).catch(() => {})
-      }
-    }
-
-    const totalMembers = 1 + selectedIds.size
-    await supabase.from('groups').update({ member_count: totalMembers }).eq('id', createdGroupId)
-
-    router.replace({ pathname: '/chat', params: { id: createdGroupId, name: createdGroupName, members: totalMembers.toString() } })
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Failed to create group')
+    } finally { setCreating(false) }
   }
-
-  const filteredContacts = contacts.filter(c => !contactSearch || c.name.toLowerCase().includes(contactSearch.toLowerCase()))
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
-      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-        <View style={s.header}>
-          <TouchableOpacity onPress={() => router.back()}><Text style={s.cancel}>Cancel</Text></TouchableOpacity>
-          <Text style={s.title}>Drop a Trybe</Text>
-          <View style={{ width: 60 }} />
-        </View>
+      <View style={s.header}>
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
+          <Text style={s.backText}>‹</Text>
+        </TouchableOpacity>
+        <Text style={s.title}>Create Trybe</Text>
+        <View style={{ width: 40 }} />
+      </View>
 
-        <ScrollView contentContainerStyle={s.form} keyboardShouldPersistTaps="handled">
-          {locLoading && (
-            <View style={s.locBanner}>
-              <ActivityIndicator color={TEAL} size="small" />
-              <Text style={s.locText}>Detecting location...</Text>
+      <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+
+        {/* Group Type */}
+        <Text style={s.label}>TYPE</Text>
+        {GROUP_TYPES.map(gt => (
+          <TouchableOpacity key={gt.type} style={[s.typeCard, groupType === gt.type && s.typeCardActive]} onPress={() => setGroupType(gt.type)}>
+            <View style={s.typeCardLeft}>
+              <Text style={s.typeEmoji}>{gt.emoji}</Text>
+              <View>
+                <Text style={[s.typeLabel, groupType === gt.type && { color: PRIMARY }]}>{gt.label}</Text>
+                <Text style={s.typeDesc}>{gt.desc}</Text>
+              </View>
             </View>
-          )}
-
-          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <Text style={s.label}>NAME</Text>
-            <TouchableOpacity onPress={askTeebySuggest} disabled={teebyLoading} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              {teebyLoading ? <ActivityIndicator size="small" color={PRIMARY} /> : <Text style={{ fontSize: 13, color: PRIMARY, fontWeight: '600' }}> Teeby suggest</Text>}
-            </TouchableOpacity>
-          </View>
-          <TextInput style={s.input} value={name} onChangeText={setName} placeholder="What's the vibe?" placeholderTextColor="#B4B2A9" maxLength={60} />
-
-          <Text style={s.label}>LOCATION</Text>
-          <TextInput style={s.input} value={locationName} onChangeText={setLocationName} placeholder="e.g. Barby Club, Tel Aviv" placeholderTextColor="#B4B2A9" maxLength={80} />
-
-          <Text style={s.label}>PRIVACY</Text>
-          <View style={s.privacyRow}>
-            <TouchableOpacity style={[s.privacyBtn, !isPrivate && s.privacyBtnActive]} onPress={() => setIsPrivate(false)}>
-              <Text style={s.privacyEmoji}></Text>
-              <Text style={[s.privacyBtnText, !isPrivate && { color: TEAL }]}>Public</Text>
-              <Text style={s.privacyDesc}>Anyone can join</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[s.privacyBtn, isPrivate && s.privacyBtnPrivate]} onPress={() => setIsPrivate(true)}>
-              <Text style={s.privacyEmoji}>”’</Text>
-              <Text style={[s.privacyBtnText, isPrivate && { color: PRIMARY }]}>Private</Text>
-              <Text style={s.privacyDesc}>Invite only</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={s.infoBox}>
-            <Text style={s.infoText}> Your Trybe opens immediately €” invite people from Radar or your contacts</Text>
-          </View>
-
-          <TouchableOpacity
-            style={[s.submitBtn, (loading || locLoading) && s.submitBtnDisabled]}
-            onPress={handleCreate} disabled={loading || locLoading}
-          >
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.submitBtnText}> Drop the Trybe</Text>}
+            <View style={[s.typeRadio, groupType === gt.type && s.typeRadioActive]}>
+              {groupType === gt.type && <View style={s.typeRadioInner} />}
+            </View>
           </TouchableOpacity>
-          <View style={{ height: 60 }} />
-        </ScrollView>
-      </KeyboardAvoidingView>
+        ))}
 
-      {/* Invite Modal */}
-      <Modal visible={showInvite} animationType="slide" onRequestClose={() => setShowInvite(false)}>
-        <View style={[s.inviteContainer, { paddingTop: insets.top }]}>
-          <View style={s.inviteHeader}>
-            <Text style={s.inviteTitle}>‰ Trybe Created!</Text>
-            <Text style={s.inviteSub}>Invite people to join</Text>
+        {/* Name */}
+        <Text style={s.label}>NAME *</Text>
+        <TextInput style={s.input} value={name} onChangeText={setName} placeholder="e.g. Friday Night Drinks" placeholderTextColor={GRAY} maxLength={50} />
+
+        {/* Description */}
+        <Text style={s.label}>DESCRIPTION</Text>
+        <TextInput style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]} value={description} onChangeText={setDescription} placeholder="What's this Trybe about?" placeholderTextColor={GRAY} multiline maxLength={200} />
+
+        {/* Location */}
+        {locationName ? (
+          <View style={s.locationRow}>
+            <Text style={s.locationIcon}>📍</Text>
+            <Text style={s.locationText}>{locationName}</Text>
           </View>
+        ) : null}
 
-          {/* Tabs */}
-          <View style={s.inviteTabs}>
-            <TouchableOpacity style={[s.inviteTab, inviteTab === 'radar' && s.inviteTabActive]} onPress={() => { setInviteTab('radar'); loadNearbyUsers(radius) }}>
-              <Text style={[s.inviteTabText, inviteTab === 'radar' && s.inviteTabTextActive]}>“¡ Radar Nearby</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[s.inviteTab, inviteTab === 'contacts' && s.inviteTabActive]} onPress={() => { setInviteTab('contacts'); loadContacts() }}>
-              <Text style={[s.inviteTabText, inviteTab === 'contacts' && s.inviteTabTextActive]}>‘¥ Contacts</Text>
-            </TouchableOpacity>
+        {/* Info cards */}
+        {groupType === 'open' && (
+          <View style={s.infoCard}>
+            <Text style={s.infoText}>⚡ Your group opens immediately. Agents will join and start chatting. If no one else joins in 30 days, it auto-archives.</Text>
           </View>
-
-          {inviteTab === 'radar' ? (
-            <View style={{ flex: 1 }}>
-              {/* Radius selector */}
-              <View style={s.radiusRow}>
-                <Text style={s.radiusLabel}>Radius:</Text>
-                {[10, 50, 100, 500, 1000].map(r => (
-                  <TouchableOpacity key={r} style={[s.radiusBtn, radius === r && s.radiusBtnActive]} onPress={() => { setRadius(r); loadNearbyUsers(r) }}>
-                    <Text style={[s.radiusBtnText, radius === r && s.radiusBtnTextActive]}>{r < 1000 ? `${r}m` : `${r/1000}km`}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Nearby users map placeholder */}
-              {coords && (
-                <View style={s.radarPreview}>
-                  <Text style={s.radarPreviewText}>“¡ Showing users within {radius < 1000 ? `${radius}m` : `${radius/1000}km`}</Text>
-                  <Text style={s.radarPreviewSub}>{nearbyUsers.length} people found nearby</Text>
-                </View>
-              )}
-
-              {/* Nearby list */}
-              <FlatList
-                data={nearbyUsers}
-                keyExtractor={u => u.id}
-                style={{ maxHeight: 160 }}
-                ListEmptyComponent={<Text style={s.emptyNearby}>No one nearby €” try increasing the radius</Text>}
-                renderItem={({ item }) => (
-                  <TouchableOpacity style={s.nearbyRow} onPress={() => toggleSelect(item.id)}>
-                    <View style={[s.nearbyAvatar, item.is_agent && { borderColor: PRIMARY, borderWidth: 2 }]}>
-                      <Text style={{ fontSize: 20 }}>{item.avatar_char || '‘₪'}</Text>
-                    </View>
-                    <View style={{ flex: 1 }}>
-                      <Text style={s.nearbyName}>{item.identity_mode === 'ghost' ? '‘» Anonymous' : (item.display_name || item.username)}</Text>
-                      <Text style={s.nearbyDist}>{item.distance_m < 1000 ? `${Math.round(item.distance_m)}m` : `${(item.distance_m/1000).toFixed(1)}km`} away{item.is_agent ? ' ֲ· AI Agent' : ''}</Text>
-                    </View>
-                    <View style={[s.checkbox, selectedIds.has(item.id) && s.checkboxSelected]}>
-                      {selectedIds.has(item.id) && <Text style={{ color: '#fff', fontSize: 12 }}>“</Text>}
-                    </View>
-                  </TouchableOpacity>
-                )}
-              />
-            </View>
-          ) : (
-            <View style={{ flex: 1 }}>
-              <View style={s.searchRow}>
-                <TextInput style={s.searchInput} value={contactSearch} onChangeText={setContactSearch} placeholder="Search contacts..." placeholderTextColor="#B4B2A9" onFocus={loadContacts} />
-              </View>
-              {contacts.length === 0 ? (
-                <TouchableOpacity style={s.loadContactsBtn} onPress={loadContacts}>
-                  <Text style={s.loadContactsBtnText}>“± Load Contacts</Text>
-                </TouchableOpacity>
-              ) : (
-                <FlatList
-                  data={filteredContacts}
-                  keyExtractor={c => c.id}
-                  renderItem={({ item }) => (
-                    <TouchableOpacity style={s.nearbyRow} onPress={() => toggleSelect(item.id)}>
-                      <View style={s.nearbyAvatar}>
-                        <Text style={s.nearbyInitials}>{item.initials}</Text>
-                      </View>
-                      <Text style={[s.nearbyName, { flex: 1 }]}>{item.name}</Text>
-                      <View style={[s.checkbox, selectedIds.has(item.id) && s.checkboxSelected]}>
-                        {selectedIds.has(item.id) && <Text style={{ color: '#fff', fontSize: 12 }}>“</Text>}
-                      </View>
-                    </TouchableOpacity>
-                  )}
-                />
-              )}
-            </View>
-          )}
-
-          <View style={[s.inviteFooter, { paddingBottom: insets.bottom + 8 }]}>
-            <TouchableOpacity style={s.skipBtn} onPress={() => router.replace({ pathname: '/chat', params: { id: createdGroupId!, name: createdGroupName, members: '1' } })}>
-              <Text style={s.skipBtnText}>Skip</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[s.inviteSendBtn, selectedIds.size === 0 && { opacity: 0.6 }]} onPress={inviteAndOpen}>
-              <Text style={s.inviteSendText}>{selectedIds.size > 0 ? `Add ${selectedIds.size} & Open ↗’` : 'Open Group ↗’'}</Text>
-            </TouchableOpacity>
+        )}
+        {groupType === 'private' && (
+          <View style={s.infoCard}>
+            <Text style={s.infoText}>🔒 Visible in Explore with a lock icon. People can request to join — you approve them as Admin.</Text>
           </View>
-        </View>
-      </Modal>
+        )}
+        {groupType === 'secret' && (
+          <View style={[s.infoCard, { borderColor: PRIMARY }]}>
+            <Text style={s.infoText}>🕵️ A 6-digit invite code will be generated. Share it with people you want to invite. Each code use is single-session only.</Text>
+          </View>
+        )}
+
+        <TouchableOpacity style={[s.createBtn, (!name.trim() || creating) && s.createBtnOff]} onPress={create} disabled={!name.trim() || creating}>
+          {creating ? <ActivityIndicator color="#fff" /> : <Text style={s.createBtnText}>{groupType === 'secret' ? '🕵️ Create Secret Trybe' : groupType === 'private' ? '🔒 Create Private Trybe' : '⚡ Create Trybe'}</Text>}
+        </TouchableOpacity>
+
+        <View style={{ height: 40 }} />
+      </ScrollView>
     </View>
   )
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: CARD },
-  flex: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  cancel: { fontSize: 16, color: GRAY },
+  container: { flex: 1, backgroundColor: BG },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 12, paddingVertical: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
+  backBtn: { padding: 4 },
+  backText: { fontSize: 32, color: PRIMARY, lineHeight: 36, marginTop: -4 },
   title: { fontSize: 17, fontWeight: '700', color: TEXT },
-  form: { padding: 20 },
-  label: { fontSize: 11, fontWeight: '700', color: GRAY, marginTop: 24, marginBottom: 8, letterSpacing: 0.8 },
-  input: { backgroundColor: BG, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: '#EBEBEB' },
-  locBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: '#E8F5F3', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 10, marginBottom: 8 },
-  locText: { fontSize: 13, color: TEAL },
-  privacyRow: { flexDirection: 'row', gap: 10 },
-  privacyBtn: { flex: 1, padding: 14, borderRadius: 14, backgroundColor: BG, alignItems: 'center', gap: 4, borderWidth: 1, borderColor: '#EBEBEB' },
-  privacyBtnActive: { backgroundColor: '#E8F5F3', borderColor: TEAL },
-  privacyBtnPrivate: { backgroundColor: '#EEF0FF', borderColor: PRIMARY },
-  privacyEmoji: { fontSize: 24 },
-  privacyBtnText: { fontSize: 14, fontWeight: '700', color: TEXT },
-  privacyDesc: { fontSize: 11, color: GRAY },
-  infoBox: { backgroundColor: '#E8F5F3', borderRadius: 12, padding: 14, marginTop: 20 },
-  infoText: { fontSize: 13, color: TEAL, lineHeight: 20 },
-  submitBtn: { backgroundColor: TEAL, borderRadius: 16, paddingVertical: 18, alignItems: 'center', marginTop: 24 },
-  submitBtnDisabled: { opacity: 0.5 },
-  submitBtnText: { color: '#fff', fontSize: 17, fontWeight: '700' },
-  inviteContainer: { flex: 1, backgroundColor: BG },
-  inviteHeader: { padding: 20, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB', alignItems: 'center' },
-  inviteTitle: { fontSize: 22, fontWeight: '800', color: TEXT, marginBottom: 4 },
-  inviteSub: { fontSize: 14, color: GRAY },
-  inviteTabs: { flexDirection: 'row', backgroundColor: CARD, paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  inviteTab: { flex: 1, paddingVertical: 8, borderRadius: 12, backgroundColor: BG, alignItems: 'center' },
-  inviteTabActive: { backgroundColor: PRIMARY },
-  inviteTabText: { fontSize: 13, fontWeight: '600', color: GRAY },
-  inviteTabTextActive: { color: '#fff' },
-  radiusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 16, paddingVertical: 8, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  radiusLabel: { fontSize: 12, color: GRAY, fontWeight: '600' },
-  radiusBtn: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 14, backgroundColor: BG },
-  radiusBtnActive: { backgroundColor: TEAL },
-  radiusBtnText: { fontSize: 11, color: GRAY, fontWeight: '600' },
-  radiusBtnTextActive: { color: '#fff' },
-  radarPreview: { backgroundColor: '#E8F5F3', borderRadius: 12, padding: 14, marginHorizontal: 16, marginVertical: 8, alignItems: 'center' },
-  radarPreviewText: { fontSize: 14, fontWeight: '600', color: TEAL },
-  radarPreviewSub: { fontSize: 12, color: GRAY, marginTop: 4 },
-  emptyNearby: { textAlign: 'center', color: GRAY, padding: 20, fontSize: 13 },
-  nearbyRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  nearbyAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
-  nearbyInitials: { fontSize: 16, fontWeight: '700', color: PRIMARY },
-  nearbyName: { fontSize: 15, fontWeight: '600', color: TEXT },
-  nearbyDist: { fontSize: 12, color: GRAY, marginTop: 2 },
-  checkbox: { width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#EBEBEB', alignItems: 'center', justifyContent: 'center' },
-  checkboxSelected: { backgroundColor: TEAL, borderColor: TEAL },
-  searchRow: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  searchInput: { backgroundColor: BG, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: TEXT },
-  loadContactsBtn: { margin: 32, backgroundColor: PRIMARY, borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
-  loadContactsBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  inviteFooter: { flexDirection: 'row', gap: 10, padding: 16, backgroundColor: CARD, borderTopWidth: 0.5, borderColor: '#EBEBEB' },
-  skipBtn: { paddingVertical: 14, paddingHorizontal: 16, borderRadius: 14, backgroundColor: BG, alignItems: 'center' },
-  skipBtnText: { fontSize: 14, color: GRAY, fontWeight: '600' },
-  inviteSendBtn: { flex: 1, backgroundColor: TEAL, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
-  inviteSendText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  content: { padding: 20 },
+  label: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginBottom: 8, marginTop: 20 },
+  typeCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: CARD, borderRadius: 14, padding: 14, marginBottom: 8, borderWidth: 1.5, borderColor: BORDER },
+  typeCardActive: { borderColor: PRIMARY, backgroundColor: '#F5F4FF' },
+  typeCardLeft: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, flex: 1 },
+  typeEmoji: { fontSize: 24, marginTop: 2 },
+  typeLabel: { fontSize: 15, fontWeight: '700', color: TEXT, marginBottom: 2 },
+  typeDesc: { fontSize: 12, color: GRAY, lineHeight: 16, flex: 1 },
+  typeRadio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: BORDER, alignItems: 'center', justifyContent: 'center' },
+  typeRadioActive: { borderColor: PRIMARY },
+  typeRadioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: PRIMARY },
+  input: { backgroundColor: CARD, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: BORDER },
+  locationRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16, backgroundColor: CARD, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: BORDER },
+  locationIcon: { fontSize: 18 },
+  locationText: { fontSize: 14, color: GRAY },
+  infoCard: { backgroundColor: '#F5F4FF', borderRadius: 12, padding: 14, marginTop: 16, borderWidth: 1, borderColor: BORDER },
+  infoText: { fontSize: 13, color: GRAY, lineHeight: 20 },
+  createBtn: { backgroundColor: PRIMARY, borderRadius: 16, paddingVertical: 16, alignItems: 'center', marginTop: 24 },
+  createBtnOff: { opacity: 0.4 },
+  createBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 })
-

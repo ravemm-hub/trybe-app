@@ -1,435 +1,280 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react'
-import {
-  View, Text, StyleSheet, FlatList, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, StatusBar, ActivityIndicator, Modal,
-} from 'react-native'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Alert, Modal } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { supabase } from '../lib/supabase'
+import { supabase } from '../src/lib/supabase'
+import { sendDM, markDMRead, markDMDelivered, editDM, deleteDM, getReceiptStatus } from '../src/services/dms'
+import { askClaude, translateText } from '../src/lib/claude'
+import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS, AGENTS } from '../src/constants'
+import { DmMessage } from '../src/types'
 
-const AGENT_IDS = [
-  'a1000001-0000-0000-0000-000000000001',
-  'a1000001-0000-0000-0000-000000000002',
-  'a1000001-0000-0000-0000-000000000003',
-  'a1000001-0000-0000-0000-000000000019',
-  'a1000001-0000-0000-0000-000000000020',
-  'a1000001-0000-0000-0000-000000000026',
-  'a1000001-0000-0000-0000-000000000029',
-]
-
-const ANTHROPIC_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_KEY || ''
-const PRIMARY = '#6C63FF'
-const TEAL = '#00BFA6'
-const GRAY = '#8A8A9A'
-const TEXT = '#1A1A2E'
-
-type DmMessage = {
-  id: string
-  sender_id: string
-  receiver_id?: string
-  content: string
-  created_at: string
-  sender_mode: string
-  read_at?: string | null
-}
+const LANGS = ['English', 'Hebrew', 'Arabic', 'Russian', 'French', 'Spanish', 'German']
 
 export default function DMScreen() {
-  const { userId: otherUserId, userName, myMode, myAvatar, isAgent } = useLocalSearchParams<{
-    userId: string; userName: string; myMode: string; myAvatar: string; isAgent: string
-  }>()
-  const router = useRouter()
   const insets = useSafeAreaInsets()
+  const router = useRouter()
+  const { userId: otherUserId, userName, myMode: initMode, myAvatar, isAgent } = useLocalSearchParams<any>()
+  const listRef = useRef<FlatList>(null)
+  const [myId, setMyId] = useState<string | null>(null)
   const [messages, setMessages] = useState<DmMessage[]>([])
   const [draft, setDraft] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [myId, setMyId] = useState<string | null>(null)
-  const [otherProfile, setOtherProfile] = useState<any>(null)
+  const [loading, setLoading] = useState(false)
   const [agentTyping, setAgentTyping] = useState(false)
+  const [replyTo, setReplyTo] = useState<DmMessage | null>(null)
+  const [editingMsg, setEditingMsg] = useState<DmMessage | null>(null)
   const [translateTo, setTranslateTo] = useState<string | null>(null)
-  const [showTranslateMenu, setShowTranslateMenu] = useState(false)
+  const [showTranslate, setShowTranslate] = useState(false)
+  const [selectedMsg, setSelectedMsg] = useState<DmMessage | null>(null)
+  const [showMenu, setShowMenu] = useState(false)
 
-  const LANGUAGES = ['English', 'Hebrew', 'Arabic', 'Russian', 'French', 'Spanish', 'German']
-
-  const translateMessage = async (text: string, targetLang: string): Promise<string> => {
-    try {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': process.env.EXPO_PUBLIC_ANTHROPIC_KEY || '', 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001', max_tokens: 200,
-          messages: [{ role: 'user', content: `Translate to ${targetLang}. Return ONLY the translation, nothing else: "${text}"` }],
-        }),
-      })
-      const data = await res.json()
-      return data.content?.[0]?.text?.trim() || text
-    } catch { return text }
-  }
-  const listRef = useRef<FlatList>(null)
   const talkingToAgent = isAgent === '1' || AGENT_IDS.includes(otherUserId || '')
-
-  const loadMessages = useCallback(async () => {
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-    setMyId(user.id)
-    if (!talkingToAgent) {
-      const { data: profile } = await supabase.from('profiles').select('display_name, username, avatar_char, phone').eq('id', otherUserId).single()
-      if (profile) {
-        setOtherProfile(profile)
-        // Try to match by phone in local contacts
-        try {
-          const { getContactNameByPhone, getCustomName } = require('../lib/contactNames')
-          // First try custom saved name
-          const customName = await getCustomName(otherUserId)
-          if (customName) {
-            setOtherProfile((prev: any) => ({ ...prev, _contactName: customName }))
-          } else if (profile.phone) {
-            // Try to find by phone number
-            const contactName = await getContactNameByPhone(profile.phone)
-            if (contactName) {
-              setOtherProfile((prev: any) => ({ ...prev, _contactName: contactName }))
-              // Save for next time
-              const { saveCustomName } = require('../lib/contactNames')
-              await saveCustomName(user.id, otherUserId, contactName)
-            }
-          }
-        } catch {}
-      }
-    }
-    const { data } = await supabase.from('dm_messages').select('*')
-      .or(`and(sender_id.eq.${user.id},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${user.id})`)
-      .order('created_at', { ascending: true }).limit(100)
-    if (data) {
-      setMessages(data as DmMessage[])
-      // Mark incoming messages as read
-      const unread = data.filter((m: DmMessage) => m.sender_id === otherUserId && !m.read_at)
-      if (unread.length > 0) {
-        await supabase.from('dm_messages').update({ read_at: new Date().toISOString() })
-          .in('id', unread.map((m: DmMessage) => m.id))
-      }
-    }
-    setLoading(false)
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 100)
-  }, [otherUserId])
-
-  useEffect(() => { loadMessages() }, [loadMessages])
+  const agentInfo = AGENTS.find(a => a.id === otherUserId)
 
   useEffect(() => {
-    if (!myId) return
-    const channel = supabase.channel(`dm:${myId}:${otherUserId}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, async (payload) => {
-        const msg = payload.new as DmMessage
-        if ((msg.sender_id === myId && msg.receiver_id === otherUserId) ||
-            (msg.sender_id === otherUserId && msg.receiver_id === myId)) {
-          if (msg.sender_id === otherUserId) {
-            await supabase.from('dm_messages').update({ read_at: new Date().toISOString() }).eq('id', msg.id)
-            msg.read_at = new Date().toISOString()
-          }
-          setMessages(prev => {
-            // Remove temp message if exists, add real one
-            const withoutTemp = prev.filter(m => !m.id.startsWith('temp_') || m.sender_id !== myId)
-            // Avoid duplicates
-            if (withoutTemp.find(m => m.id === msg.id)) return withoutTemp
-            return [...withoutTemp, msg]
-          })
-          setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
-        }
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (!user) return
+      setMyId(user.id)
+      loadMessages(user.id)
+      if (!talkingToAgent) markDMDelivered(user.id)
+    })
+  }, [])
+
+  const loadMessages = async (uid: string) => {
+    const { data } = await supabase.from('dm_messages').select('*')
+      .or('and(sender_id.eq.' + uid + ',receiver_id.eq.' + otherUserId + '),and(sender_id.eq.' + otherUserId + ',receiver_id.eq.' + uid + ')')
+      .eq('deleted_for_all', false).order('created_at', { ascending: true }).limit(100)
+    if (data) {
+      setMessages(data as DmMessage[])
+      markDMRead(otherUserId!, uid)
+    }
+    const channel = supabase.channel('dm:' + uid + ':' + otherUserId)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, async ({ new: msg }) => {
+        const isOurs = (msg.sender_id === uid && msg.receiver_id === otherUserId) || (msg.sender_id === otherUserId && msg.receiver_id === uid)
+        if (!isOurs) return
+        if (msg.sender_id === otherUserId) markDMRead(otherUserId, uid)
+        setMessages(prev => { if (prev.find(m => m.id === msg.id)) return prev; return [...prev, msg as DmMessage] })
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
       })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dm_messages' }, (payload) => {
-        const msg = payload.new as DmMessage
-        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, read_at: msg.read_at } : m))
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dm_messages' }, ({ new: msg }) => {
+        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, ...msg } : m))
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [myId, otherUserId])
-
-  const getAgentReply = async (userMessage: string) => {
-    setAgentTyping(true)
-    const timeout = setTimeout(() => setAgentTyping(false), 15000)
-    try {
-      await new Promise(r => setTimeout(r, 1000 + Math.random() * 1500))
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({
-          model: 'claude-haiku-4-5-20251001', max_tokens: 200,
-          messages: [{ role: 'user', content: `You are ${userName}, a friendly AI agent in the Tryber social app. Someone sent you: "${userMessage}". Reply naturally in the same language (Hebrew or English). Max 2 sentences. Be warm and engaging.` }],
-        }),
-      })
-      const data = await res.json()
-      const reply = data.content?.[0]?.text?.trim()
-      if (reply && myId) {
-        await supabase.from('dm_messages').insert({
-          sender_id: otherUserId, receiver_id: myId, content: reply,
-          sender_mode: 'lit', receiver_mode: myMode || 'lit',
-        })
-      }
-    } catch (e) { console.log(e) }
-    finally { setAgentTyping(false); clearTimeout(timeout) }
   }
 
-  const [sharedList, setSharedList] = useState<{ id: string; title: string; items: { text: string; done: boolean }[] } | null>(null)
-  const [showList, setShowList] = useState(false)
-  const [newListItem, setNewListItem] = useState('')
-
-  const openSharedList = async () => {
-    if (!myId) return
-    const participants = [myId, otherUserId].sort()
-    const { data } = await supabase.from('shared_lists').select('*')
-      .contains('dm_between', participants).order('created_at', { ascending: false }).limit(1)
-    if (data?.[0]) {
-      setSharedList({ id: data[0].id, title: data[0].title, items: data[0].items || [] })
-    } else {
-      const { data: newList } = await supabase.from('shared_lists').insert({
-        dm_between: participants, title: 'Shopping List', items: [], created_by: myId
-      }).select().single()
-      if (newList) setSharedList({ id: newList.id, title: newList.title, items: [] })
-    }
-    setShowList(true)
-  }
-
-  const addListItem = async () => {
-    if (!newListItem.trim() || !sharedList) return
-    const newItems = [...sharedList.items, { text: newListItem.trim(), done: false }]
-    await supabase.from('shared_lists').update({ items: newItems, updated_at: new Date().toISOString() }).eq('id', sharedList.id)
-    setSharedList(prev => prev ? { ...prev, items: newItems } : null)
-    setNewListItem('')
-  }
-
-  const toggleListItem = async (idx: number) => {
-    if (!sharedList) return
-    const newItems = sharedList.items.map((item, i) => i === idx ? { ...item, done: !item.done } : item)
-    await supabase.from('shared_lists').update({ items: newItems }).eq('id', sharedList.id)
-    setSharedList(prev => prev ? { ...prev, items: newItems } : null)
-  }
-
-  const deleteListItem = async (idx: number) => {
-    if (!sharedList) return
-    const newItems = sharedList.items.filter((_, i) => i !== idx)
-    await supabase.from('shared_lists').update({ items: newItems }).eq('id', sharedList.id)
-    setSharedList(prev => prev ? { ...prev, items: newItems } : null)
-  }
-
-  const sendMessage = async () => {
+  const sendMessage = useCallback(async () => {
     if (!draft.trim() || !myId) return
-    const text = draft.trim()
+    let content = draft.trim()
     setDraft('')
-    const tempMsg: DmMessage = {
-      id: `temp_${Date.now()}`,
-      sender_id: myId,
-      receiver_id: otherUserId,
-      content: text,
-      created_at: new Date().toISOString(),
-      sender_mode: myMode || 'lit',
-      read_at: null,
+    if (editingMsg) {
+      await editDM(editingMsg.id, myId, content)
+      setEditingMsg(null)
+      return
     }
-    setMessages(prev => [...prev, tempMsg])
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
-    // Translate if user has translation enabled
-    let contentToSend = text
-    let translatedFrom = null
-    if (translateTo && !talkingToAgent) {
-      contentToSend = await translateMessage(text, translateTo)
-      translatedFrom = translateTo
+    if (translateTo && !talkingToAgent) content = await translateText(content, translateTo)
+    await sendDM({ senderId: myId, receiverId: otherUserId!, content, senderMode: initMode || 'lit', replyToId: replyTo?.id || null, replyPreview: replyTo?.content?.slice(0, 60) || null })
+    setReplyTo(null)
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
+    if (talkingToAgent) {
+      setAgentTyping(true)
+      const timeout = setTimeout(() => setAgentTyping(false), 15000)
+      try {
+        await new Promise(r => setTimeout(r, 1000 + Math.random() * 1500))
+        const lang = agentInfo?.lang === 'he' ? 'Hebrew' : 'English'
+        const reply = await askClaude('You are ' + (agentInfo?.name || 'an assistant') + ', ' + (agentInfo?.personality || 'friendly') + '. Someone wrote: "' + content + '". Reply in ' + lang + ', 1-2 sentences, casual.', undefined, 100)
+        if (reply) await supabase.from('dm_messages').insert({ sender_id: otherUserId, receiver_id: myId, content: reply, sender_mode: 'lit', receiver_mode: 'lit' })
+      } finally { setAgentTyping(false); clearTimeout(timeout) }
     }
-    const { error } = await supabase.from('dm_messages').insert({
-      sender_id: myId, receiver_id: otherUserId, content: contentToSend,
-      sender_mode: myMode || 'lit', receiver_mode: 'lit',
-    })
-    if (error) setMessages(prev => prev.filter(m => m.id !== tempMsg.id))
-    if (!error && talkingToAgent) getAgentReply(text)
+  }, [draft, myId, otherUserId, replyTo, translateTo, editingMsg, talkingToAgent, agentInfo, initMode])
+
+  const handleLongPress = (msg: DmMessage) => { setSelectedMsg(msg); setShowMenu(true) }
+
+  const handleDelete = (msg: DmMessage) => {
+    setShowMenu(false)
+    Alert.alert('Delete message', 'Delete for everyone?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteDM(msg.id, myId!) },
+    ])
   }
 
-  const formatTime = (ts: string) => new Date(ts).toLocaleTimeString('he-IL', { hour: '2-digit', minute: '2-digit' })
+  const displayName = userName || 'Chat'
 
-  // WhatsApp-style status: “ sent (temp), ““ gray (delivered), ““ blue (read)
-  const getStatus = (msg: DmMessage) => {
-    if (msg.id.startsWith('temp_')) return { text: '“', color: 'rgba(0,0,0,0.3)' }
-    if (msg.read_at) return { text: '““', color: TEAL }
-    return { text: '““', color: 'rgba(0,0,0,0.3)' }
+  const receiptIcon = (msg: DmMessage) => {
+    if (msg.sender_id !== myId) return null
+    const status = getReceiptStatus(msg)
+    const color = status === 'read' ? LIVE : 'rgba(255,255,255,0.5)'
+    return <Text style={{ color, fontSize: 11, fontWeight: '600' }}>{status === 'sent' ? '✓' : '✓✓'}</Text>
   }
-
-  // userName is contact name (from contacts list) - prefer it over app display name
-  const displayName = talkingToAgent ? userName : (userName || otherProfile?._contactName || otherProfile?.display_name || otherProfile?.username || 'Unknown')
-  const avatarChar = talkingToAgent ? '' : (otherProfile?.avatar_char || displayName?.[0] || '?')
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="dark-content" backgroundColor="#fff" />
+      <StatusBar barStyle="dark-content" />
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
-          <Text style={s.backText}>‹</Text>
-        </TouchableOpacity>
-        <View style={[s.headerAvatar, talkingToAgent && s.headerAvatarAgent]}>
-          <Text style={s.headerAvatarText}>{avatarChar}</Text>
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn}><Text style={s.backText}>‹</Text></TouchableOpacity>
+        <View style={[s.hAvatar, talkingToAgent && s.hAvatarAgent]}>
+          <Text style={s.hAvatarText}>{talkingToAgent ? '✦' : (myAvatar || displayName[0] || '?')}</Text>
         </View>
-        <View style={s.headerInfo}>
-          <View style={s.headerNameRow}>
-            <Text style={s.headerName} numberOfLines={1}>{displayName}</Text>
-            {talkingToAgent && <View style={s.agentBadge}><Text style={s.agentBadgeText}>AI</Text></View>}
-          </View>
-          <Text style={s.headerSub}>{talkingToAgent ? 'Powered by Claude ֲ· Always available' : 'Direct Message'}</Text>
+        <View style={s.hInfo}>
+          <Text style={s.hName} numberOfLines={1}>{displayName}</Text>
+          {talkingToAgent && <Text style={s.hSub}>AI Agent · Always on</Text>}
         </View>
+        {!talkingToAgent && (
+          <TouchableOpacity onPress={() => setShowTranslate(true)} style={s.translateBtn}>
+            <Text style={{ fontSize: 18 }}>🌐</Text>
+            {translateTo && <View style={s.translateDot} />}
+          </TouchableOpacity>
+        )}
       </View>
 
-      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 56}>
-        {loading ? (
-          <View style={s.center}><ActivityIndicator color={PRIMARY} size="large" /></View>
-        ) : (
-          <FlatList
-            ref={listRef}
-            data={messages}
-            keyExtractor={m => m.id}
-            contentContainerStyle={s.messageList}
-            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-            ListEmptyComponent={
-              <View style={s.center}>
-                <Text style={s.emptyEmoji}>{talkingToAgent ? '' : '‘‹'}</Text>
-                <Text style={s.emptyTitle}>{talkingToAgent ? `Chat with ${displayName}` : `Say hi to ${displayName}!`}</Text>
-                <Text style={s.emptyText}>{talkingToAgent ? 'Your personal AI is ready' : 'Start the conversation'}</Text>
-              </View>
-            }
-            renderItem={({ item }) => {
-              const isMe = item.sender_id === myId
-              const status = getStatus(item)
-              return (
-                <View style={[s.bubbleRow, isMe && s.bubbleRowMe]}>
-                  {!isMe && (
-                    <View style={[s.avatar, talkingToAgent && s.avatarAgent]}>
-                      <Text style={s.avatarText}>{avatarChar}</Text>
-                    </View>
-                  )}
-                  <View style={s.bubbleCol}>
-                    <View style={[s.bubble, isMe ? s.bubbleMe : talkingToAgent ? s.bubbleAgent : s.bubbleThem]}>
-                      <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{item.content}</Text>
-                    </View>
-                    <View style={[s.metaRow, isMe && s.metaRowMe]}>
-                      <Text style={s.timeText}>{formatTime(item.created_at)}</Text>
-                      {isMe && <Text style={[s.statusText, { color: status.color }]}>{status.text}</Text>}
-                    </View>
-                  </View>
+      <FlatList ref={listRef} data={messages} keyExtractor={m => m.id}
+        contentContainerStyle={{ paddingVertical: 8 }}
+        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+        renderItem={({ item: msg }) => {
+          const isMe = msg.sender_id === myId
+          if (msg.deleted_for_all) return <Text style={s.deleted}>🚫 Message deleted</Text>
+          return (
+            <TouchableOpacity onLongPress={() => handleLongPress(msg)} activeOpacity={0.85} style={[s.msgWrap, isMe && s.msgWrapMe]}>
+              {msg.reply_to_id && (
+                <View style={[s.replyBar, isMe && s.replyBarMe]}>
+                  <View style={s.replyLine} />
+                  <Text style={s.replyText} numberOfLines={1}>{msg.reply_preview || '...'}</Text>
                 </View>
-              )
-            }}
-          />
-        )}
-
-        {agentTyping && (
-          <View style={s.typingRow}>
-            <View style={[s.avatar, s.avatarAgent]}>
-              <Text style={s.avatarText}></Text>
-            </View>
-            <View style={[s.bubble, s.bubbleAgent, { paddingVertical: 12 }]}>
-              <Text style={s.typingDots}>ֲ· ֲ· ֲ·</Text>
+              )}
+              {msg.is_forwarded && <Text style={[s.forwarded, isMe && s.forwardedMe]}>↪️ Forwarded</Text>}
+              <View style={[s.bubble, isMe ? s.bubbleMe : s.bubbleThem]}>
+                <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text>
+                <View style={s.bubbleMeta}>
+                  {msg.edited_at && <Text style={[s.edited, isMe && { color: 'rgba(255,255,255,0.5)' }]}>edited</Text>}
+                  <Text style={[s.time, isMe && s.timeMe]}>{new Date(msg.created_at).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}</Text>
+                  {receiptIcon(msg)}
+                </View>
+              </View>
+            </TouchableOpacity>
+          )
+        }}
+        ListFooterComponent={agentTyping ? (
+          <View style={s.msgWrap}>
+            <View style={[s.bubble, s.bubbleThem, { paddingVertical: 14 }]}>
+              <Text style={{ fontSize: 18, color: PRIMARY, letterSpacing: 4 }}>· · ·</Text>
             </View>
           </View>
-        )}
+        ) : null}
+      />
 
-        <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          {!talkingToAgent && (
-            <TouchableOpacity style={s.listBtn} onPress={openSharedList}>
-              <Text style={{ fontSize: 18 }}>“‹</Text>
+      <Modal visible={showTranslate} transparent animationType="slide" onRequestClose={() => setShowTranslate(false)}>
+        <TouchableOpacity style={s.modalOverlay} onPress={() => setShowTranslate(false)} activeOpacity={1}>
+          <View style={s.translateSheet}>
+            <Text style={s.translateTitle}>Translate messages to:</Text>
+            <TouchableOpacity style={[s.translateOpt, !translateTo && s.translateOptActive]} onPress={() => { setTranslateTo(null); setShowTranslate(false) }}>
+              <Text style={[s.translateOptText, !translateTo && { color: '#fff' }]}>Off</Text>
             </TouchableOpacity>
+            {LANGS.map(lang => (
+              <TouchableOpacity key={lang} style={[s.translateOpt, translateTo === lang && s.translateOptActive]} onPress={() => { setTranslateTo(lang); setShowTranslate(false) }}>
+                <Text style={[s.translateOptText, translateTo === lang && { color: '#fff' }]}>{lang}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={showMenu} transparent animationType="fade" onRequestClose={() => setShowMenu(false)}>
+        <TouchableOpacity style={s.menuOverlay} onPress={() => setShowMenu(false)} activeOpacity={1}>
+          <View style={s.menu}>
+            {[
+              { icon: '↩️', label: 'Reply', onPress: () => { setReplyTo(selectedMsg!); setShowMenu(false) } },
+              { icon: '📋', label: 'Copy', onPress: () => setShowMenu(false) },
+              { icon: '📤', label: 'Forward', onPress: () => setShowMenu(false) },
+              { icon: '🌐', label: 'Translate', onPress: () => { setShowMenu(false); setShowTranslate(true) } },
+              ...(selectedMsg?.sender_id === myId ? [
+                { icon: '✏️', label: 'Edit', onPress: () => { setEditingMsg(selectedMsg!); setDraft(selectedMsg!.content); setShowMenu(false) } },
+                { icon: '🗑️', label: 'Delete', onPress: () => handleDelete(selectedMsg!) },
+              ] : [
+                { icon: '🚩', label: 'Report', onPress: () => setShowMenu(false) },
+              ]),
+            ].map(item => (
+              <TouchableOpacity key={item.label} style={s.menuItem} onPress={item.onPress}>
+                <Text style={s.menuIcon}>{item.icon}</Text>
+                <Text style={s.menuLabel}>{item.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {replyTo && (
+        <View style={s.replyBarInput}>
+          <View style={s.replyLine} />
+          <Text style={s.replyPreviewText} numberOfLines={1}>{replyTo.content}</Text>
+          <TouchableOpacity onPress={() => setReplyTo(null)}><Text style={{ fontSize: 18, color: GRAY }}>✕</Text></TouchableOpacity>
+        </View>
+      )}
+
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 8}>
+        <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+          {translateTo && !talkingToAgent && (
+            <View style={s.transIndicator}><Text style={s.transIndicatorText}>🌐 → {translateTo}</Text></View>
           )}
-          <TextInput
-            style={s.input}
-            value={draft}
-            onChangeText={setDraft}
-            placeholder={talkingToAgent ? `Ask ${displayName}...` : `Message ${displayName}...`}
-            placeholderTextColor="#B4B2A9"
-            multiline
-            maxLength={500}
-          />
+          <TextInput style={s.input} value={draft} onChangeText={setDraft}
+            placeholder={editingMsg ? 'Edit message...' : 'Message...'}
+            placeholderTextColor={GRAY} multiline returnKeyType="send" onSubmitEditing={sendMessage} />
           <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={sendMessage} disabled={!draft.trim()}>
-            <Text style={s.sendIcon}>↗‘</Text>
+            <Text style={s.sendBtnText}>{editingMsg ? '✓' : '↑'}</Text>
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
-
-      {/* Shared List Modal */}
-      <Modal visible={showList} animationType="slide" onRequestClose={() => setShowList(false)}>
-        <View style={[s.container, { paddingTop: insets.top }]}>
-          <View style={s.header}>
-            <TouchableOpacity onPress={() => setShowList(false)}><Text style={s.backText}>‹</Text></TouchableOpacity>
-            <Text style={{ flex: 1, fontSize: 17, fontWeight: '700', color: TEXT }}>“‹ {sharedList?.title || 'Shopping List'}</Text>
-          </View>
-          <View style={{ flex: 1, padding: 16 }}>
-            {sharedList?.items.map((item, idx) => (
-              <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 0.5, borderColor: '#EBEBEB' }}>
-                <TouchableOpacity onPress={() => toggleListItem(idx)} style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 1.5, borderColor: item.done ? PRIMARY : '#EBEBEB', backgroundColor: item.done ? PRIMARY : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-                  {item.done && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>“</Text>}
-                </TouchableOpacity>
-                <Text style={{ flex: 1, fontSize: 15, color: item.done ? GRAY : TEXT, textDecorationLine: item.done ? 'line-through' : 'none' }}>{item.text}</Text>
-                <TouchableOpacity onPress={() => deleteListItem(idx)}>
-                  <Text style={{ fontSize: 18, color: GRAY }}>ֳ—</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
-            {(!sharedList?.items.length) && <View style={s.center}><Text style={{ fontSize: 40 }}>“‹</Text><Text style={{ color: GRAY, marginTop: 8 }}>List is empty €” add items below</Text></View>}
-          </View>
-          <View style={[{ flexDirection: 'row', gap: 8, padding: 16, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#EBEBEB' }, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-            <TextInput style={[s.input, { flex: 1 }]} value={newListItem} onChangeText={setNewListItem} placeholder="Add item..." placeholderTextColor="#B4B2A9" onSubmitEditing={addListItem} returnKeyType="done" />
-            <TouchableOpacity style={[s.sendBtn, !newListItem.trim() && s.sendBtnOff]} onPress={addListItem} disabled={!newListItem.trim()}>
-              <Text style={s.sendIcon}>+</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </View>
   )
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F8F9FD' },
-  flex: { flex: 1 },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 8 },
-  emptyEmoji: { fontSize: 48, marginBottom: 8 },
-  emptyTitle: { fontSize: 18, fontWeight: '700', color: TEXT },
-  emptyText: { fontSize: 14, color: GRAY, textAlign: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 10, backgroundColor: '#fff', borderBottomWidth: 0.5, borderColor: '#EBEBEB', gap: 10 },
+  container: { flex: 1, backgroundColor: BG },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
   backBtn: { padding: 4 },
   backText: { fontSize: 32, color: PRIMARY, lineHeight: 36, marginTop: -4 },
-  headerAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
-  headerAvatarAgent: { borderWidth: 2, borderColor: PRIMARY },
-  headerAvatarText: { fontSize: 20 },
-  headerInfo: { flex: 1 },
-  headerNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  headerName: { fontSize: 16, fontWeight: '700', color: TEXT },
-  agentBadge: { backgroundColor: PRIMARY, paddingHorizontal: 7, paddingVertical: 2, borderRadius: 6 },
-  agentBadgeText: { fontSize: 10, fontWeight: '700', color: '#fff' },
-  headerSub: { fontSize: 11, color: GRAY, marginTop: 1 },
-  messageList: { padding: 16, gap: 10, flexGrow: 1 },
-  bubbleRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
-  bubbleRowMe: { flexDirection: 'row-reverse' },
-  avatar: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
-  avatarAgent: { borderWidth: 1.5, borderColor: PRIMARY },
-  avatarText: { fontSize: 16, fontWeight: '600', color: PRIMARY },
-  bubbleCol: { maxWidth: '75%' },
-  bubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20 },
+  hAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: BORDER },
+  hAvatarAgent: { backgroundColor: '#EEF0FF', borderColor: PRIMARY },
+  hAvatarText: { fontSize: 18 },
+  hInfo: { flex: 1 },
+  hName: { fontSize: 16, fontWeight: '700', color: TEXT },
+  hSub: { fontSize: 11, color: LIVE },
+  translateBtn: { padding: 8, position: 'relative' },
+  translateDot: { position: 'absolute', top: 6, right: 6, width: 8, height: 8, borderRadius: 4, backgroundColor: PRIMARY },
+  deleted: { fontSize: 13, color: GRAY, fontStyle: 'italic', textAlign: 'center', paddingVertical: 8 },
+  msgWrap: { marginVertical: 2, paddingHorizontal: 12, alignItems: 'flex-start' },
+  msgWrapMe: { alignItems: 'flex-end' },
+  replyBar: { flexDirection: 'row', gap: 6, marginBottom: 4, maxWidth: '80%', backgroundColor: 'rgba(108,99,255,0.06)', borderRadius: 8, padding: 6 },
+  replyBarMe: { alignSelf: 'flex-end' },
+  replyLine: { width: 3, backgroundColor: PRIMARY, borderRadius: 2 },
+  replyText: { fontSize: 12, color: GRAY, flex: 1 },
+  forwarded: { fontSize: 11, color: GRAY, marginBottom: 2 },
+  forwardedMe: { alignSelf: 'flex-end' },
+  bubble: { maxWidth: '80%', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8 },
+  bubbleThem: { backgroundColor: CARD, borderBottomLeftRadius: 4, borderWidth: 0.5, borderColor: BORDER },
   bubbleMe: { backgroundColor: PRIMARY, borderBottomRightRadius: 4 },
-  bubbleThem: { backgroundColor: '#fff', borderBottomLeftRadius: 4, borderWidth: 0.5, borderColor: '#EBEBEB' },
-  bubbleAgent: { backgroundColor: '#EEF0FF', borderBottomLeftRadius: 4 },
-  bubbleText: { fontSize: 15, lineHeight: 22, color: TEXT },
+  bubbleText: { fontSize: 15, lineHeight: 21, color: TEXT },
   bubbleTextMe: { color: '#fff' },
-  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 3, marginLeft: 4 },
-  metaRowMe: { justifyContent: 'flex-end', marginRight: 4 },
-  timeText: { fontSize: 10, color: GRAY },
-  statusText: { fontSize: 12, fontWeight: '600' },
-  typingRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
-  typingDots: { fontSize: 18, color: PRIMARY, letterSpacing: 4 },
-  translateBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#F0F0F8', alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  translateActive: { position: 'absolute', top: -2, right: -2, width: 16, height: 16, borderRadius: 8, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
-  translateActiveText: { fontSize: 7, color: '#fff', fontWeight: '700' },
-  translateMenu: { position: 'absolute', bottom: 60, left: 12, right: 12, backgroundColor: '#fff', borderRadius: 16, padding: 12, shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 12, elevation: 8, zIndex: 100, borderWidth: 1, borderColor: 'rgba(108,99,255,0.1)' },
-  translateMenuTitle: { fontSize: 12, color: GRAY, fontWeight: '600', marginBottom: 8 },
-  translateMenuBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, marginBottom: 4, backgroundColor: '#F8F7FF' },
-  translateMenuBtnActive: { backgroundColor: PRIMARY },
-  translateMenuBtnText: { fontSize: 14, color: TEXT, fontWeight: '500' },
-  translatedLabel: { fontSize: 10, color: 'rgba(255,255,255,0.6)', marginTop: 3 },
-  listBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: '#F0F0F8', alignItems: 'center', justifyContent: 'center' },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 10, gap: 8, backgroundColor: '#fff', borderTopWidth: 0.5, borderColor: '#EBEBEB' },
-  input: { flex: 1, minHeight: 40, maxHeight: 100, backgroundColor: '#F0F0F8', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: TEXT },
+  bubbleMeta: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2, justifyContent: 'flex-end' },
+  edited: { fontSize: 10, color: GRAY },
+  time: { fontSize: 10, color: GRAY },
+  timeMe: { color: 'rgba(255,255,255,0.6)' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  translateSheet: { backgroundColor: CARD, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 8 },
+  translateTitle: { fontSize: 16, fontWeight: '700', color: TEXT, marginBottom: 8 },
+  translateOpt: { paddingHorizontal: 16, paddingVertical: 12, borderRadius: 12, backgroundColor: BG },
+  translateOptActive: { backgroundColor: PRIMARY },
+  translateOptText: { fontSize: 15, color: TEXT, fontWeight: '500' },
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
+  menu: { backgroundColor: CARD, borderRadius: 20, padding: 16, width: 280, flexDirection: 'row', flexWrap: 'wrap', gap: 4 },
+  menuItem: { width: '23%', alignItems: 'center', paddingVertical: 12, borderRadius: 12, backgroundColor: BG },
+  menuIcon: { fontSize: 22, marginBottom: 4 },
+  menuLabel: { fontSize: 10, color: TEXT, fontWeight: '500' },
+  replyBarInput: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(108,99,255,0.06)', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: BORDER },
+  replyPreviewText: { flex: 1, fontSize: 13, color: GRAY },
+  transIndicator: { backgroundColor: '#EEF0FF', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, alignSelf: 'flex-start', marginLeft: 12, marginBottom: 4 },
+  transIndicatorText: { fontSize: 11, color: PRIMARY, fontWeight: '600' },
+  inputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8, backgroundColor: CARD, borderTopWidth: 0.5, borderColor: BORDER },
+  input: { flex: 1, backgroundColor: BG, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: TEXT, maxHeight: 100, borderWidth: 1, borderColor: BORDER },
   sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
-  sendBtnOff: { opacity: 0.35 },
-  sendIcon: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  sendBtnOff: { opacity: 0.4 },
+  sendBtnText: { color: '#fff', fontSize: 20, fontWeight: '700' },
 })
-

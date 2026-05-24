@@ -1,317 +1,217 @@
-import { supabase } from '../../lib/supabase'
 import { useState, useEffect, useCallback } from 'react'
-import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity,
-  StatusBar, Pressable, RefreshControl, ActivityIndicator,
-  Alert, Linking, TextInput,
-} from 'react-native'
+import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, StatusBar, ActivityIndicator, Pressable, Linking, Alert } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import * as Contacts from 'expo-contacts'
 import { useRouter } from 'expo-router'
-import { saveContactPhoneMap, saveCustomName, getCustomName } from '../../lib/contactNames'
+import { supabase } from '../../src/lib/supabase'
+import { getContactName, normalizePhone } from '../../src/lib/contacts'
+import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, INVITE_MSG, AGENT_IDS } from '../../src/constants'
 
-
-const INVITE_MSG = `Hey! Join me on Tryber נ€\nDownload: https://ravemm-hub.github.io/trybe-app`
-const PRIMARY = '#6C63FF'
-const TEAL = '#00BFA6'
-const BG = '#F8F9FD'
-const CARD = '#FFFFFF'
-const TEXT = '#1A1A2E'
-const GRAY = '#8A8A9A'
-const RED = '#FF3B30'
-
-type ChatItem = {
-  id: string; type: 'group' | 'dm'; name: string; avatar: string
-  last_message: string | null; last_message_at: string | null; unread: number
-  status?: string; member_count?: number; min_members?: number
-  is_private?: boolean; other_user_id?: string
-}
-
-type Contact = {
-  id: string; name: string; phone: string; initials: string
-  onTryber: boolean; tryberUserId?: string; tryberUsername?: string; avatar_char?: string
-}
+type Tab = 'trybes' | 'dms' | 'contacts'
 
 export default function ChatsScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const [activeTab, setActiveTab] = useState<'trybes' | 'chats'>('trybes')
-  const [groups, setGroups] = useState<ChatItem[]>([])
-  const [dms, setDms] = useState<ChatItem[]>([])
-  const [contacts, setContacts] = useState<Contact[]>([])
-  const [contactSearch, setContactSearch] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [contactsLoading, setContactsLoading] = useState(false)
-  const [contactsLoaded, setContactsLoaded] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
+  const [tab, setTab] = useState<Tab>('trybes')
   const [userId, setUserId] = useState<string | null>(null)
-  const [contactNames, setContactNames] = useState<Record<string,string>>({})
+  const [groups, setGroups] = useState<any[]>([])
+  const [dms, setDms] = useState<any[]>([])
+  const [contactNames, setContactNames] = useState<Record<string, string>>({})
+  const [contacts, setContacts] = useState<any[]>([])
+  const [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(true)
 
-  const loadAll = useCallback(async () => {
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      setUserId(user.id)
-      const { data: memberData } = await supabase.from('group_members').select('group_id, last_read_at, groups(*)').eq('user_id', user.id)
-      const groupItems: ChatItem[] = []
-      for (const m of memberData || []) {
-        const g = (m as any).groups
-        if (!g || g.status === 'archived') continue
-        const { data: msgs } = await supabase.from('messages').select('content, created_at').eq('group_id', g.id).eq('type', 'text').order('created_at', { ascending: false }).limit(1)
-        let unread = 0
-        if (m.last_read_at) {
-          const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('group_id', g.id).neq('user_id', user.id).gt('created_at', m.last_read_at)
-          unread = count || 0
-        }
-        groupItems.push({ id: g.id, type: 'group', name: g.name, avatar: g.is_private ? 'נ”’' : 'ג¡', last_message: msgs?.[0]?.content || null, last_message_at: msgs?.[0]?.created_at || g.created_at, unread, status: g.status, member_count: g.member_count, min_members: g.min_members, is_private: g.is_private })
-      }
-      groupItems.sort((a, b) => new Date(b.last_message_at || '').getTime() - new Date(a.last_message_at || '').getTime())
-      setGroups(groupItems)
-      const { data: dmData } = await supabase.from('dm_messages').select('*').or(`sender_id.eq.${user.id},receiver_id.eq.${user.id}`).order('created_at', { ascending: false })
-      const dmMap = new Map<string, any>()
-      for (const dm of dmData || []) {
-        const otherId = dm.sender_id === user.id ? dm.receiver_id : dm.sender_id
-        if (!dmMap.has(otherId)) dmMap.set(otherId, dm)
-      }
-      const dmItems: ChatItem[] = []
-      for (const [otherId, lastDm] of dmMap.entries()) {
-        const { data: p } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', otherId).single()
-        const name = p?.display_name || p?.username || 'Unknown'
-        dmItems.push({ id: `dm_${otherId}`, type: 'dm', name, avatar: p?.avatar_char || name[0] || '?', last_message: lastDm.content, last_message_at: lastDm.created_at, unread: 0, other_user_id: otherId })
-      }
-      setDms(dmItems)
-      // Load contact names for DM list
-      const names: Record<string,string> = {}
-      for (const dm of dmItems) {
-        try { const cn = await getCustomName(dm.other_user_id); if (cn) names[dm.other_user_id] = cn } catch {}
-      }
-      setContactNames(names)
-    } catch (err: any) { console.error(err.message) }
-    finally { setLoading(false); setRefreshing(false) }
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) { setUserId(user.id); loadAll(user.id) }
+    })
   }, [])
 
-  const loadContacts = useCallback(async () => {
-    if (contactsLoaded) return
-    setContactsLoading(true)
+  const loadAll = async (uid: string) => {
+    setLoading(true)
+    await Promise.all([loadGroups(uid), loadDMs(uid), loadContacts(uid)])
+    setLoading(false)
+  }
+
+  const loadGroups = async (uid: string) => {
+    const { data } = await supabase.from('group_members')
+      .select('group_id, last_read_at, groups(*)')
+      .eq('user_id', uid).order('created_at', { ascending: false })
+    if (!data) return
+    const items = await Promise.all(data.map(async (m: any) => {
+      const g = m.groups as any
+      const lastRead = m.last_read_at || new Date(0).toISOString()
+      const { count: unread } = await supabase.from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('group_id', m.group_id).neq('user_id', uid).neq('type', 'system').gt('created_at', lastRead)
+      const { data: lastMsg } = await supabase.from('messages')
+        .select('content, created_at').eq('group_id', m.group_id)
+        .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
+      return { ...g, unread: unread || 0, lastMsg: lastMsg?.[0] }
+    }))
+    setGroups(items)
+  }
+
+  const loadDMs = async (uid: string) => {
+    const { data } = await supabase.from('dm_messages')
+      .select('sender_id, receiver_id, sender_mode, receiver_mode, content, created_at')
+      .or(`sender_id.eq.${uid},receiver_id.eq.${uid}`)
+      .order('created_at', { ascending: false })
+    if (!data) return
+    const seen = new Set<string>()
+    const items: any[] = []
+    for (const msg of data) {
+      const otherId = msg.sender_id === uid ? msg.receiver_id : msg.sender_id
+      if (seen.has(otherId) || AGENT_IDS.includes(otherId)) continue
+      seen.add(otherId)
+      const { data: p } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', otherId).single()
+      const { count: unread } = await supabase.from('dm_messages')
+        .select('id', { count: 'exact', head: true }).eq('sender_id', otherId).eq('receiver_id', uid).is('read_at', null)
+      items.push({ otherId, profile: p, lastMsg: msg, unread: unread || 0, myMode: msg.sender_id === uid ? msg.sender_mode : msg.receiver_mode })
+    }
+    const names: Record<string, string> = {}
+    for (const d of items) { const cn = await getContactName(d.otherId); if (cn) names[d.otherId] = cn }
+    setContactNames(names)
+    setDms(items)
+  }
+
+  const loadContacts = async (uid: string) => {
     try {
+      const Contacts = require('expo-contacts')
       const { status } = await Contacts.requestPermissionsAsync()
-      if (status !== 'granted') { setContactsLoading(false); return }
-      const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name], sort: Contacts.SortTypes.FirstName })
-      const contactList: Contact[] = []
+      if (status !== 'granted') return
+      const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name] })
+      const list: any[] = []
       for (const c of data) {
-        if (!c.phoneNumbers?.length || !c.name) continue
+        if (!c.name || !c.phoneNumbers?.length) continue
         const phone = c.phoneNumbers[0].number?.replace(/[\s\-\(\)]/g, '') || ''
         if (!phone) continue
-        const initials = c.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase()
-        contactList.push({ id: c.id || phone, name: c.name, phone, initials, onTryber: false })
+        list.push({ id: c.id || phone, name: c.name, phone, initials: c.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase(), onTryber: false })
       }
-      if (contactList.length > 0) {
-        // Save phoneג†’name mapping for later use in chat
-        await saveContactPhoneMap(contactList)
-        const phones = contactList.map(c => c.phone)
-        // Also try with +972 prefix normalization
-        const phonesNormalized = phones.map(p => p.startsWith('0') ? '+972' + p.slice(1) : p)
-        const allPhones = [...new Set([...phones, ...phonesNormalized])]
-        const { data: tryberUsers } = await supabase.from('profiles').select('id, username, display_name, phone, avatar_char').in('phone', allPhones)
-        const tryberMap = new Map()
-        for (const u of tryberUsers || []) {
-          if (u.phone) {
-            tryberMap.set(u.phone, u)
-            // Also map normalized version
-            if (u.phone.startsWith('0')) tryberMap.set('+972' + u.phone.slice(1), u)
-            if (u.phone.startsWith('+972')) tryberMap.set('0' + u.phone.slice(4), u)
-          }
-        }
-        const enriched = contactList.map(c => {
-          const t = tryberMap.get(c.phone) || tryberMap.get(c.phone.startsWith('0') ? '+972' + c.phone.slice(1) : c.phone)
-          return { ...c, onTryber: !!t, tryberUserId: t?.id, tryberUsername: t?.display_name || t?.username, avatar_char: t?.avatar_char }
-        })
-        enriched.sort((a, b) => a.onTryber === b.onTryber ? a.name.localeCompare(b.name) : a.onTryber ? -1 : 1)
-        setContacts(enriched)
+      const allPhones = [...new Set(list.flatMap((c: any) => { const n = normalizePhone(c.phone); return [c.phone, n, '+972' + n.slice(1)] }))]
+      const { data: users } = await supabase.from('profiles').select('id, phone, display_name, username').in('phone', allPhones)
+      const tryberMap = new Map()
+      for (const u of users || []) {
+        if (!u.phone) continue
+        const n = normalizePhone(u.phone)
+        tryberMap.set(u.phone, u); tryberMap.set(n, u); tryberMap.set('+972' + n.slice(1), u)
       }
-      setContactsLoaded(true)
-    } catch {} finally { setContactsLoading(false) }
-  }, [contactsLoaded])
-
-  useEffect(() => { loadAll() }, [loadAll])
-  useEffect(() => { if (activeTab === 'chats') loadContacts() }, [activeTab])
-  useEffect(() => {
-    const channel = supabase.channel('chats-rt')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => loadAll())
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, () => loadAll())
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [loadAll])
-
-  const markGroupRead = async (groupId: string) => {
-    if (!userId) return
-    await supabase.from('group_members').update({ last_read_at: new Date().toISOString() }).eq('group_id', groupId).eq('user_id', userId)
-    setGroups(prev => prev.map(g => g.id === groupId ? { ...g, unread: 0 } : g))
+      const enriched = list.map((c: any) => {
+        const n = normalizePhone(c.phone)
+        const u = tryberMap.get(c.phone) || tryberMap.get(n) || tryberMap.get('+972' + n.slice(1))
+        return { ...c, onTryber: !!u, tryberUserId: u?.id, appName: u?.display_name || u?.username }
+      }).sort((a: any, b: any) => (b.onTryber ? 1 : 0) - (a.onTryber ? 1 : 0) || a.name.localeCompare(b.name))
+      setContacts(enriched)
+    } catch {}
   }
 
-  const leaveGroup = (item: ChatItem) => {
-    Alert.alert('Leave group', `Leave "${item.name}"?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Leave', style: 'destructive', onPress: async () => {
-        await supabase.from('group_members').delete().eq('group_id', item.id).eq('user_id', userId)
-        setGroups(prev => prev.filter(g => g.id !== item.id))
-      }}
-    ])
+  const fmt = (ts: string) => {
+    if (!ts) return ''
+    const d = new Date(ts), now = new Date()
+    if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleDateString('en', { day: 'numeric', month: 'short' })
   }
 
-  const inviteContact = (contact: Contact) => {
-    Alert.alert(`Invite ${contact.name}`, '', [
-      { text: 'נ’ WhatsApp', onPress: () => Linking.openURL(`whatsapp://send?phone=${contact.phone}&text=${encodeURIComponent(INVITE_MSG)}`) },
-      { text: 'נ’¬ SMS', onPress: () => Linking.openURL(`sms:${contact.phone}?body=${encodeURIComponent(INVITE_MSG)}`) },
-      { text: 'Cancel', style: 'cancel' }
-    ])
-  }
+  const filtered = search.trim() ? contacts.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search)) : contacts
 
-  const formatTime = (ts: string) => {
-    const diff = Date.now() - new Date(ts).getTime()
-    if (diff < 60000) return 'now'
-    if (diff < 3600000) return `${Math.floor(diff / 60000)}m`
-    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h`
-    return new Date(ts).toLocaleDateString('en', { day: 'numeric', month: 'short' })
-  }
-
-  const totalUnread = groups.reduce((sum, i) => sum + i.unread, 0)
-  const filteredContacts = contacts.filter(c => !contactSearch.trim() || c.name.toLowerCase().includes(contactSearch.toLowerCase()) || c.phone.includes(contactSearch))
-
-  const renderGroupRow = (item: ChatItem) => {
-    const hasUnread = item.unread > 0
-    const isOpen = item.status === 'open'
-    return (
-      <Pressable style={s.row} onPress={() => { markGroupRead(item.id); if (isOpen) router.push({ pathname: '/chat', params: { id: item.id, name: item.name, members: item.member_count?.toString() || '0' } }); else router.push({ pathname: '/lobby', params: { id: item.id, name: item.name } }) }} onLongPress={() => Alert.alert(item.name, '', [{ text: 'נ× Leave', style: 'destructive', onPress: () => leaveGroup(item) }, { text: 'Cancel', style: 'cancel' }])}>
-        <View style={[s.avatar, { backgroundColor: '#EEF0FF' }]}>
-          <Text style={s.avatarText}>{item.avatar}</Text>
-          {isOpen && <View style={s.liveDot} />}
-        </View>
-        <View style={s.rowInfo}>
-          <View style={s.rowTop}>
-            <Text style={[s.rowName, hasUnread && s.rowNameBold]} numberOfLines={1}>{item.name}</Text>
-            {item.last_message_at && <Text style={[s.rowTime, hasUnread && { color: PRIMARY }]}>{formatTime(item.last_message_at)}</Text>}
-          </View>
-          <View style={s.rowBottom}>
-            <Text style={[s.rowLastMsg, hasUnread && s.rowLastMsgBold]} numberOfLines={1}>{item.last_message || (isOpen ? 'נ¢ Live now' : `ג³ ${item.member_count}/${item.min_members} to unlock`)}</Text>
-            {hasUnread && <View style={s.unreadBadge}><Text style={s.unreadBadgeText}>{item.unread > 99 ? '99+' : item.unread}</Text></View>}
-          </View>
-        </View>
-      </Pressable>
-    )
-  }
-
-  const renderDMRow = (item: ChatItem) => (
-    <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: item.other_user_id, userName: item.name, myMode: 'lit', myAvatar: 'נ’¬', isAgent: '0' } })}>
-      <View style={[s.avatar, { backgroundColor: '#E8F5F3' }]}>
-        <Text style={s.avatarText}>{item.avatar}</Text>
-      </View>
-      <View style={s.rowInfo}>
-        <View style={s.rowTop}>
-          <Text style={s.rowName} numberOfLines={1}>{item.name}</Text>
-          {item.last_message_at && <Text style={s.rowTime}>{formatTime(item.last_message_at)}</Text>}
-        </View>
-        <Text style={s.rowLastMsg} numberOfLines={1}>{item.last_message || 'Start chatting'}</Text>
-      </View>
-    </Pressable>
-  )
-
-  const chatsData = [
-    ...dms.map(d => ({ type: 'dm' as const, data: d })),
-    { type: 'divider' as const },
-    { type: 'search' as const },
-    ...filteredContacts.map(c => ({ type: 'contact' as const, data: c })),
-  ]
+  if (loading) return <View style={[s.container, { paddingTop: insets.top }]}><ActivityIndicator color={PRIMARY} style={{ flex: 1 }} /></View>
 
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <StatusBar barStyle="dark-content" backgroundColor={CARD} />
+      <StatusBar barStyle="dark-content" />
       <View style={s.header}>
-        <View style={s.headerLeft}>
-          <Text style={s.logo}>tryber</Text>
-          {totalUnread > 0 && <View style={s.totalUnread}><Text style={s.totalUnreadText}>{totalUnread > 99 ? '99+' : totalUnread}</Text></View>}
-        </View>
+        <Text style={s.logo}>tryber</Text>
         <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
           <Text style={s.createBtnText}>+ Trybe</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={s.tabRow}>
-        <TouchableOpacity style={[s.tabBtn, activeTab === 'trybes' && s.tabBtnActive]} onPress={() => setActiveTab('trybes')}>
-          <Text style={[s.tabBtnText, activeTab === 'trybes' && s.tabBtnTextActive]}>ג¡ Trybes {groups.length > 0 ? `(${groups.length})` : ''}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.tabBtn, activeTab === 'chats' && s.tabBtnActive]} onPress={() => setActiveTab('chats')}>
-          <Text style={[s.tabBtnText, activeTab === 'chats' && s.tabBtnTextActive]}>נ’¬ Chats {dms.length > 0 ? `(${dms.length})` : ''}</Text>
-        </TouchableOpacity>
+      <View style={s.tabs}>
+        {(['trybes', 'dms', 'contacts'] as Tab[]).map(t => (
+          <TouchableOpacity key={t} style={[s.tabBtn, tab === t && s.tabBtnActive]} onPress={() => setTab(t)}>
+            <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]}>
+              {t === 'trybes' ? `Trybes${groups.length > 0 ? ` (${groups.length})` : ''}` : t === 'dms' ? `Chats${dms.length > 0 ? ` (${dms.length})` : ''}` : 'Contacts'}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
-      {loading ? (
-        <View style={s.center}><ActivityIndicator color={PRIMARY} size="large" /></View>
-      ) : activeTab === 'trybes' ? (
-        <FlatList
-          data={groups}
-          keyExtractor={i => i.id}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadAll() }} tintColor={PRIMARY} />}
-          contentContainerStyle={groups.length === 0 ? s.listEmpty : { paddingVertical: 8 }}
-          ListEmptyComponent={
-            <View style={s.emptyState}>
-              <Text style={s.emptyEmoji}>ג¡</Text>
-              <Text style={s.emptyTitle}>No trybes yet</Text>
-              <Text style={s.emptySub}>Join groups on Explore or create your own</Text>
-              <TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/(tabs)/explore')}>
-                <Text style={s.emptyBtnText}>נ“¡ Explore Trybes</Text>
-              </TouchableOpacity>
-            </View>
-          }
-          renderItem={({ item }) => renderGroupRow(item)}
-          ItemSeparatorComponent={() => <View style={s.separator} />}
-        />
-      ) : (
-        <FlatList
-          data={chatsData}
-          keyExtractor={(item, i) => item.type === 'dm' ? item.data.id : item.type === 'contact' ? item.data.id : `${item.type}_${i}`}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadAll() }} tintColor={PRIMARY} />}
-          contentContainerStyle={{ paddingVertical: 8 }}
-          renderItem={({ item }) => {
-            if (item.type === 'dm') return renderDMRow(item.data)
-            if (item.type === 'divider') return (
-              <View style={s.sectionDivider}>
-                <Text style={s.sectionDividerText}>{contactsLoading ? 'Loading contacts...' : `Contacts ֲ· ${contacts.filter(c => c.onTryber).length} on Tryber`}</Text>
+      {tab === 'trybes' && (
+        <FlatList data={groups} keyExtractor={g => g.id}
+          contentContainerStyle={groups.length === 0 ? { flex: 1 } : {}}
+          ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>⚡</Text><Text style={s.emptyTitle}>No Trybes yet</Text><TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}><Text style={s.emptyBtnText}>Create a Trybe</Text></TouchableOpacity></View>}
+          renderItem={({ item: g }) => (
+            <Pressable style={s.row} onPress={() => router.push({ pathname: g.status === 'open' ? '/chat' : '/lobby', params: { id: g.id, name: g.name, members: g.member_count || '0' } })}>
+              <View style={[s.groupAvatar, g.status === 'open' && s.groupAvatarLive]}>
+                <Text style={s.groupAvatarText}>{g.name?.[0] || '⚡'}</Text>
+                {g.status === 'open' && <View style={s.liveDot} />}
               </View>
-            )
-            if (item.type === 'search') return (
-              <View style={s.searchRow}>
-                <TextInput style={s.searchInput} value={contactSearch} onChangeText={setContactSearch} placeholder="Search contacts..." placeholderTextColor="#B4B2A9" />
-              </View>
-            )
-            if (item.type === 'contact') {
-              const c = item.data
-              return (
-                <View style={s.contactRow}>
-                  <View style={[s.avatar, c.onTryber ? { backgroundColor: '#E8F5F3', borderWidth: 2, borderColor: TEAL } : { backgroundColor: '#F0F0F8' }]}>
-                    <Text style={s.avatarText}>{c.avatar_char || c.initials}</Text>
-                    {c.onTryber && <View style={[s.liveDot, { backgroundColor: TEAL }]} />}
-                  </View>
-                  <View style={s.rowInfo}>
-                    <Text style={s.rowName}>{c.name}</Text>
-                    <Text style={[s.rowLastMsg, c.onTryber && { color: TEAL }]}>{c.onTryber ? 'ג¦ On Tryber' : c.phone}</Text>
-                  </View>
-                  {c.onTryber ? (
-                    <TouchableOpacity style={s.contactActionBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: c.tryberUserId, userName: c.name, myMode: 'lit', myAvatar: 'נ’¬', isAgent: '0' } })}>
-                      <Text style={s.contactActionText}>Message</Text>
-                    </TouchableOpacity>
-                  ) : (
-                    <TouchableOpacity style={[s.contactActionBtn, { backgroundColor: '#F0F0F8' }]} onPress={() => inviteContact(c)}>
-                      <Text style={[s.contactActionText, { color: PRIMARY }]}>Invite</Text>
-                    </TouchableOpacity>
-                  )}
+              <View style={s.rowInfo}>
+                <View style={s.rowTop}>
+                  <Text style={s.rowName} numberOfLines={1}>{g.name}</Text>
+                  {g.lastMsg && <Text style={s.rowTime}>{fmt(g.lastMsg.created_at)}</Text>}
                 </View>
-              )
-            }
-            return null
-          }}
-          ItemSeparatorComponent={({ leadingItem }) => leadingItem?.type === 'divider' || leadingItem?.type === 'search' ? null : <View style={s.separator} />}
-        />
+                <Text style={s.rowSub} numberOfLines={1}>{g.lastMsg?.content || `${g.member_count || 0} members`}</Text>
+              </View>
+              {g.unread > 0 && <View style={s.unread}><Text style={s.unreadText}>{g.unread > 99 ? '99+' : g.unread}</Text></View>}
+            </Pressable>
+          )} />
+      )}
+
+      {tab === 'dms' && (
+        <FlatList data={dms} keyExtractor={d => d.otherId}
+          contentContainerStyle={dms.length === 0 ? { flex: 1 } : {}}
+          ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>💬</Text><Text style={s.emptyTitle}>No chats yet</Text><Text style={s.emptySub}>Find people on Explore</Text></View>}
+          renderItem={({ item: d }) => {
+            const displayName = contactNames[d.otherId] || d.profile?.display_name || d.profile?.username || 'User'
+            return (
+              <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: d.otherId, userName: displayName, myMode: d.myMode || 'lit', myAvatar: '💬', isAgent: '0' } })}>
+                <View style={s.dmAvatar}><Text style={s.dmAvatarText}>{d.profile?.avatar_char || displayName[0] || '?'}</Text></View>
+                <View style={s.rowInfo}>
+                  <View style={s.rowTop}>
+                    <Text style={s.rowName} numberOfLines={1}>{displayName}</Text>
+                    {d.lastMsg && <Text style={s.rowTime}>{fmt(d.lastMsg.created_at)}</Text>}
+                  </View>
+                  {contactNames[d.otherId] && contactNames[d.otherId] !== d.profile?.display_name && (
+                    <Text style={s.rowAppName}>App: {d.profile?.display_name}</Text>
+                  )}
+                  <Text style={s.rowSub} numberOfLines={1}>{d.lastMsg?.content}</Text>
+                </View>
+                {d.unread > 0 && <View style={s.unread}><Text style={s.unreadText}>{d.unread}</Text></View>}
+              </Pressable>
+            )
+          }} />
+      )}
+
+      {tab === 'contacts' && (
+        <View style={{ flex: 1 }}>
+          <View style={s.searchRow}>
+            <TextInput style={s.searchInput} value={search} onChangeText={setSearch} placeholder="Search contacts..." placeholderTextColor={GRAY} />
+          </View>
+          {contacts.some(c => c.onTryber) && (
+            <View style={s.statsBar}>
+              <Text style={s.statsText}><Text style={{ color: LIVE, fontWeight: '700' }}>{contacts.filter(c => c.onTryber).length}</Text> on Tryber · <Text style={{ color: GRAY }}>{contacts.filter(c => !c.onTryber).length} to invite</Text></Text>
+            </View>
+          )}
+          <FlatList data={filtered} keyExtractor={c => c.id}
+            ItemSeparatorComponent={() => <View style={{ height: 0.5, backgroundColor: BORDER, marginLeft: 76 }} />}
+            renderItem={({ item: c }) => (
+              <View style={s.contactRow}>
+                <View style={[s.cAvatar, c.onTryber && s.cAvatarTryber]}>
+                  <Text style={s.cInitials}>{c.initials}</Text>
+                  {c.onTryber && <View style={s.onTryberDot} />}
+                </View>
+                <View style={s.cInfo}>
+                  <Text style={s.cName}>{c.name}</Text>
+                  {c.onTryber && c.appName && c.appName !== c.name && <Text style={s.cAppName}>App: {c.appName}</Text>}
+                  <Text style={s.cPhone}>{c.phone}</Text>
+                </View>
+                {c.onTryber
+                  ? <TouchableOpacity style={s.msgBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: c.tryberUserId, userName: c.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}><Text style={s.msgBtnText}>💬 Message</Text></TouchableOpacity>
+                  : <TouchableOpacity style={s.inviteBtn} onPress={() => Alert.alert('Invite ' + c.name, 'How?', [{ text: '💚 WhatsApp', onPress: () => Linking.openURL('whatsapp://send?phone=' + c.phone + '&text=' + encodeURIComponent(INVITE_MSG)) }, { text: 'Cancel', style: 'cancel' }])}><Text style={s.inviteBtnText}>Invite</Text></TouchableOpacity>
+                }
+              </View>
+            )} />
+        </View>
       )}
     </View>
   )
@@ -319,47 +219,51 @@ export default function ChatsScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: BG },
-  center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  logo: { fontSize: 28, fontWeight: '900', color: PRIMARY, letterSpacing: -1 },
-  totalUnread: { backgroundColor: RED, borderRadius: 10, minWidth: 20, height: 20, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
-  totalUnreadText: { color: '#fff', fontSize: 11, fontWeight: '800' },
-  createBtn: { backgroundColor: PRIMARY, paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20 },
-  createBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  tabRow: { flexDirection: 'row', backgroundColor: CARD, paddingHorizontal: 16, paddingVertical: 8, gap: 8, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  tabBtn: { flex: 1, paddingVertical: 9, borderRadius: 12, backgroundColor: '#F0F0F8', alignItems: 'center' },
-  tabBtnActive: { backgroundColor: PRIMARY },
-  tabBtnText: { fontSize: 13, fontWeight: '700', color: GRAY },
-  tabBtnTextActive: { color: '#fff' },
-  listEmpty: { flex: 1 },
-  emptyState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 80, paddingHorizontal: 32, gap: 12 },
-  emptyEmoji: { fontSize: 52, marginBottom: 8 },
-  emptyTitle: { fontSize: 22, fontWeight: '800', color: TEXT },
-  emptySub: { fontSize: 14, color: GRAY, textAlign: 'center' },
-  emptyBtn: { backgroundColor: PRIMARY, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20, width: '100%', alignItems: 'center' },
-  emptyBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD },
-  avatar: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center', position: 'relative' },
-  avatarText: { fontSize: 24 },
-  liveDot: { position: 'absolute', bottom: 1, right: 1, width: 12, height: 12, borderRadius: 6, backgroundColor: TEAL, borderWidth: 2, borderColor: CARD },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
+  logo: { fontSize: 28, fontWeight: '800', color: PRIMARY, letterSpacing: -0.5 },
+  createBtn: { backgroundColor: PRIMARY, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 20 },
+  createBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  tabs: { flexDirection: 'row', backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
+  tabBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
+  tabBtnActive: { borderBottomWidth: 2, borderBottomColor: PRIMARY },
+  tabBtnText: { fontSize: 13, color: GRAY, fontWeight: '500' },
+  tabBtnTextActive: { color: PRIMARY, fontWeight: '700' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
+  groupAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: BORDER, position: 'relative' },
+  groupAvatarLive: { borderColor: LIVE },
+  groupAvatarText: { fontSize: 22 },
+  liveDot: { position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: LIVE, borderWidth: 2, borderColor: CARD },
+  dmAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
+  dmAvatarText: { fontSize: 22 },
   rowInfo: { flex: 1 },
-  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  rowName: { fontSize: 15, fontWeight: '600', color: TEXT, flex: 1 },
-  rowNameBold: { fontWeight: '800' },
+  rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
+  rowName: { fontSize: 15, fontWeight: '600', color: TEXT, flex: 1, marginRight: 8 },
   rowTime: { fontSize: 11, color: GRAY },
-  rowBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  rowLastMsg: { fontSize: 13, color: GRAY, flex: 1 },
-  rowLastMsgBold: { color: TEXT, fontWeight: '600' },
-  unreadBadge: { backgroundColor: PRIMARY, borderRadius: 12, minWidth: 22, height: 22, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
-  unreadBadgeText: { color: '#fff', fontSize: 12, fontWeight: '800' },
-  separator: { height: 0.5, backgroundColor: '#EBEBEB', marginLeft: 80 },
-  sectionDivider: { backgroundColor: '#F0F0F8', paddingHorizontal: 16, paddingVertical: 8 },
-  sectionDividerText: { fontSize: 12, color: GRAY, fontWeight: '600', letterSpacing: 0.3 },
-  searchRow: { paddingHorizontal: 16, paddingVertical: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: '#EBEBEB' },
-  searchInput: { backgroundColor: '#F0F0F8', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 14, color: TEXT },
+  rowAppName: { fontSize: 11, color: GRAY, fontStyle: 'italic' },
+  rowSub: { fontSize: 13, color: GRAY },
+  unread: { minWidth: 20, height: 20, borderRadius: 10, borderWidth: 1.5, borderColor: PRIMARY, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  unreadText: { fontSize: 10, color: PRIMARY, fontWeight: '700' },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+  emptyEmoji: { fontSize: 56, marginBottom: 16 },
+  emptyTitle: { fontSize: 20, fontWeight: '700', color: TEXT, marginBottom: 8 },
+  emptySub: { fontSize: 14, color: GRAY },
+  emptyBtn: { backgroundColor: PRIMARY, paddingHorizontal: 24, paddingVertical: 12, borderRadius: 20, marginTop: 16 },
+  emptyBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  searchRow: { padding: 12, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
+  searchInput: { backgroundColor: BG, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, color: TEXT },
+  statsBar: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#E8F5E9' },
+  statsText: { fontSize: 13 },
   contactRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD },
-  contactActionBtn: { backgroundColor: '#E8F5F3', paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16 },
-  contactActionText: { fontSize: 13, color: TEAL, fontWeight: '700' },
+  cAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', position: 'relative', borderWidth: 1, borderColor: BORDER },
+  cAvatarTryber: { backgroundColor: '#E8F5E9', borderColor: LIVE, borderWidth: 2 },
+  cInitials: { fontSize: 16, fontWeight: '700', color: TEXT },
+  onTryberDot: { position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: LIVE, borderWidth: 2, borderColor: CARD },
+  cInfo: { flex: 1 },
+  cName: { fontSize: 15, fontWeight: '600', color: TEXT, marginBottom: 1 },
+  cAppName: { fontSize: 11, color: GRAY, fontStyle: 'italic', marginBottom: 1 },
+  cPhone: { fontSize: 12, color: GRAY },
+  msgBtn: { backgroundColor: '#E8F5E9', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 },
+  msgBtnText: { fontSize: 12, color: LIVE, fontWeight: '600' },
+  inviteBtn: { backgroundColor: '#EEF0FF', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 },
+  inviteBtnText: { fontSize: 12, color: PRIMARY, fontWeight: '600' },
 })
-
