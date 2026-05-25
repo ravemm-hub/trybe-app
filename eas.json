@@ -11,12 +11,12 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk",
-        "image": "ubuntu-22.04-jdk-17-ndk-r26b"
+        "image": "ubuntu-24.04-jdk-17-ndk-r27b-sdk-55"
       }
     },
     "production": {
       "android": {
-        "image": "ubuntu-22.04-jdk-17-ndk-r26b"
+        "image": "ubuntu-24.04-jdk-17-ndk-r27b-sdk-55"
       }
     }
   },
