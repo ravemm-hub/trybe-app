@@ -33,6 +33,14 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "2.1.20"
+          }
+        }
+      ],
       ["expo-notifications", {
         "color": "#6C63FF",
         "defaultChannel": "default"
