@@ -33,19 +33,32 @@
     },
     "plugins": [
       "expo-router",
-      ["expo-notifications", {
-        "color": "#6C63FF",
-        "defaultChannel": "default"
-      }],
-      ["expo-location", {
-        "locationAlwaysAndWhenInUsePermission": "Allow Tryber to use your location to find people nearby."
-      }],
-      ["expo-contacts", {
-        "contactsPermission": "Allow Tryber to access your contacts to find friends."
-      }],
-      ["expo-calendar", {
-        "calendarPermission": "Allow Tryber to add events to your calendar."
-      }]
+      [
+        "expo-notifications",
+        {
+          "color": "#6C63FF",
+          "defaultChannel": "default"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Allow Tryber to use your location to find people nearby."
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Allow Tryber to access your contacts to find friends."
+        }
+      ],
+      [
+        "expo-calendar",
+        {
+          "calendarPermission": "Allow Tryber to add events to your calendar."
+        }
+      ],
+      "expo-build-properties"
     ],
     "experiments": {
       "typedRoutes": true
