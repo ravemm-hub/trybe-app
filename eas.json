@@ -1,7 +1,6 @@
 {
   "cli": {
-    "version": ">= 18.6.0",
-    "appVersionSource": "remote"
+    "version": ">= 16.0.0"
   },
   "build": {
     "development": {
@@ -9,10 +8,16 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "image": "ubuntu-22.04-jdk-17-ndk-r25c"
+      }
     },
     "production": {
-      "autoIncrement": true
+      "android": {
+        "image": "ubuntu-22.04-jdk-17-ndk-r25c"
+      }
     }
   },
   "submit": {
