@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import { supabase } from '../src/lib/supabase'
+import { askClaude } from '../src/lib/claude'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../src/constants'
 
 type GroupType = 'open' | 'private' | 'secret'
@@ -28,6 +29,7 @@ export default function CreateScreen() {
   const [locationName, setLocationName] = useState('')
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
   const [creating, setCreating] = useState(false)
+  const [generatingName, setGeneratingName] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id) })
@@ -45,8 +47,22 @@ export default function CreateScreen() {
     } catch {}
   }
 
+  const generateName = async () => {
+    setGeneratingName(true)
+    try {
+      const context = locationName ? 'Location: ' + locationName + '. ' : ''
+      const type = groupType === 'open' ? 'open social' : groupType === 'private' ? 'private' : 'secret'
+      const result = await askClaude(
+        context + 'Generate ONE creative, catchy group name for a ' + type + ' social group. Short (2-4 words max). Fun and modern. Just the name, nothing else.',
+        undefined, 30
+      )
+      if (result) setName(result.trim().replace(/['"]/g, ''))
+    } catch {}
+    setGeneratingName(false)
+  }
+
   const create = async () => {
-    if (!name.trim()) { Alert.alert('Name required', 'Please enter a group name'); return }
+    if (!name.trim()) { Alert.alert('Name required', 'Please enter a group name or generate one'); return }
     if (!userId) return
     setCreating(true)
     try {
@@ -67,14 +83,14 @@ export default function CreateScreen() {
       if (coords) groupData.location = 'POINT(' + coords.lon + ' ' + coords.lat + ')'
 
       const { data: group, error } = await supabase.from('groups').insert(groupData).select().single()
-      if (error || !group) throw error
+      if (error || !group) throw error || new Error('Failed to create group')
 
       await supabase.from('group_members').insert({ group_id: group.id, user_id: userId, role: 'admin' })
 
       if (groupType === 'secret' && inviteCode) {
         Alert.alert(
-          '🕵️ Secret Group Created!',
-          'Invite Code: ' + inviteCode + '\n\nShare this code with people you want to invite. It is valid for 24 hours per use.',
+          '🕵️ Secret Trybe Created!',
+          'Invite Code: ' + inviteCode + '\n\nShare this code with people you want to invite.',
           [{ text: 'Got it', onPress: () => router.replace({ pathname: '/chat', params: { id: group.id, name: group.name, members: '1' } }) }]
         )
       } else {
@@ -98,13 +114,12 @@ export default function CreateScreen() {
 
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
 
-        {/* Group Type */}
         <Text style={s.label}>TYPE</Text>
         {GROUP_TYPES.map(gt => (
           <TouchableOpacity key={gt.type} style={[s.typeCard, groupType === gt.type && s.typeCardActive]} onPress={() => setGroupType(gt.type)}>
             <View style={s.typeCardLeft}>
               <Text style={s.typeEmoji}>{gt.emoji}</Text>
-              <View>
+              <View style={{ flex: 1 }}>
                 <Text style={[s.typeLabel, groupType === gt.type && { color: PRIMARY }]}>{gt.label}</Text>
                 <Text style={s.typeDesc}>{gt.desc}</Text>
               </View>
@@ -115,41 +130,37 @@ export default function CreateScreen() {
           </TouchableOpacity>
         ))}
 
-        {/* Name */}
-        <Text style={s.label}>NAME *</Text>
-        <TextInput style={s.input} value={name} onChangeText={setName} placeholder="e.g. Friday Night Drinks" placeholderTextColor={GRAY} maxLength={50} />
+        <Text style={s.label}>NAME</Text>
+        <View style={s.nameRow}>
+          <TextInput style={[s.input, { flex: 1 }]} value={name} onChangeText={setName}
+            placeholder="Group name..." placeholderTextColor={GRAY} maxLength={50} />
+          <TouchableOpacity style={s.aiBtn} onPress={generateName} disabled={generatingName}>
+            {generatingName
+              ? <ActivityIndicator color={PRIMARY} size="small" />
+              : <Text style={s.aiBtnText}>✦ AI</Text>}
+          </TouchableOpacity>
+        </View>
 
-        {/* Description */}
         <Text style={s.label}>DESCRIPTION</Text>
-        <TextInput style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]} value={description} onChangeText={setDescription} placeholder="What's this Trybe about?" placeholderTextColor={GRAY} multiline maxLength={200} />
+        <TextInput style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]}
+          value={description} onChangeText={setDescription}
+          placeholder="What's this Trybe about?" placeholderTextColor={GRAY} multiline maxLength={200} />
 
-        {/* Location */}
         {locationName ? (
           <View style={s.locationRow}>
-            <Text style={s.locationIcon}>📍</Text>
+            <Text style={{ fontSize: 18 }}>📍</Text>
             <Text style={s.locationText}>{locationName}</Text>
           </View>
         ) : null}
 
-        {/* Info cards */}
-        {groupType === 'open' && (
-          <View style={s.infoCard}>
-            <Text style={s.infoText}>⚡ Your group opens immediately. Agents will join and start chatting. If no one else joins in 30 days, it auto-archives.</Text>
-          </View>
-        )}
-        {groupType === 'private' && (
-          <View style={s.infoCard}>
-            <Text style={s.infoText}>🔒 Visible in Explore with a lock icon. People can request to join — you approve them as Admin.</Text>
-          </View>
-        )}
-        {groupType === 'secret' && (
-          <View style={[s.infoCard, { borderColor: PRIMARY }]}>
-            <Text style={s.infoText}>🕵️ A 6-digit invite code will be generated. Share it with people you want to invite. Each code use is single-session only.</Text>
-          </View>
-        )}
+        {groupType === 'open' && <View style={s.infoCard}><Text style={s.infoText}>⚡ Opens immediately. Auto-archives after 30 days if no one joins.</Text></View>}
+        {groupType === 'private' && <View style={s.infoCard}><Text style={s.infoText}>🔒 Visible in Explore with a lock icon. You approve join requests.</Text></View>}
+        {groupType === 'secret' && <View style={[s.infoCard, { borderColor: PRIMARY }]}><Text style={s.infoText}>🕵️ A 6-digit invite code will be generated. Single-use per person.</Text></View>}
 
         <TouchableOpacity style={[s.createBtn, (!name.trim() || creating) && s.createBtnOff]} onPress={create} disabled={!name.trim() || creating}>
-          {creating ? <ActivityIndicator color="#fff" /> : <Text style={s.createBtnText}>{groupType === 'secret' ? '🕵️ Create Secret Trybe' : groupType === 'private' ? '🔒 Create Private Trybe' : '⚡ Create Trybe'}</Text>}
+          {creating ? <ActivityIndicator color="#fff" /> : <Text style={s.createBtnText}>
+            {groupType === 'secret' ? '🕵️ Create Secret Trybe' : groupType === 'private' ? '🔒 Create Private Trybe' : '⚡ Create Trybe'}
+          </Text>}
         </TouchableOpacity>
 
         <View style={{ height: 40 }} />
@@ -171,13 +182,15 @@ const s = StyleSheet.create({
   typeCardLeft: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, flex: 1 },
   typeEmoji: { fontSize: 24, marginTop: 2 },
   typeLabel: { fontSize: 15, fontWeight: '700', color: TEXT, marginBottom: 2 },
-  typeDesc: { fontSize: 12, color: GRAY, lineHeight: 16, flex: 1 },
+  typeDesc: { fontSize: 12, color: GRAY, lineHeight: 16 },
   typeRadio: { width: 20, height: 20, borderRadius: 10, borderWidth: 2, borderColor: BORDER, alignItems: 'center', justifyContent: 'center' },
   typeRadioActive: { borderColor: PRIMARY },
   typeRadioInner: { width: 10, height: 10, borderRadius: 5, backgroundColor: PRIMARY },
+  nameRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   input: { backgroundColor: CARD, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: BORDER },
+  aiBtn: { backgroundColor: '#EEF0FF', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: PRIMARY, minWidth: 60 },
+  aiBtnText: { color: PRIMARY, fontWeight: '700', fontSize: 13 },
   locationRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 16, backgroundColor: CARD, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: BORDER },
-  locationIcon: { fontSize: 18 },
   locationText: { fontSize: 14, color: GRAY },
   infoCard: { backgroundColor: '#F5F4FF', borderRadius: 12, padding: 14, marginTop: 16, borderWidth: 1, borderColor: BORDER },
   infoText: { fontSize: 13, color: GRAY, lineHeight: 20 },
