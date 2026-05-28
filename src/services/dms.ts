@@ -1,10 +1,11 @@
 ﻿import { supabase } from '../lib/supabase'
 
-export async function sendDM(params: { id?: string; senderId: string; receiverId: string; content: string; senderMode?: string; receiverMode?: string; replyToId?: string | null; replyPreview?: string | null }) {
+export async function sendDM(params: { id?: string; senderId: string; receiverId: string; content: string; senderMode?: string; receiverMode?: string; replyToId?: string | null; replyPreview?: string | null; mediaUrl?: string | null; mediaType?: string }) {
   const row: any = {
     sender_id: params.senderId, receiver_id: params.receiverId, content: params.content,
     sender_mode: params.senderMode || 'lit', receiver_mode: params.receiverMode || 'lit',
     reply_to_id: params.replyToId || null, reply_preview: params.replyPreview || null,
+    media_url: params.mediaUrl || null, media_type: params.mediaType || null,
   }
   if (params.id) row.id = params.id
   return supabase.from('dm_messages').insert(row)

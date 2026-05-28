@@ -1,5 +1,5 @@
 ﻿export type UserMode = 'lit' | 'ghost'
-export type MsgType = 'text' | 'image' | 'system' | 'poll'
+export type MsgType = 'text' | 'image' | 'system' | 'poll' | 'audio' | 'file'
 export type GroupStatus = 'lobby' | 'open' | 'archived'
 export type ReceiptStatus = 'sent' | 'delivered' | 'read'
 
@@ -30,6 +30,7 @@ export interface DmMessage {
   read_at: string | null; delivered_at: string | null
   edited_at: string | null; deleted_for_all: boolean
   is_forwarded: boolean; reply_to_id: string | null; reply_preview: string | null
+  media_url?: string | null; media_type?: string | null
   created_at: string
 }
 

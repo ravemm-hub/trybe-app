@@ -1,12 +1,13 @@
 ﻿import { supabase } from '../lib/supabase'
 import { EDGE_URL, EDGE_AUTH } from '../constants'
 
-export async function sendMessage(params: { id?: string; groupId: string; userId: string; content: string; senderMode?: string; replyToId?: string | null; replyPreview?: string | null; isForwarded?: boolean }) {
+export async function sendMessage(params: { id?: string; groupId: string; userId: string; content: string; senderMode?: string; replyToId?: string | null; replyPreview?: string | null; isForwarded?: boolean; mediaUrl?: string | null; kind?: string }) {
   const row: any = {
-    group_id: params.groupId, user_id: params.userId, type: 'text',
+    group_id: params.groupId, user_id: params.userId, type: params.kind || 'text',
     content: params.content, sender_mode: params.senderMode || 'lit',
     reply_to_id: params.replyToId || null, reply_preview: params.replyPreview || null,
     is_forwarded: params.isForwarded || false,
+    media_url: params.mediaUrl || null,
   }
   if (params.id) row.id = params.id
   const { error } = await supabase.from('messages').insert(row)

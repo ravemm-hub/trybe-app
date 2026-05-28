@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Alert, Modal, Pressable } from 'react-native'
+import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Alert, Modal, Pressable, ActivityIndicator } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
@@ -7,6 +7,9 @@ import { supabase } from '../src/lib/supabase'
 import { sendMessage, editMessage, deleteMessage, markGroupRead } from '../src/services/messages'
 import { translateText } from '../src/lib/claude'
 import { uuidv4 } from '../src/lib/uuid'
+import { useChatAttachments } from '../src/hooks/useChatAttachments'
+import { MediaBubble } from '../src/components/MediaBubble'
+import { MediaKind } from '../src/lib/upload'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS } from '../src/constants'
 import { Message } from '../src/types'
 
@@ -86,6 +89,21 @@ export default function ChatScreen() {
     const err = await sendMessage({ id: mid, groupId: id, userId, content: text, senderMode, replyToId: curReply?.id || null, replyPreview: curReply?.content?.slice(0, 60) || null })
     if (err) setMessages(prev => prev.filter(m => m.id !== mid))
   }
+
+  const sendMedia = async (url: string, kind: MediaKind) => {
+    if (!userId) return
+    const mid = uuidv4()
+    const optimistic = {
+      id: mid, group_id: id, user_id: userId, type: kind, content: '', media_url: url,
+      sender_mode: senderMode, reply_to_id: null, reply_preview: null,
+      edited_at: null, deleted_for_all: false, is_forwarded: false, poll_id: null, created_at: new Date().toISOString(),
+    } as unknown as Message
+    setMessages(prev => [...prev, optimistic])
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
+    const err = await sendMessage({ id: mid, groupId: id, userId, content: '', senderMode, mediaUrl: url, kind })
+    if (err) setMessages(prev => prev.filter(m => m.id !== mid))
+  }
+  const att = useChatAttachments(sendMedia)
 
   const handleLongPress = (msg: Message) => { setSelectedMsg(msg); setShowMenu(true) }
 
@@ -197,7 +215,8 @@ export default function ChatScreen() {
                     )}
                     {msg.is_forwarded && <Text style={s.forwarded}>↪️ Forwarded</Text>}
                     <View style={[s.bubble, isMe ? (isGhost ? s.bubbleMeGhost : s.bubbleMe) : agentMsg ? s.bubbleAgent : s.bubbleThem]}>
-                      <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text>
+                      {msg.media_url ? <MediaBubble url={msg.media_url} kind={msg.type} isMe={isMe} /> : null}
+                      {msg.content ? <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text> : null}
                       {translations[msg.id] && (
                         <Text style={[s.translated, isMe && { color: 'rgba(255,255,255,0.85)', borderTopColor: 'rgba(255,255,255,0.3)' }]}>🌐 {translations[msg.id]}</Text>
                       )}
@@ -269,14 +288,25 @@ export default function ChatScreen() {
       )}
 
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 8 : 0}>
-        <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          <TextInput style={s.input} value={draft} onChangeText={setDraft}
-            placeholder={editingMsg ? 'Edit message...' : (senderMode === 'ghost' ? '👻 Anonymous message...' : 'Message...')}
-            placeholderTextColor={GRAY} multiline returnKeyType="send" onSubmitEditing={send} />
-          <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={send} disabled={!draft.trim()}>
-            <Text style={s.sendBtnText}>{editingMsg ? '✓' : '↑'}</Text>
-          </TouchableOpacity>
-        </View>
+        {att.isRecording ? (
+          <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <View style={s.recordBar}><View style={s.recDot} /><Text style={s.recText}>Recording voice note…</Text></View>
+            <TouchableOpacity style={s.attachBtn} onPress={att.cancelRecording}><Text style={{ fontSize: 18, color: DANGER }}>✕</Text></TouchableOpacity>
+            <TouchableOpacity style={s.sendBtn} onPress={att.stopAndSendRecording}><Text style={s.sendBtnText}>↑</Text></TouchableOpacity>
+          </View>
+        ) : (
+          <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <TouchableOpacity style={s.attachBtn} onPress={att.openMenu} disabled={att.uploading}>
+              {att.uploading ? <ActivityIndicator color={PRIMARY} size="small" /> : <Text style={s.attachIcon}>＋</Text>}
+            </TouchableOpacity>
+            <TextInput style={s.input} value={draft} onChangeText={setDraft}
+              placeholder={editingMsg ? 'Edit message...' : (senderMode === 'ghost' ? '👻 Anonymous message...' : 'Message...')}
+              placeholderTextColor={GRAY} multiline returnKeyType="send" onSubmitEditing={send} />
+            <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={send} disabled={!draft.trim()}>
+              <Text style={s.sendBtnText}>{editingMsg ? '✓' : '↑'}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </KeyboardAvoidingView>
     </View>
   )
@@ -341,6 +371,11 @@ const s = StyleSheet.create({
   replyPreviewInputText: { flex: 1, fontSize: 13, color: GRAY },
   inputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8, backgroundColor: CARD, borderTopWidth: 0.5, borderColor: BORDER },
   input: { flex: 1, backgroundColor: BG, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: TEXT, maxHeight: 100, borderWidth: 1, borderColor: BORDER },
+  attachBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: BORDER },
+  attachIcon: { fontSize: 24, color: PRIMARY, fontWeight: '700', marginTop: -2 },
+  recordBar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: BG, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 12, borderWidth: 1, borderColor: BORDER },
+  recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: DANGER },
+  recText: { fontSize: 14, color: TEXT },
   sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
   sendBtnOff: { opacity: 0.4 },
   sendBtnText: { color: '#fff', fontSize: 20, fontWeight: '700' },

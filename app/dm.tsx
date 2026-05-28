@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Alert, Modal } from 'react-native'
+import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Alert, Modal, ActivityIndicator } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
@@ -7,8 +7,11 @@ import { supabase } from '../src/lib/supabase'
 import { sendDM, markDMRead, markDMDelivered, editDM, deleteDM, getReceiptStatus } from '../src/services/dms'
 import { askClaude, translateText } from '../src/lib/claude'
 import { uuidv4 } from '../src/lib/uuid'
+import { useChatAttachments } from '../src/hooks/useChatAttachments'
+import { MediaBubble } from '../src/components/MediaBubble'
+import { MediaKind } from '../src/lib/upload'
 import { getContactName } from '../src/lib/contacts'
-import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, AGENT_IDS, AGENTS } from '../src/constants'
+import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS, AGENTS } from '../src/constants'
 import { DmMessage } from '../src/types'
 
 const LANGS = ['English', 'Hebrew', 'Arabic', 'Russian', 'French', 'Spanish']
@@ -116,6 +119,21 @@ export default function DMScreen() {
     }
   }, [draft, myId, otherUserId, replyTo, translateTo, editingMsg, talkingToAgent, agentInfo, initMode])
 
+  const sendMediaDM = async (url: string, kind: MediaKind) => {
+    if (!myId || !otherUserId) return
+    const mid = uuidv4()
+    const optimistic = {
+      id: mid, sender_id: myId, receiver_id: otherUserId, content: '', sender_mode: initMode || 'lit', receiver_mode: 'lit',
+      read_at: null, delivered_at: null, edited_at: null, deleted_for_all: false, is_forwarded: false,
+      reply_to_id: null, reply_preview: null, media_url: url, media_type: kind, created_at: new Date().toISOString(),
+    } as unknown as DmMessage
+    setMessages(prev => [...prev, optimistic])
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
+    const { error: e } = await sendDM({ id: mid, senderId: myId, receiverId: otherUserId, content: '', senderMode: initMode || 'lit', mediaUrl: url, mediaType: kind })
+    if (e) setMessages(prev => prev.filter(m => m.id !== mid))
+  }
+  const att = useChatAttachments(sendMediaDM)
+
   const handleLongPress = (msg: DmMessage) => { setSelectedMsg(msg); setShowMenu(true) }
 
   const copyMessage = async (msg: DmMessage) => {
@@ -172,7 +190,8 @@ export default function DMScreen() {
                   </View>
                 )}
                 <View style={[s.bubble, isMe ? s.bubbleMe : s.bubbleThem]}>
-                  <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text>
+                  {msg.media_url ? <MediaBubble url={msg.media_url} kind={msg.media_type || undefined} isMe={isMe} /> : null}
+                  {msg.content ? <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text> : null}
                   {translations[msg.id] && (
                     <Text style={[s.translated, isMe && { color: 'rgba(255,255,255,0.85)', borderTopColor: 'rgba(255,255,255,0.3)' }]}>🌐 {translations[msg.id]}</Text>
                   )}
@@ -202,17 +221,28 @@ export default function DMScreen() {
           </View>
         )}
 
-        <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          {translateTo && !talkingToAgent && (
-            <View style={s.transIndicator}><Text style={s.transIndicatorText}>🌐 → {translateTo}</Text></View>
-          )}
-          <TextInput style={s.input} value={draft} onChangeText={setDraft}
-            placeholder={editingMsg ? 'Edit message...' : 'Message...'}
-            placeholderTextColor={GRAY} multiline returnKeyType="send" onSubmitEditing={sendMessage} />
-          <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={sendMessage} disabled={!draft.trim()}>
-            <Text style={s.sendBtnText}>{editingMsg ? '✓' : '↑'}</Text>
-          </TouchableOpacity>
-        </View>
+        {att.isRecording ? (
+          <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            <View style={s.recordBar}><View style={s.recDot} /><Text style={s.recText}>Recording voice note…</Text></View>
+            <TouchableOpacity style={s.attachBtn} onPress={att.cancelRecording}><Text style={{ fontSize: 18, color: DANGER }}>✕</Text></TouchableOpacity>
+            <TouchableOpacity style={s.sendBtn} onPress={att.stopAndSendRecording}><Text style={s.sendBtnText}>↑</Text></TouchableOpacity>
+          </View>
+        ) : (
+          <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+            {translateTo && !talkingToAgent && (
+              <View style={s.transIndicator}><Text style={s.transIndicatorText}>🌐 → {translateTo}</Text></View>
+            )}
+            <TouchableOpacity style={s.attachBtn} onPress={att.openMenu} disabled={att.uploading}>
+              {att.uploading ? <ActivityIndicator color={PRIMARY} size="small" /> : <Text style={s.attachIcon}>＋</Text>}
+            </TouchableOpacity>
+            <TextInput style={s.input} value={draft} onChangeText={setDraft}
+              placeholder={editingMsg ? 'Edit message...' : 'Message...'}
+              placeholderTextColor={GRAY} multiline returnKeyType="send" onSubmitEditing={sendMessage} />
+            <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={sendMessage} disabled={!draft.trim()}>
+              <Text style={s.sendBtnText}>{editingMsg ? '✓' : '↑'}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </KeyboardAvoidingView>
 
       <Modal visible={showTranslate} transparent animationType="slide" onRequestClose={() => setShowTranslate(false)}>
@@ -293,6 +323,11 @@ const s = StyleSheet.create({
   transIndicatorText: { fontSize: 11, color: PRIMARY, fontWeight: '600' },
   inputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8, backgroundColor: CARD, borderTopWidth: 0.5, borderColor: BORDER },
   input: { flex: 1, backgroundColor: BG, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: TEXT, maxHeight: 100, borderWidth: 1, borderColor: BORDER },
+  attachBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: BORDER },
+  attachIcon: { fontSize: 24, color: PRIMARY, fontWeight: '700', marginTop: -2 },
+  recordBar: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: BG, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 12, borderWidth: 1, borderColor: BORDER },
+  recDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: DANGER },
+  recText: { fontSize: 14, color: TEXT },
   sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
   sendBtnOff: { opacity: 0.4 },
   sendBtnText: { color: '#fff', fontSize: 20, fontWeight: '700' },
