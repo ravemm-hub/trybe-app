@@ -98,6 +98,8 @@ export default function ExploreScreen() {
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
       const { latitude, longitude } = loc.coords
       await supabase.from('user_locations').upsert({ user_id: userId, location: 'POINT(' + longitude + ' ' + latitude + ')', radar_on: true, identity_mode: myMode, updated_at: new Date().toISOString() })
+      // Seed nearby AI agents around the user so the radar isn't empty.
+      await supabase.rpc('place_agents_near_user', { user_id_input: userId })
       loadNearby(latitude, longitude)
     } catch { setRadarOn(false) }
   }
