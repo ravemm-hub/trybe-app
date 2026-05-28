@@ -2,9 +2,16 @@
 // Claude proxy so the ANTHROPIC_API_KEY stays server-side (never shipped in the app bundle).
 // - POST { prompt, system?, max_tokens?, model? } -> { text }
 // - POST {} (or no prompt) -> { ok: true }  (used as a lightweight ping after sending messages)
+// Protections: per-IP rate limit (DB-backed, fail-open) + per-request caps on prompt size / max_tokens.
 
 const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') ?? ''
+const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
+const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001'
+
+const MAX_PROMPT_CHARS = 8000
+const MAX_OUTPUT_TOKENS = 1024
+const RATE_PER_MIN = 30 // requests per minute per IP
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -14,6 +21,24 @@ const CORS = {
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...CORS, 'Content-Type': 'application/json' } })
+
+// DB-backed sliding limiter. Fails OPEN (returns true) if anything goes wrong, so the
+// app never breaks just because the limiter is unavailable.
+async function rateOk(ip: string): Promise<boolean> {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return true
+  const bucket = ip + ':' + Math.floor(Date.now() / 60000)
+  try {
+    const res = await fetch(SUPABASE_URL + '/rest/v1/rpc/edge_rate_hit', {
+      method: 'POST',
+      headers: { apikey: SUPABASE_ANON_KEY, Authorization: 'Bearer ' + SUPABASE_ANON_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_bucket: bucket, p_limit: RATE_PER_MIN }),
+    })
+    if (!res.ok) return true
+    return (await res.json()) === true
+  } catch {
+    return true
+  }
+}
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
@@ -28,8 +53,14 @@ Deno.serve(async (req) => {
 
   const prompt = (payload.prompt ?? '').trim()
   if (!prompt) return json({ ok: true })
+  if (prompt.length > MAX_PROMPT_CHARS) return json({ error: 'Prompt too long', text: '' }, 413)
+
+  const ip = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || 'unknown'
+  if (!(await rateOk(ip))) return json({ error: 'Rate limit exceeded. Try again shortly.', text: '' }, 429)
 
   if (!ANTHROPIC_API_KEY) return json({ error: 'Server not configured' }, 500)
+
+  const maxTokens = Math.min(Math.max(Number(payload.max_tokens) || 200, 1), MAX_OUTPUT_TOKENS)
 
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -41,7 +72,7 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         model: payload.model || DEFAULT_MODEL,
-        max_tokens: payload.max_tokens ?? 200,
+        max_tokens: maxTokens,
         system: payload.system || undefined,
         messages: [{ role: 'user', content: prompt }],
       }),
