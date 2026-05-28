@@ -122,7 +122,7 @@ export default function AgentScreen() {
         ) : null}
       />
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 8}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 8 : 0}>
         <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           {credits <= 0
             ? <View style={s.noCredits}><Text style={s.noCreditsText}>✦ Daily credits used. Resets at midnight.</Text></View>

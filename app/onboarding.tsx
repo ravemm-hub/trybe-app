@@ -159,7 +159,7 @@ export default function OnboardingScreen() {
       </ScrollView>
 
       {step !== 'welcome' && step !== 'done' && (
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 8}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 8 : 0}>
           <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
             <TextInput style={s.input} value={input} onChangeText={setInput}
               placeholder={step === 'name' ? 'Your name...' : step === 'phone' ? '0501234567' : 'Tell me about yourself...'}
