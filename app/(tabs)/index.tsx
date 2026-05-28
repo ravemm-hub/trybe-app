@@ -6,7 +6,7 @@ import { supabase } from '../../src/lib/supabase'
 import { getContactName, normalizePhone } from '../../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, INVITE_MSG, AGENT_IDS } from '../../src/constants'
 
-type Tab = 'trybes' | 'dms' | 'spaces' | 'contacts'
+type Tab = 'trybes' | 'dms' | 'spaces'
 
 export default function ChatsScreen() {
   const router = useRouter()
@@ -155,7 +155,8 @@ export default function ChatsScreen() {
     return d.toLocaleDateString('en', { day: 'numeric', month: 'short' })
   }
 
-  const filtered = search.trim() ? contacts.filter(c => c.name.toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search)) : contacts
+  // Contacts who are NOT on the app — shown at the bottom of Chats to invite.
+  const inviteContacts = contacts.filter(c => !c.onTryber)
 
   if (loading) return <View style={[s.container, { paddingTop: insets.top }]}><ActivityIndicator color={PRIMARY} style={{ flex: 1 }} /></View>
 
@@ -174,13 +175,12 @@ export default function ChatsScreen() {
       </View>
 
       <View style={s.tabs}>
-        {(['trybes', 'dms', 'spaces', 'contacts'] as Tab[]).map(t => (
+        {(['trybes', 'dms', 'spaces'] as Tab[]).map(t => (
           <TouchableOpacity key={t} style={[s.tabBtn, tab === t && s.tabBtnActive]} onPress={() => setTab(t)}>
             <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]}>
               {t === 'trybes' ? `Trybes${groups.length > 0 ? ` (${groups.length})` : ''}`
                 : t === 'dms' ? `Chats${dms.length > 0 ? ` (${dms.length})` : ''}`
-                : t === 'spaces' ? `My Spaces${spaces.length > 0 ? ` (${spaces.length})` : ''}`
-                : 'Contacts'}
+                : `My Spaces${spaces.length > 0 ? ` (${spaces.length})` : ''}`}
             </Text>
           </TouchableOpacity>
         ))}
@@ -210,8 +210,25 @@ export default function ChatsScreen() {
 
       {tab === 'dms' && (
         <FlatList data={dms} keyExtractor={d => d.otherId}
-          contentContainerStyle={dms.length === 0 ? { flex: 1 } : {}}
+          contentContainerStyle={(dms.length === 0 && inviteContacts.length === 0) ? { flex: 1 } : {}}
           ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>💬</Text><Text style={s.emptyTitle}>No chats yet</Text><Text style={s.emptySub}>Find people on Explore</Text></View>}
+          ListFooterComponent={inviteContacts.length > 0 ? (
+            <View>
+              <View style={s.sectionHeader}><Text style={s.sectionHeaderText}>📇 Invite from your contacts</Text></View>
+              {inviteContacts.slice(0, 100).map(c => (
+                <View key={c.id} style={s.contactRow}>
+                  <View style={s.cAvatar}><Text style={s.cInitials}>{c.initials}</Text></View>
+                  <View style={s.cInfo}>
+                    <Text style={s.cName}>{c.name}</Text>
+                    <Text style={s.cPhone}>{c.phone}</Text>
+                  </View>
+                  <TouchableOpacity style={s.inviteBtn} onPress={() => Linking.openURL('whatsapp://send?phone=' + c.phone + '&text=' + encodeURIComponent(INVITE_MSG)).catch(() => {})}>
+                    <Text style={s.inviteBtnText}>Invite</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          ) : null}
           renderItem={({ item: d }) => {
             const displayName = contactNames[d.otherId] || d.profile?.display_name || d.profile?.username || 'User'
             return (
@@ -257,37 +274,6 @@ export default function ChatsScreen() {
           )} />
       )}
 
-      {tab === 'contacts' && (
-        <View style={{ flex: 1 }}>
-          <View style={s.searchRow}>
-            <TextInput style={s.searchInput} value={search} onChangeText={setSearch} placeholder="Search contacts..." placeholderTextColor={GRAY} />
-          </View>
-          {contacts.some(c => c.onTryber) && (
-            <View style={s.statsBar}>
-              <Text style={s.statsText}><Text style={{ color: LIVE, fontWeight: '700' }}>{contacts.filter(c => c.onTryber).length}</Text> on Tryber · <Text style={{ color: GRAY }}>{contacts.filter(c => !c.onTryber).length} to invite</Text></Text>
-            </View>
-          )}
-          <FlatList data={filtered} keyExtractor={c => c.id}
-            ItemSeparatorComponent={() => <View style={{ height: 0.5, backgroundColor: BORDER, marginLeft: 76 }} />}
-            renderItem={({ item: c }) => (
-              <View style={s.contactRow}>
-                <View style={[s.cAvatar, c.onTryber && s.cAvatarTryber]}>
-                  <Text style={s.cInitials}>{c.initials}</Text>
-                  {c.onTryber && <View style={s.onTryberDot} />}
-                </View>
-                <View style={s.cInfo}>
-                  <Text style={s.cName}>{c.name}</Text>
-                  {c.onTryber && c.appName && c.appName !== c.name && <Text style={s.cAppName}>App: {c.appName}</Text>}
-                  <Text style={s.cPhone}>{c.phone}</Text>
-                </View>
-                {c.onTryber
-                  ? <TouchableOpacity style={s.msgBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: c.tryberUserId, userName: c.name, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}><Text style={s.msgBtnText}>💬 Message</Text></TouchableOpacity>
-                  : <TouchableOpacity style={s.inviteBtn} onPress={() => Alert.alert('Invite ' + c.name, 'How?', [{ text: '💚 WhatsApp', onPress: () => Linking.openURL('whatsapp://send?phone=' + c.phone + '&text=' + encodeURIComponent(INVITE_MSG)) }, { text: 'Cancel', style: 'cancel' }])}><Text style={s.inviteBtnText}>Invite</Text></TouchableOpacity>
-                }
-              </View>
-            )} />
-        </View>
-      )}
 
       <Modal visible={showSpaceModal} transparent animationType="fade" onRequestClose={() => setShowSpaceModal(false)}>
         <View style={s.modalOverlay}>
@@ -349,7 +335,9 @@ const s = StyleSheet.create({
   searchInput: { backgroundColor: BG, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, color: TEXT },
   statsBar: { paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#E8F5E9' },
   statsText: { fontSize: 13 },
-  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD },
+  sectionHeader: { paddingHorizontal: 16, paddingTop: 18, paddingBottom: 8, backgroundColor: BG },
+  sectionHeaderText: { fontSize: 12, fontWeight: '700', color: GRAY, letterSpacing: 0.5 },
+  contactRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 12, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
   cAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', position: 'relative', borderWidth: 1, borderColor: BORDER },
   cAvatarTryber: { backgroundColor: '#E8F5E9', borderColor: LIVE, borderWidth: 2 },
   cInitials: { fontSize: 16, fontWeight: '700', color: TEXT },
