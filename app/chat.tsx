@@ -26,6 +26,9 @@ export default function ChatScreen() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [memberCount, setMemberCount] = useState(parseInt(members) || 0)
   const [translations, setTranslations] = useState<Record<string, string>>({})
+  const [forwardMsg, setForwardMsg] = useState<Message | null>(null)
+  const [forwardGroups, setForwardGroups] = useState<any[]>([])
+  const [forwarding, setForwarding] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
@@ -93,6 +96,31 @@ export default function ChatScreen() {
       await supabase.from('message_reports').insert({ message_id: msg.id, reporter_id: userId, group_id: id, reason: 'inappropriate' })
       Alert.alert('Reported', 'Thanks — our team will review this message.')
     } catch { Alert.alert('Error', 'Could not submit the report.') }
+  }
+
+  const openForward = async (msg: Message) => {
+    if (!userId) return
+    setForwardMsg(msg)
+    setForwardGroups([])
+    try {
+      const { data: memberships } = await supabase.from('group_members').select('group_id').eq('user_id', userId)
+      const ids = (memberships || []).map((m: any) => m.group_id).filter((gid: string) => gid !== id)
+      if (ids.length) {
+        const { data: gs } = await supabase.from('groups').select('id, name').in('id', ids)
+        setForwardGroups(gs || [])
+      }
+    } catch {}
+  }
+
+  const forwardTo = async (group: any) => {
+    if (!userId || !forwardMsg) return
+    setForwarding(true)
+    try {
+      await sendMessage({ groupId: group.id, userId, content: forwardMsg.content, senderMode: 'lit', isForwarded: true })
+      setForwardMsg(null)
+      Alert.alert('Forwarded', 'Message sent to ' + group.name + '.')
+    } catch { Alert.alert('Error', 'Could not forward the message.') }
+    finally { setForwarding(false) }
   }
 
   const blockUser = (msg: Message) => {
@@ -181,6 +209,7 @@ export default function ChatScreen() {
             {[
               { icon: '↩️', label: 'Reply', onPress: () => { setReplyTo(selectedMsg!); setShowMenu(false) } },
               { icon: '📋', label: 'Copy', onPress: () => { copyMessage(selectedMsg!); setShowMenu(false) } },
+              { icon: '📤', label: 'Forward', onPress: () => { const m = selectedMsg!; setShowMenu(false); openForward(m) } },
               { icon: '🌐', label: translations[selectedMsg?.id || ''] ? 'Original' : 'Translate', onPress: () => { const m = selectedMsg!; setShowMenu(false); translateMessage(m) } },
               ...(selectedMsg?.user_id === userId ? [
                 ...(isWithin15Min(selectedMsg?.created_at || '') ? [{ icon: '✏️', label: 'Edit', onPress: () => { setEditingMsg(selectedMsg!); setDraft(selectedMsg!.content); setShowMenu(false) } }] : []),
@@ -197,6 +226,28 @@ export default function ChatScreen() {
             ))}
           </View>
         </TouchableOpacity>
+      </Modal>
+
+      <Modal visible={!!forwardMsg} transparent animationType="slide" onRequestClose={() => setForwardMsg(null)}>
+        <View style={s.fwdOverlay}>
+          <View style={[s.fwdSheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <View style={s.fwdHeader}>
+              <Text style={s.fwdTitle}>Forward to…</Text>
+              <TouchableOpacity onPress={() => setForwardMsg(null)}><Text style={s.fwdClose}>✕</Text></TouchableOpacity>
+            </View>
+            {forwardMsg && <Text style={s.fwdPreview} numberOfLines={2}>{forwardMsg.content}</Text>}
+            <FlatList data={forwardGroups} keyExtractor={g => g.id} style={{ maxHeight: 300 }}
+              contentContainerStyle={forwardGroups.length === 0 ? { paddingVertical: 24 } : {}}
+              ListEmptyComponent={<Text style={s.fwdEmpty}>No other Trybes to forward to.</Text>}
+              renderItem={({ item: g }) => (
+                <TouchableOpacity style={s.fwdRow} onPress={() => forwardTo(g)} disabled={forwarding}>
+                  <View style={s.fwdAvatar}><Text style={{ fontSize: 18 }}>{g.name?.[0] || '⚡'}</Text></View>
+                  <Text style={s.fwdName} numberOfLines={1}>{g.name}</Text>
+                  <Text style={s.fwdArrow}>›</Text>
+                </TouchableOpacity>
+              )} />
+          </View>
+        </View>
       </Modal>
 
       {replyTo && (
@@ -265,6 +316,17 @@ const s = StyleSheet.create({
   menuItem: { width: '23%', alignItems: 'center', paddingVertical: 12, borderRadius: 12, backgroundColor: BG },
   menuIcon: { fontSize: 22, marginBottom: 4 },
   menuLabel: { fontSize: 10, color: TEXT, fontWeight: '500' },
+  fwdOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  fwdSheet: { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 16, paddingTop: 12 },
+  fwdHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 8 },
+  fwdTitle: { fontSize: 17, fontWeight: '800', color: TEXT },
+  fwdClose: { fontSize: 18, color: GRAY, paddingHorizontal: 6 },
+  fwdPreview: { fontSize: 13, color: GRAY, fontStyle: 'italic', backgroundColor: BG, borderRadius: 10, padding: 10, marginBottom: 10 },
+  fwdEmpty: { fontSize: 14, color: GRAY, textAlign: 'center' },
+  fwdRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12, borderBottomWidth: 0.5, borderColor: BORDER },
+  fwdAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: BORDER },
+  fwdName: { flex: 1, fontSize: 15, fontWeight: '600', color: TEXT },
+  fwdArrow: { fontSize: 20, color: GRAY },
   replyBarInput: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(108,99,255,0.06)', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: BORDER },
   replyPreviewInputText: { flex: 1, fontSize: 13, color: GRAY },
   inputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8, backgroundColor: CARD, borderTopWidth: 0.5, borderColor: BORDER },

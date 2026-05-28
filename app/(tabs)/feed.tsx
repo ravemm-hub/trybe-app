@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, Alert, Image, RefreshControl, ActivityIndicator } from 'react-native'
+import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, Alert, Image, RefreshControl, ActivityIndicator, Modal, KeyboardAvoidingView, Platform } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import * as ImagePicker from 'expo-image-picker'
@@ -20,6 +20,11 @@ export default function FeedScreen() {
   const [uploadingMedia, setUploadingMedia] = useState(false)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [commentsPost, setCommentsPost] = useState<any | null>(null)
+  const [comments, setComments] = useState<any[]>([])
+  const [loadingComments, setLoadingComments] = useState(false)
+  const [commentDraft, setCommentDraft] = useState('')
+  const [postingComment, setPostingComment] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id) })
@@ -84,6 +89,36 @@ export default function FeedScreen() {
     }
     await supabase.rpc('update_post_counts', { p_post_id: postId })
     loadPosts()
+  }
+
+  const openComments = async (post: any) => {
+    setCommentsPost(post)
+    setComments([])
+    setCommentDraft('')
+    setLoadingComments(true)
+    try {
+      const { data } = await supabase.from('post_comments')
+        .select('*, profile:profiles(display_name, username, avatar_char)')
+        .eq('post_id', post.id).order('created_at', { ascending: true })
+      setComments(data || [])
+    } catch {}
+    setLoadingComments(false)
+  }
+
+  const addComment = async () => {
+    if (!commentDraft.trim() || !userId || !commentsPost) return
+    setPostingComment(true)
+    try {
+      const { data, error } = await supabase.from('post_comments')
+        .insert({ post_id: commentsPost.id, user_id: userId, content: commentDraft.trim(), is_anonymous: false })
+        .select('*, profile:profiles(display_name, username, avatar_char)').single()
+      if (error) throw error
+      if (data) setComments(prev => [...prev, data])
+      setCommentDraft('')
+      // reflect the new count locally (DB trigger keeps it authoritative)
+      setPosts(prev => prev.map(p => p.id === commentsPost.id ? { ...p, comment_count: (p.comment_count || 0) + 1 } : p))
+    } catch (e: any) { Alert.alert('Error', e?.message || 'Could not post comment') }
+    finally { setPostingComment(false) }
   }
 
   const fmt = (ts: string) => {
@@ -157,7 +192,7 @@ export default function FeedScreen() {
                   <Text style={[s.actionIcon, p.my_reaction === 'dislike' && s.disliked]}>👎</Text>
                   <Text style={[s.actionCount, p.my_reaction === 'dislike' && { color: DANGER }]}>{p.dislikes || 0}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={s.action}>
+                <TouchableOpacity style={s.action} onPress={() => openComments(p)}>
                   <Text style={s.actionIcon}>💬</Text>
                   <Text style={s.actionCount}>{p.comment_count || 0}</Text>
                 </TouchableOpacity>
@@ -166,6 +201,42 @@ export default function FeedScreen() {
           )
         }}
       />
+
+      <Modal visible={!!commentsPost} transparent animationType="slide" onRequestClose={() => setCommentsPost(null)}>
+        <KeyboardAvoidingView style={s.cOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <View style={[s.cSheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <View style={s.cHeader}>
+              <Text style={s.cTitle}>Comments</Text>
+              <TouchableOpacity onPress={() => setCommentsPost(null)}><Text style={s.cClose}>✕</Text></TouchableOpacity>
+            </View>
+            {loadingComments
+              ? <ActivityIndicator color={PRIMARY} style={{ paddingVertical: 24 }} />
+              : <FlatList data={comments} keyExtractor={c => c.id}
+                  style={{ maxHeight: 360 }}
+                  contentContainerStyle={comments.length === 0 ? { paddingVertical: 24 } : { paddingVertical: 8 }}
+                  ListEmptyComponent={<Text style={s.cEmpty}>No comments yet. Be the first!</Text>}
+                  renderItem={({ item: c }) => {
+                    const cn = c.is_anonymous ? '👻 Anonymous' : (c.profile?.display_name || c.profile?.username || 'User')
+                    return (
+                      <View style={s.cRow}>
+                        <View style={s.cAvatar}><Text style={s.cAvatarText}>{c.is_anonymous ? '👻' : (c.profile?.avatar_char || cn[0] || '?')}</Text></View>
+                        <View style={s.cBubble}>
+                          <Text style={s.cName}>{cn} · <Text style={s.cTime}>{fmt(c.created_at)}</Text></Text>
+                          <Text style={s.cContent}>{c.content}</Text>
+                        </View>
+                      </View>
+                    )
+                  }} />
+            }
+            <View style={s.cInputRow}>
+              <TextInput style={s.cInput} value={commentDraft} onChangeText={setCommentDraft} placeholder="Add a comment..." placeholderTextColor={GRAY} multiline />
+              <TouchableOpacity style={[s.cSend, (!commentDraft.trim() || postingComment) && { opacity: 0.4 }]} onPress={addComment} disabled={!commentDraft.trim() || postingComment}>
+                {postingComment ? <ActivityIndicator color="#fff" size="small" /> : <Text style={s.cSendText}>↑</Text>}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   )
 }
@@ -207,4 +278,21 @@ const s = StyleSheet.create({
   actionCount: { fontSize: 13, color: GRAY, fontWeight: '500' },
   liked: { opacity: 1 },
   disliked: { opacity: 1 },
+  cOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
+  cSheet: { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 16, paddingTop: 12 },
+  cHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingBottom: 10, borderBottomWidth: 0.5, borderColor: BORDER },
+  cTitle: { fontSize: 17, fontWeight: '800', color: TEXT },
+  cClose: { fontSize: 18, color: GRAY, paddingHorizontal: 6 },
+  cEmpty: { fontSize: 14, color: GRAY, textAlign: 'center' },
+  cRow: { flexDirection: 'row', gap: 10, paddingVertical: 8 },
+  cAvatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: BORDER },
+  cAvatarText: { fontSize: 16 },
+  cBubble: { flex: 1, backgroundColor: BG, borderRadius: 12, padding: 10 },
+  cName: { fontSize: 12, fontWeight: '600', color: TEXT, marginBottom: 2 },
+  cTime: { fontSize: 11, color: GRAY, fontWeight: '400' },
+  cContent: { fontSize: 14, color: TEXT, lineHeight: 19 },
+  cInputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end', paddingTop: 10, borderTopWidth: 0.5, borderColor: BORDER },
+  cInput: { flex: 1, backgroundColor: BG, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 9, fontSize: 14, color: TEXT, maxHeight: 90, borderWidth: 1, borderColor: BORDER },
+  cSend: { width: 38, height: 38, borderRadius: 19, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
+  cSendText: { color: '#fff', fontSize: 18, fontWeight: '700' },
 })

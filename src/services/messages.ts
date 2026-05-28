@@ -1,11 +1,12 @@
 ﻿import { supabase } from '../lib/supabase'
 import { EDGE_URL, EDGE_AUTH } from '../constants'
 
-export async function sendMessage(params: { groupId: string; userId: string; content: string; senderMode?: string; replyToId?: string | null; replyPreview?: string | null }) {
+export async function sendMessage(params: { groupId: string; userId: string; content: string; senderMode?: string; replyToId?: string | null; replyPreview?: string | null; isForwarded?: boolean }) {
   const { error } = await supabase.from('messages').insert({
     group_id: params.groupId, user_id: params.userId, type: 'text',
     content: params.content, sender_mode: params.senderMode || 'lit',
     reply_to_id: params.replyToId || null, reply_preview: params.replyPreview || null,
+    is_forwarded: params.isForwarded || false,
   })
   if (!error) fetch(EDGE_URL, { method: 'POST', headers: { Authorization: EDGE_AUTH, 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {})
   return error
