@@ -38,6 +38,35 @@ export async function loadContactNamesFromDB(myId: string) {
   } catch {}
 }
 
+export type EnrichedContact = { id: string; name: string; phone: string; initials: string; onTryber: boolean; tryberUserId?: string }
+
+// Device contacts enriched with whether each is a Tryber user (for add-to-group / invite UIs).
+export async function getEnrichedContacts(): Promise<EnrichedContact[]> {
+  try {
+    const Contacts = require('expo-contacts')
+    const { status } = await Contacts.requestPermissionsAsync()
+    if (status !== 'granted') return []
+    const { data } = await Contacts.getContactsAsync({ fields: [Contacts.Fields.PhoneNumbers, Contacts.Fields.Name] })
+    const list: EnrichedContact[] = []
+    for (const c of data) {
+      if (!c.name || !c.phoneNumbers?.length) continue
+      const phone = c.phoneNumbers[0].number?.replace(/[\s\-\(\)]/g, '') || ''
+      if (!phone) continue
+      list.push({ id: c.id || phone, name: c.name, phone, initials: c.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase(), onTryber: false })
+    }
+    if (!list.length) return []
+    const allPhones = [...new Set(list.flatMap(c => { const n = normalizePhone(c.phone); return [c.phone, n, '+972' + n.slice(1)] }))]
+    const { data: users } = await supabase.from('profiles').select('id, phone').in('phone', allPhones)
+    const map = new Map<string, any>()
+    for (const u of users || []) { if (!u.phone) continue; const n = normalizePhone(u.phone); map.set(u.phone, u); map.set(n, u); map.set('+972' + n.slice(1), u) }
+    return list.map(c => {
+      const n = normalizePhone(c.phone)
+      const u = map.get(c.phone) || map.get(n) || map.get('+972' + n.slice(1))
+      return { ...c, onTryber: !!u, tryberUserId: u?.id }
+    }).sort((a, b) => (b.onTryber ? 1 : 0) - (a.onTryber ? 1 : 0) || a.name.localeCompare(b.name))
+  } catch { return [] }
+}
+
 export async function loadAndMatchContacts(userId: string) {
   try {
     const Contacts = require('expo-contacts')

@@ -87,14 +87,15 @@ export default function CreateScreen() {
 
       await supabase.from('group_members').insert({ group_id: group.id, user_id: userId, role: 'admin' })
 
+      const go = () => router.replace({ pathname: '/group-settings', params: { id: group.id, name: group.name, new: '1' } })
       if (groupType === 'secret' && inviteCode) {
         Alert.alert(
           '🕵️ Secret Trybe Created!',
           'Invite Code: ' + inviteCode + '\n\nShare this code with people you want to invite.',
-          [{ text: 'Got it', onPress: () => router.replace({ pathname: '/chat', params: { id: group.id, name: group.name, members: '1' } }) }]
+          [{ text: 'Got it', onPress: go }]
         )
       } else {
-        router.replace({ pathname: '/chat', params: { id: group.id, name: group.name, members: '1' } })
+        go()
       }
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'Failed to create group')

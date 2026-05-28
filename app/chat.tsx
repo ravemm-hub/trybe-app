@@ -173,10 +173,15 @@ export default function ChatScreen() {
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}><Text style={s.backText}>‹</Text></TouchableOpacity>
-        <View style={s.hInfo}>
+        <TouchableOpacity style={s.hInfo} activeOpacity={isAdmin ? 0.6 : 1} onPress={() => { if (isAdmin) router.push({ pathname: '/group-settings', params: { id, name } }) }}>
           <Text style={s.hName} numberOfLines={1}>{name}</Text>
-          <Text style={s.hSub}>{memberCount} members</Text>
-        </View>
+          <Text style={s.hSub}>{memberCount} members{isAdmin ? ' · ⚙️ settings' : ''}</Text>
+        </TouchableOpacity>
+        {isAdmin && (
+          <TouchableOpacity style={s.modeBtn} onPress={() => router.push({ pathname: '/group-settings', params: { id, name } })}>
+            <Text style={s.modeBtnText}>⚙️</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={[s.modeBtn, senderMode === 'ghost' && s.modeBtnGhost]} onPress={() => setSenderMode(m => m === 'lit' ? 'ghost' : 'lit')}>
           <Text style={s.modeBtnText}>{senderMode === 'ghost' ? '👻' : '🔥'}</Text>
         </TouchableOpacity>
