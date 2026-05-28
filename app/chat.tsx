@@ -6,6 +6,7 @@ import * as Clipboard from 'expo-clipboard'
 import { supabase } from '../src/lib/supabase'
 import { sendMessage, editMessage, deleteMessage, markGroupRead } from '../src/services/messages'
 import { translateText } from '../src/lib/claude'
+import { uuidv4 } from '../src/lib/uuid'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS } from '../src/constants'
 import { Message } from '../src/types'
 
@@ -72,9 +73,18 @@ export default function ChatScreen() {
       setEditingMsg(null)
       return
     }
-    await sendMessage({ groupId: id, userId, content: text, senderMode, replyToId: replyTo?.id || null, replyPreview: replyTo?.content?.slice(0, 60) || null })
+    const mid = uuidv4()
+    const curReply = replyTo
+    const optimistic = {
+      id: mid, group_id: id, user_id: userId, type: 'text', content: text, media_url: null,
+      sender_mode: senderMode, reply_to_id: curReply?.id || null, reply_preview: curReply?.content?.slice(0, 60) || null,
+      edited_at: null, deleted_for_all: false, is_forwarded: false, poll_id: null, created_at: new Date().toISOString(),
+    } as unknown as Message
+    setMessages(prev => [...prev, optimistic])
     setReplyTo(null)
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
+    const err = await sendMessage({ id: mid, groupId: id, userId, content: text, senderMode, replyToId: curReply?.id || null, replyPreview: curReply?.content?.slice(0, 60) || null })
+    if (err) setMessages(prev => prev.filter(m => m.id !== mid))
   }
 
   const handleLongPress = (msg: Message) => { setSelectedMsg(msg); setShowMenu(true) }

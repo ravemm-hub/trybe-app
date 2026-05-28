@@ -6,6 +6,7 @@ import * as Clipboard from 'expo-clipboard'
 import { supabase } from '../src/lib/supabase'
 import { sendDM, markDMRead, markDMDelivered, editDM, deleteDM, getReceiptStatus } from '../src/services/dms'
 import { askClaude, translateText } from '../src/lib/claude'
+import { uuidv4 } from '../src/lib/uuid'
 import { getContactName } from '../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, AGENT_IDS, AGENTS } from '../src/constants'
 import { DmMessage } from '../src/types'
@@ -88,9 +89,18 @@ export default function DMScreen() {
       return
     }
     if (translateTo && !talkingToAgent) content = await translateText(content, translateTo)
-    await sendDM({ senderId: myId, receiverId: otherUserId, content, senderMode: initMode || 'lit', replyToId: replyTo?.id || null, replyPreview: replyTo?.content?.slice(0, 60) || null })
+    const mid = uuidv4()
+    const curReply = replyTo
+    const optimistic = {
+      id: mid, sender_id: myId, receiver_id: otherUserId, content, sender_mode: initMode || 'lit', receiver_mode: 'lit',
+      read_at: null, delivered_at: null, edited_at: null, deleted_for_all: false, is_forwarded: false,
+      reply_to_id: curReply?.id || null, reply_preview: curReply?.content?.slice(0, 60) || null, created_at: new Date().toISOString(),
+    } as unknown as DmMessage
+    setMessages(prev => [...prev, optimistic])
     setReplyTo(null)
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
+    const { error: sendErr } = await sendDM({ id: mid, senderId: myId, receiverId: otherUserId, content, senderMode: initMode || 'lit', replyToId: curReply?.id || null, replyPreview: curReply?.content?.slice(0, 60) || null })
+    if (sendErr) setMessages(prev => prev.filter(m => m.id !== mid))
     if (talkingToAgent && agentInfo) {
       setAgentTyping(true)
       const timeout = setTimeout(() => setAgentTyping(false), 15000)

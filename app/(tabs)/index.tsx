@@ -179,7 +179,7 @@ export default function ChatsScreen() {
             <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]}>
               {t === 'trybes' ? `Trybes${groups.length > 0 ? ` (${groups.length})` : ''}`
                 : t === 'dms' ? `Chats${dms.length > 0 ? ` (${dms.length})` : ''}`
-                : t === 'spaces' ? `Spaces${spaces.length > 0 ? ` (${spaces.length})` : ''}`
+                : t === 'spaces' ? `My Spaces${spaces.length > 0 ? ` (${spaces.length})` : ''}`
                 : 'Contacts'}
             </Text>
           </TouchableOpacity>
