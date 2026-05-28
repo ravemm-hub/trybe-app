@@ -107,7 +107,7 @@ export default function DMScreen() {
       try {
         await new Promise(r => setTimeout(r, 1000 + Math.random() * 1500))
         const lang = agentInfo.lang === 'he' ? 'Hebrew' : 'English'
-        const reply = await askClaude('You are ' + agentInfo.name + ', ' + agentInfo.personality + '. Someone wrote: "' + content + '". Reply in ' + lang + ', 1-2 sentences, casual.', undefined, 100)
+        const reply = await askClaude('You are ' + agentInfo.name + ', ' + agentInfo.personality + '. Someone wrote: "' + content + '". Reply in ' + lang + ', 1-2 sentences, casual. You can look things up online if useful.', undefined, 150, true)
         // Agent replies are written via a SECURITY DEFINER RPC: RLS only lets you insert
         // dm_messages where sender_id = auth.uid(), and the sender here is the agent.
         if (reply) await supabase.rpc('send_agent_dm', { p_agent: otherUserId, p_receiver: myId, p_content: reply })

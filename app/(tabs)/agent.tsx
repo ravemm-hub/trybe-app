@@ -3,7 +3,7 @@ import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBa
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Location from 'expo-location'
 import { supabase } from '../../src/lib/supabase'
-import { askClaude, webSearch } from '../../src/lib/claude'
+import { askClaude } from '../../src/lib/claude'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
 
 type Msg = { id: string; role: 'user' | 'assistant'; content: string; created_at: string }
@@ -63,13 +63,10 @@ export default function AgentScreen() {
     try {
       const { data: saved } = await supabase.from('agent_messages').insert({ user_id: userId, role: 'user', content: text }).select().single()
       if (saved) setMessages(prev => prev.map(m => m.id === tempMsg.id ? saved : m))
-      const needsSearch = /search|what is|when|where|news|price|חפש|מה זה|מתי|איפה|חדשות/i.test(text)
-      let searchResult = ''
-      if (needsSearch) searchResult = await webSearch(text)
       const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
       history.push({ role: 'user', content: text })
-      const system = 'You are Teeby, a highly intelligent personal AI in the Tryber social app.\nUser: ' + userName + ' | Location: ' + (locationCtx || 'Israel') + ' | Credits: ' + credits + '/20\n' + (searchResult ? 'Web search results:\n' + searchResult + '\n' : '') + '\nAlways respond in the SAME language the user writes in.\nBe warm, proactive, witty. 2-4 sentences max. Use emojis naturally.\nFor calendar: respond with [CAL:title|YYYY-MM-DDTHH:MM:SS]\nFor creating group: respond with [CREATE_GROUP:name]'
-      const reply = await askClaude(history.map(m => m.role + ': ' + m.content).join('\n'), system, 400)
+      const system = 'You are Teeby, a highly intelligent personal AI in the Tryber social app.\nUser: ' + userName + ' | Location: ' + (locationCtx || 'Israel') + ' | Credits: ' + credits + '/20\nYou can search the web for current info, prices, news, places, images or links — include helpful links when relevant.\nAlways respond in the SAME language the user writes in.\nBe warm, proactive, witty. 2-4 sentences max. Use emojis naturally.\nFor calendar: respond with [CAL:title|YYYY-MM-DDTHH:MM:SS]\nFor creating group: respond with [CREATE_GROUP:name]'
+      const reply = await askClaude(history.map(m => m.role + ': ' + m.content).join('\n'), system, 400, true)
       if (!reply) throw new Error('No reply')
       const { data: savedReply } = await supabase.from('agent_messages').insert({ user_id: userId, role: 'assistant', content: reply }).select().single()
       if (savedReply) setMessages(prev => [...prev, savedReply])

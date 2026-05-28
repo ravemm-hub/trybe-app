@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
-  let payload: { prompt?: string; system?: string; max_tokens?: number; model?: string } = {}
+  let payload: { prompt?: string; system?: string; max_tokens?: number; model?: string; web?: boolean } = {}
   try {
     payload = await req.json()
   } catch {
@@ -62,6 +62,15 @@ Deno.serve(async (req) => {
 
   const maxTokens = Math.min(Math.max(Number(payload.max_tokens) || 200, 1), MAX_OUTPUT_TOKENS)
 
+  const reqBody: Record<string, unknown> = {
+    model: payload.model || DEFAULT_MODEL,
+    max_tokens: maxTokens,
+    system: payload.system || undefined,
+    messages: [{ role: 'user', content: prompt }],
+  }
+  // Give Teeby/agents live internet access (Anthropic server-side web search).
+  if (payload.web) reqBody.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }]
+
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -70,16 +79,14 @@ Deno.serve(async (req) => {
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({
-        model: payload.model || DEFAULT_MODEL,
-        max_tokens: maxTokens,
-        system: payload.system || undefined,
-        messages: [{ role: 'user', content: prompt }],
-      }),
+      body: JSON.stringify(reqBody),
     })
     const data = await res.json()
     if (!res.ok) return json({ error: data?.error?.message || 'Claude error', text: '' }, 502)
-    const text = data?.content?.[0]?.text?.trim() ?? ''
+    // With tools the content array can hold multiple blocks; concatenate the text ones.
+    const text = Array.isArray(data?.content)
+      ? data.content.filter((b: any) => b?.type === 'text').map((b: any) => b.text).join('').trim()
+      : ''
     return json({ text })
   } catch (e) {
     return json({ error: String(e), text: '' }, 502)

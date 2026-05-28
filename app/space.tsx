@@ -58,7 +58,7 @@ export default function SpaceScreen() {
       const system = 'You are Teeby, a focused personal AI assistant inside a private Tryber "Space" dedicated to one topic: "' + title + '".\n'
         + 'Stay on this topic. Be warm, proactive and concise (2-4 sentences). Use emojis naturally. Always respond in the SAME language the user writes in.'
       const prompt = (history ? history + '\n' : '') + 'user: ' + text
-      const reply = await askClaude(prompt, system, 400)
+      const reply = await askClaude(prompt, system, 400, true)
       if (!reply) throw new Error('No reply')
       const { data: savedReply } = await supabase.from('teeby_space_messages')
         .insert({ space_id: spaceId, role: 'assistant', content: reply }).select().single()
