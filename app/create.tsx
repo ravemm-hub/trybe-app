@@ -74,7 +74,7 @@ export default function CreateScreen() {
         is_private: groupType === 'private',
         is_secret: groupType === 'secret',
         invite_code: inviteCode,
-        member_count: 1,
+        member_count: 0,
         created_by: userId,
         location_name: locationName || null,
         min_members: 1,

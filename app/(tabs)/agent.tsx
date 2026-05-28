@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Location from 'expo-location'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { supabase } from '../../src/lib/supabase'
 import { askClaude, webSearch } from '../../src/lib/claude'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
@@ -27,7 +28,22 @@ export default function AgentScreen() {
     if (!user) return
     setUserId(user.id)
     const { data: p } = await supabase.from('profiles').select('display_name, teeby_credits').eq('id', user.id).single()
-    if (p) { setUserName(p.display_name || ''); setCredits(p.teeby_credits ?? 20) }
+    if (p) {
+      setUserName(p.display_name || '')
+      // Reset daily credits at the start of a new local day.
+      const today = new Date().toDateString()
+      const resetKey = 'credits_reset_' + user.id
+      let creditsVal = p.teeby_credits ?? 20
+      try {
+        const lastReset = await AsyncStorage.getItem(resetKey)
+        if (lastReset !== today) {
+          creditsVal = 20
+          await AsyncStorage.setItem(resetKey, today)
+          await supabase.from('profiles').update({ teeby_credits: 20 }).eq('id', user.id)
+        }
+      } catch {}
+      setCredits(creditsVal)
+    }
     const { data: msgs } = await supabase.from('agent_messages').select('*').eq('user_id', user.id).order('created_at', { ascending: true }).limit(60)
     if (msgs) setMessages(msgs)
     try {

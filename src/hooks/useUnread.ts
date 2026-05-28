@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react'
+﻿import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { getGroupUnread } from '../services/messages'
 import { getDMUnread } from '../services/dms'
@@ -6,8 +6,9 @@ import { getDMUnread } from '../services/dms'
 export function useUnread() {
   const [groupUnread, setGroupUnread] = useState(0)
   const [dmUnread, setDmUnread] = useState(0)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
@@ -19,17 +20,23 @@ export function useUnread() {
       setGroupUnread(total)
       setDmUnread(await getDMUnread(user.id))
     } catch {}
-  }
+  }, [])
+
+  // Coalesce bursts of realtime events into a single refresh.
+  const scheduleRefresh = useCallback(() => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => { refresh() }, 800)
+  }, [refresh])
 
   useEffect(() => {
     refresh()
     const channel = supabase.channel('unread-global')
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, refresh)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, refresh)
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dm_messages' }, refresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, scheduleRefresh)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, scheduleRefresh)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dm_messages' }, scheduleRefresh)
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
-  }, [])
+    return () => { if (timer.current) clearTimeout(timer.current); supabase.removeChannel(channel) }
+  }, [refresh, scheduleRefresh])
 
   return { groupUnread, dmUnread, total: groupUnread + dmUnread, refresh }
 }

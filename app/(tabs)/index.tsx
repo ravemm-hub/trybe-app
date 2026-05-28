@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, StatusBar, ActivityIndicator, Pressable, Linking, Alert, Modal } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useRouter } from 'expo-router'
+import { useRouter, useFocusEffect } from 'expo-router'
 import { supabase } from '../../src/lib/supabase'
 import { getContactName, normalizePhone } from '../../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, INVITE_MSG, AGENT_IDS } from '../../src/constants'
@@ -30,6 +30,11 @@ export default function ChatsScreen() {
       if (user) { setUserId(user.id); loadAll(user.id) }
     })
   }, [])
+
+  // Refresh the lightweight lists when returning to this tab (unread counts, new Trybes/Spaces).
+  useFocusEffect(useCallback(() => {
+    if (userId) { loadGroups(userId); loadDMs(userId); loadSpaces(userId) }
+  }, [userId]))
 
   const loadAll = async (uid: string) => {
     setLoading(true)

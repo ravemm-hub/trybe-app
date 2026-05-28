@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Alert, Modal } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
+import * as Clipboard from 'expo-clipboard'
 import { supabase } from '../src/lib/supabase'
 import { sendDM, markDMRead, markDMDelivered, editDM, deleteDM, getReceiptStatus } from '../src/services/dms'
 import { askClaude, translateText } from '../src/lib/claude'
@@ -30,20 +31,37 @@ export default function DMScreen() {
   const [showTranslate, setShowTranslate] = useState(false)
   const [selectedMsg, setSelectedMsg] = useState<DmMessage | null>(null)
   const [showMenu, setShowMenu] = useState(false)
+  const [translations, setTranslations] = useState<Record<string, string>>({})
 
   const talkingToAgent = isAgentParam || (otherUserId && AGENT_IDS.includes(otherUserId))
   const agentInfo = AGENTS.find(a => a.id === otherUserId)
 
   useEffect(() => {
     if (!otherUserId) { router.back(); return }
+    let channel: ReturnType<typeof supabase.channel> | null = null
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
       setMyId(user.id)
+      const uid = user.id
       // Load contact name
       getContactName(otherUserId).then(cn => { if (cn) setDisplayName(cn) })
-      loadMessages(user.id)
-      if (!talkingToAgent) markDMDelivered(user.id)
+      loadMessages(uid)
+      if (!talkingToAgent) markDMDelivered(uid)
+
+      channel = supabase.channel('dm:' + uid + ':' + otherUserId)
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, async ({ new: msg }) => {
+          const isOurs = (msg.sender_id === uid && msg.receiver_id === otherUserId) || (msg.sender_id === otherUserId && msg.receiver_id === uid)
+          if (!isOurs) return
+          if (msg.sender_id === otherUserId) markDMRead(otherUserId, uid)
+          setMessages(prev => { if (prev.find(m => m.id === msg.id)) return prev; return [...prev, msg as DmMessage] })
+          setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
+        })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dm_messages' }, ({ new: msg }) => {
+          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, ...msg } : m))
+        })
+        .subscribe()
     })
+    return () => { if (channel) supabase.removeChannel(channel) }
   }, [])
 
   const loadMessages = async (uid: string) => {
@@ -58,20 +76,6 @@ export default function DMScreen() {
         setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 100)
       }
     } catch (e) { console.error('DM loadMessages error:', e) }
-
-    const channel = supabase.channel('dm:' + uid + ':' + otherUserId)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, async ({ new: msg }) => {
-        const isOurs = (msg.sender_id === uid && msg.receiver_id === otherUserId) || (msg.sender_id === otherUserId && msg.receiver_id === uid)
-        if (!isOurs) return
-        if (msg.sender_id === otherUserId) markDMRead(otherUserId, uid)
-        setMessages(prev => { if (prev.find(m => m.id === msg.id)) return prev; return [...prev, msg as DmMessage] })
-        setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
-      })
-      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dm_messages' }, ({ new: msg }) => {
-        setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, ...msg } : m))
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
   }
 
   const sendMessage = useCallback(async () => {
@@ -101,6 +105,17 @@ export default function DMScreen() {
   }, [draft, myId, otherUserId, replyTo, translateTo, editingMsg, talkingToAgent, agentInfo, initMode])
 
   const handleLongPress = (msg: DmMessage) => { setSelectedMsg(msg); setShowMenu(true) }
+
+  const copyMessage = async (msg: DmMessage) => {
+    try { await Clipboard.setStringAsync(msg.content) } catch {}
+  }
+
+  const translateMessage = async (msg: DmMessage) => {
+    if (translations[msg.id]) { setTranslations(prev => { const n = { ...prev }; delete n[msg.id]; return n }); return }
+    const target = /[֐-׿]/.test(msg.content) ? 'English' : 'Hebrew'
+    const t = await translateText(msg.content, target)
+    if (t) setTranslations(prev => ({ ...prev, [msg.id]: t }))
+  }
 
   const receiptIcon = (msg: DmMessage) => {
     if (msg.sender_id !== myId) return null
@@ -146,6 +161,9 @@ export default function DMScreen() {
                 )}
                 <View style={[s.bubble, isMe ? s.bubbleMe : s.bubbleThem]}>
                   <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text>
+                  {translations[msg.id] && (
+                    <Text style={[s.translated, isMe && { color: 'rgba(255,255,255,0.85)', borderTopColor: 'rgba(255,255,255,0.3)' }]}>🌐 {translations[msg.id]}</Text>
+                  )}
                   <View style={s.bubbleMeta}>
                     {msg.edited_at && <Text style={[s.edited, isMe && { color: 'rgba(255,255,255,0.5)' }]}>edited</Text>}
                     <Text style={[s.time, isMe && s.timeMe]}>{new Date(msg.created_at).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}</Text>
@@ -206,8 +224,8 @@ export default function DMScreen() {
           <View style={s.menu}>
             {[
               { icon: '↩️', label: 'Reply', onPress: () => { setReplyTo(selectedMsg!); setShowMenu(false) } },
-              { icon: '📋', label: 'Copy', onPress: () => setShowMenu(false) },
-              { icon: '🌐', label: 'Translate', onPress: () => { setShowMenu(false); setShowTranslate(true) } },
+              { icon: '📋', label: 'Copy', onPress: () => { copyMessage(selectedMsg!); setShowMenu(false) } },
+              { icon: '🌐', label: translations[selectedMsg?.id || ''] ? 'Original' : 'Translate', onPress: () => { const m = selectedMsg!; setShowMenu(false); translateMessage(m) } },
               ...(selectedMsg?.sender_id === myId ? [
                 { icon: '✏️', label: 'Edit', onPress: () => { setEditingMsg(selectedMsg!); setDraft(selectedMsg!.content); setShowMenu(false) } },
                 { icon: '🗑️', label: 'Delete', onPress: () => { setShowMenu(false); Alert.alert('Delete', 'Delete for everyone?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => deleteDM(selectedMsg!.id, myId!) }]) } },
@@ -252,6 +270,7 @@ const s = StyleSheet.create({
   bubbleMe: { backgroundColor: PRIMARY, borderBottomRightRadius: 4 },
   bubbleText: { fontSize: 15, lineHeight: 21, color: TEXT },
   bubbleTextMe: { color: '#fff' },
+  translated: { fontSize: 14, lineHeight: 20, color: GRAY, marginTop: 6, paddingTop: 6, borderTopWidth: 0.5, borderTopColor: BORDER, fontStyle: 'italic' },
   bubbleMeta: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2, justifyContent: 'flex-end' },
   edited: { fontSize: 10, color: GRAY },
   time: { fontSize: 10, color: GRAY },

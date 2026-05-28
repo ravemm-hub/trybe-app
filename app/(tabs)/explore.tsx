@@ -64,7 +64,8 @@ export default function ExploreScreen() {
     // Open — join immediately
     const { error } = await supabase.from('group_members').insert({ group_id: group.id, user_id: userId, role: 'member' })
     if (!error) {
-      await supabase.from('groups').update({ member_count: group.member_count + 1, archive_at: null }).eq('id', group.id)
+      // member_count is maintained by the member_count_trigger on group_members; just clear the archive timer.
+      await supabase.from('groups').update({ archive_at: null }).eq('id', group.id)
       setMyGroups(prev => new Set([...prev, group.id]))
       router.push({ pathname: '/chat', params: { id: group.id, name: group.name, members: group.member_count + 1 } })
     }
@@ -80,7 +81,7 @@ export default function ExploreScreen() {
         setCodeLoading(false); return
       }
       await supabase.from('group_members').insert({ group_id: codeGroupId, user_id: userId, role: 'member' })
-      await supabase.from('groups').update({ member_count: group.member_count + 1, invite_code: null, archive_at: null }).eq('id', codeGroupId)
+      await supabase.from('groups').update({ invite_code: null, archive_at: null }).eq('id', codeGroupId)
       setMyGroups(prev => new Set([...prev, codeGroupId]))
       setShowCodeModal(false)
       router.push({ pathname: '/chat', params: { id: codeGroupId, name: group.name, members: group.member_count + 1 } })

@@ -29,7 +29,7 @@ export default function MarketplaceScreen() {
   }, [])
 
   const load = async () => {
-    let q = supabase.from('marketplace_listings').select('*, profile:profiles(id,display_name,username,avatar_char)').eq('status', 'active').order('created_at', { ascending: false }).limit(50)
+    let q = supabase.from('listings').select('*, profile:profiles(id,display_name,username,avatar_char)').eq('status', 'active').order('created_at', { ascending: false }).limit(50)
     const { data } = await q
     setListings(data || [])
     setLoading(false); setRefreshing(false)
@@ -39,7 +39,7 @@ export default function MarketplaceScreen() {
     if (!title.trim() || !userId) return
     setPosting(true)
     try {
-      await supabase.from('marketplace_listings').insert({ user_id: userId, title: title.trim(), description: description.trim() || null, price: price ? parseFloat(price) : null, category: newCategory, status: 'active' })
+      await supabase.from('listings').insert({ user_id: userId, title: title.trim(), description: description.trim() || null, price: price ? parseFloat(price) : 0, category: newCategory, status: 'active' })
       setTitle(''); setDescription(''); setPrice(''); setNewCategory('Items')
       setShowCreate(false); load()
     } catch (e: any) { Alert.alert('Error', e.message) }
@@ -89,7 +89,7 @@ export default function MarketplaceScreen() {
                 <Text style={s.cardTitle} numberOfLines={1}>{l.title}</Text>
                 <Text style={s.cardMeta}>{l.profile?.display_name || l.profile?.username} · {fmt(l.created_at)}</Text>
               </View>
-              {l.price != null && <Text style={s.cardPrice}>₪{l.price}</Text>}
+              <Text style={s.cardPrice}>{l.price > 0 ? '₪' + l.price : 'Free'}</Text>
             </View>
             {l.description ? <Text style={s.cardDesc} numberOfLines={2}>{l.description}</Text> : null}
             <View style={s.cardFooter}>
@@ -144,7 +144,7 @@ export default function MarketplaceScreen() {
             <View style={s.modalCard}>
               <Text style={s.modalTitle}>{selected.title}</Text>
               {selected.description ? <Text style={[s.cardDesc, { marginBottom: 12 }]}>{selected.description}</Text> : null}
-              {selected.price != null && <Text style={[s.cardPrice, { fontSize: 24, marginBottom: 12 }]}>₪{selected.price}</Text>}
+              <Text style={[s.cardPrice, { fontSize: 24, marginBottom: 12 }]}>{selected.price > 0 ? '₪' + selected.price : 'Free'}</Text>
               <View style={s.catTag}><Text style={s.catTagText}>{selected.category}</Text></View>
               {selected.user_id !== userId && (
                 <TouchableOpacity style={[s.submitBtn, { marginTop: 16 }]} onPress={() => { setSelected(null); router.push({ pathname: '/dm', params: { userId: selected.user_id, userName: selected.profile?.display_name || 'Seller', myMode: 'lit', myAvatar: '🛍️', isAgent: '0' } }) }}>

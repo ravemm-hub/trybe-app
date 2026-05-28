@@ -42,3 +42,13 @@ app-example
 /ios
 /android
 .env
+
+# supabase CLI local state
+supabase/.temp/
+
+# local secret / credential files (never commit)
+sk-ant-*.txt
+sbp_*.txt
+sb_*.txt
+*.secret.txt
+supabase-token.txt

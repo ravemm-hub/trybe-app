@@ -17,6 +17,7 @@ export default function FeedScreen() {
   const [isAnon, setIsAnon] = useState(false)
   const [mediaUrl, setMediaUrl] = useState<string | null>(null)
   const [posting, setPosting] = useState(false)
+  const [uploadingMedia, setUploadingMedia] = useState(false)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
 
@@ -38,6 +39,27 @@ export default function FeedScreen() {
       } else setPosts(data)
     }
     setLoading(false); setRefreshing(false)
+  }
+
+  const pickMedia = async () => {
+    if (!userId) return
+    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (!granted) { Alert.alert('Permission needed', 'Allow photo access to attach an image.'); return }
+    const result = await ImagePicker.launchImageLibraryAsync({ quality: 0.7, mediaTypes: ImagePicker.MediaTypeOptions.Images })
+    if (result.canceled || !result.assets?.[0]) return
+    setUploadingMedia(true)
+    try {
+      const asset = result.assets[0]
+      const ext = (asset.uri.split('.').pop() || 'jpg').toLowerCase()
+      const filename = 'post_' + userId + '_' + Date.now() + '.' + ext
+      const formData = new FormData()
+      formData.append('file', { uri: asset.uri, type: 'image/' + ext, name: filename } as any)
+      const { error } = await supabase.storage.from('chat-media').upload('posts/' + filename, formData, { upsert: true })
+      if (error) throw error
+      const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl('posts/' + filename)
+      setMediaUrl(publicUrl)
+    } catch (e: any) { Alert.alert('Upload failed', e?.message || 'Could not upload image') }
+    finally { setUploadingMedia(false) }
   }
 
   const createPost = async () => {
@@ -82,11 +104,24 @@ export default function FeedScreen() {
         ListHeaderComponent={(
           <View style={s.composer}>
             <TextInput style={s.composerInput} value={draft} onChangeText={setDraft} placeholder="What's happening nearby?" placeholderTextColor={GRAY} multiline maxLength={500} />
+            {mediaUrl && (
+              <View style={s.mediaPreview}>
+                <Image source={{ uri: mediaUrl }} style={s.mediaThumb} resizeMode="cover" />
+                <TouchableOpacity style={s.mediaRemove} onPress={() => setMediaUrl(null)}>
+                  <Text style={s.mediaRemoveText}>✕</Text>
+                </TouchableOpacity>
+              </View>
+            )}
             <View style={s.composerFooter}>
-              <TouchableOpacity style={[s.anonBtn, isAnon && s.anonBtnActive]} onPress={() => setIsAnon(!isAnon)}>
-                <Text style={[s.anonBtnText, isAnon && { color: PRIMARY }]}>{isAnon ? '👻 Anonymous' : 'Anonymous?'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[s.postBtn, (posting || (!draft.trim() && !mediaUrl)) && s.postBtnOff]} onPress={createPost} disabled={posting || (!draft.trim() && !mediaUrl)}>
+              <View style={s.composerLeft}>
+                <TouchableOpacity style={s.iconBtn} onPress={pickMedia} disabled={uploadingMedia}>
+                  {uploadingMedia ? <ActivityIndicator color={PRIMARY} size="small" /> : <Text style={s.iconBtnText}>📷</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.anonBtn, isAnon && s.anonBtnActive]} onPress={() => setIsAnon(!isAnon)}>
+                  <Text style={[s.anonBtnText, isAnon && { color: PRIMARY }]}>{isAnon ? '👻 Anonymous' : 'Anonymous?'}</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity style={[s.postBtn, (posting || uploadingMedia || (!draft.trim() && !mediaUrl)) && s.postBtnOff]} onPress={createPost} disabled={posting || uploadingMedia || (!draft.trim() && !mediaUrl)}>
                 {posting ? <ActivityIndicator color="#fff" size="small" /> : <Text style={s.postBtnText}>Post</Text>}
               </TouchableOpacity>
             </View>
@@ -142,6 +177,13 @@ const s = StyleSheet.create({
   composer: { backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER, padding: 16 },
   composerInput: { fontSize: 15, color: TEXT, minHeight: 60, textAlignVertical: 'top', marginBottom: 12 },
   composerFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  composerLeft: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  iconBtn: { width: 36, height: 32, borderRadius: 12, borderWidth: 1, borderColor: BORDER, alignItems: 'center', justifyContent: 'center' },
+  iconBtnText: { fontSize: 18 },
+  mediaPreview: { position: 'relative', marginBottom: 12, alignSelf: 'flex-start' },
+  mediaThumb: { width: 120, height: 120, borderRadius: 12 },
+  mediaRemove: { position: 'absolute', top: -6, right: -6, width: 24, height: 24, borderRadius: 12, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center' },
+  mediaRemoveText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   anonBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: BORDER },
   anonBtnActive: { borderColor: PRIMARY, backgroundColor: '#EEF0FF' },
   anonBtnText: { fontSize: 13, color: GRAY, fontWeight: '500' },

@@ -2,9 +2,11 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Alert, Modal, Pressable } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
+import * as Clipboard from 'expo-clipboard'
 import { supabase } from '../src/lib/supabase'
 import { sendMessage, editMessage, deleteMessage, markGroupRead } from '../src/services/messages'
-import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS, EDGE_URL, EDGE_AUTH } from '../src/constants'
+import { translateText } from '../src/lib/claude'
+import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS } from '../src/constants'
 import { Message } from '../src/types'
 
 export default function ChatScreen() {
@@ -23,6 +25,7 @@ export default function ChatScreen() {
   const [showMenu, setShowMenu] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [memberCount, setMemberCount] = useState(parseInt(members) || 0)
+  const [translations, setTranslations] = useState<Record<string, string>>({})
 
   useEffect(() => {
     supabase.auth.getUser().then(async ({ data: { user } }) => {
@@ -33,16 +36,6 @@ export default function ChatScreen() {
       loadMessages()
       markGroupRead(id, user.id)
     })
-  }, [])
-
-  const loadMessages = useCallback(async () => {
-    const { data } = await supabase.from('messages')
-      .select('*, profile:profiles(id,display_name,username,avatar_char)')
-      .eq('group_id', id).eq('deleted_for_all', false)
-      .order('created_at', { ascending: true }).limit(100)
-    if (data) setMessages(data as Message[])
-    setLoading(false)
-    setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 100)
 
     const channel = supabase.channel('group:' + id)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'group_id=eq.' + id }, async ({ new: msg }) => {
@@ -55,6 +48,16 @@ export default function ChatScreen() {
       })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
+  }, [id])
+
+  const loadMessages = useCallback(async () => {
+    const { data } = await supabase.from('messages')
+      .select('*, profile:profiles(id,display_name,username,avatar_char)')
+      .eq('group_id', id).eq('deleted_for_all', false)
+      .order('created_at', { ascending: true }).limit(100)
+    if (data) setMessages(data as Message[])
+    setLoading(false)
+    setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 100)
   }, [id])
 
   const send = async () => {
@@ -72,6 +75,38 @@ export default function ChatScreen() {
   }
 
   const handleLongPress = (msg: Message) => { setSelectedMsg(msg); setShowMenu(true) }
+
+  const copyMessage = async (msg: Message) => {
+    try { await Clipboard.setStringAsync(msg.content) } catch {}
+  }
+
+  const translateMessage = async (msg: Message) => {
+    if (translations[msg.id]) { setTranslations(prev => { const n = { ...prev }; delete n[msg.id]; return n }); return }
+    const target = /[֐-׿]/.test(msg.content) ? 'English' : 'Hebrew'
+    const t = await translateText(msg.content, target)
+    if (t) setTranslations(prev => ({ ...prev, [msg.id]: t }))
+  }
+
+  const reportMessage = async (msg: Message) => {
+    if (!userId) return
+    try {
+      await supabase.from('message_reports').insert({ message_id: msg.id, reporter_id: userId, group_id: id, reason: 'inappropriate' })
+      Alert.alert('Reported', 'Thanks — our team will review this message.')
+    } catch { Alert.alert('Error', 'Could not submit the report.') }
+  }
+
+  const blockUser = (msg: Message) => {
+    if (!userId || !msg.user_id) return
+    Alert.alert('Block user', "Block this member from the Trybe?", [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Block', style: 'destructive', onPress: async () => {
+        try {
+          await supabase.from('group_blocks').insert({ group_id: id, blocked_user_id: msg.user_id, blocked_by: userId })
+          Alert.alert('Blocked', 'This member has been blocked from the Trybe.')
+        } catch { Alert.alert('Error', 'Could not block this member.') }
+      } },
+    ])
+  }
 
   const isAgent = (uid: string | null) => uid ? AGENT_IDS.includes(uid) : false
   const isWithin15Min = (ts: string) => Date.now() - new Date(ts).getTime() < 15 * 60 * 1000
@@ -125,6 +160,9 @@ export default function ChatScreen() {
                     {msg.is_forwarded && <Text style={s.forwarded}>↪️ Forwarded</Text>}
                     <View style={[s.bubble, isMe ? (isGhost ? s.bubbleMeGhost : s.bubbleMe) : agentMsg ? s.bubbleAgent : s.bubbleThem]}>
                       <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text>
+                      {translations[msg.id] && (
+                        <Text style={[s.translated, isMe && { color: 'rgba(255,255,255,0.85)', borderTopColor: 'rgba(255,255,255,0.3)' }]}>🌐 {translations[msg.id]}</Text>
+                      )}
                       <View style={s.bubbleMeta}>
                         {msg.edited_at && <Text style={[s.edited, isMe && { color: 'rgba(255,255,255,0.5)' }]}>edited</Text>}
                         <Text style={[s.time, isMe && s.timeMe]}>{fmt(msg.created_at)}</Text>
@@ -142,15 +180,14 @@ export default function ChatScreen() {
           <View style={s.menu}>
             {[
               { icon: '↩️', label: 'Reply', onPress: () => { setReplyTo(selectedMsg!); setShowMenu(false) } },
-              { icon: '📋', label: 'Copy', onPress: () => setShowMenu(false) },
-              { icon: '📤', label: 'Forward', onPress: () => setShowMenu(false) },
-              { icon: '🌐', label: 'Translate', onPress: () => setShowMenu(false) },
+              { icon: '📋', label: 'Copy', onPress: () => { copyMessage(selectedMsg!); setShowMenu(false) } },
+              { icon: '🌐', label: translations[selectedMsg?.id || ''] ? 'Original' : 'Translate', onPress: () => { const m = selectedMsg!; setShowMenu(false); translateMessage(m) } },
               ...(selectedMsg?.user_id === userId ? [
                 ...(isWithin15Min(selectedMsg?.created_at || '') ? [{ icon: '✏️', label: 'Edit', onPress: () => { setEditingMsg(selectedMsg!); setDraft(selectedMsg!.content); setShowMenu(false) } }] : []),
                 { icon: '🗑️', label: 'Delete', onPress: () => { setShowMenu(false); Alert.alert('Delete', 'Delete for everyone?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => deleteMessage(selectedMsg!.id, userId!) }]) } },
               ] : [
-                { icon: '🚩', label: 'Report', onPress: () => setShowMenu(false) },
-                ...(isAdmin ? [{ icon: '🚫', label: 'Block', onPress: () => setShowMenu(false) }] : []),
+                { icon: '🚩', label: 'Report', onPress: () => { const m = selectedMsg!; setShowMenu(false); reportMessage(m) } },
+                ...(isAdmin ? [{ icon: '🚫', label: 'Block', onPress: () => { const m = selectedMsg!; setShowMenu(false); blockUser(m) } }] : []),
               ]),
             ].map(item => (
               <TouchableOpacity key={item.label} style={s.menuItem} onPress={item.onPress}>
@@ -218,6 +255,7 @@ const s = StyleSheet.create({
   bubbleAgent: { backgroundColor: '#EEF0FF', borderBottomLeftRadius: 4, borderWidth: 0.5, borderColor: 'rgba(108,99,255,0.2)' },
   bubbleText: { fontSize: 15, lineHeight: 21, color: TEXT },
   bubbleTextMe: { color: '#fff' },
+  translated: { fontSize: 14, lineHeight: 20, color: GRAY, marginTop: 6, paddingTop: 6, borderTopWidth: 0.5, borderTopColor: BORDER, fontStyle: 'italic' },
   bubbleMeta: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2, justifyContent: 'flex-end' },
   edited: { fontSize: 10, color: GRAY },
   time: { fontSize: 10, color: GRAY },
