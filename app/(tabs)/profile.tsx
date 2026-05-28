@@ -143,7 +143,7 @@ export default function ProfileScreen() {
           <>
             <Text style={s.sectionLabel}>MY TRYBES ({myGroups.length})</Text>
             {myGroups.map((m: any) => (
-              <TouchableOpacity key={m.group_id} style={s.groupRow} onPress={() => router.push({ pathname: m.groups?.status === 'open' ? '/chat' : '/lobby', params: { id: m.group_id, name: m.groups?.name } })}>
+              <TouchableOpacity key={m.group_id} style={s.groupRow} onPress={() => router.push({ pathname: '/chat', params: { id: m.group_id, name: m.groups?.name } })}>
                 <View style={[s.groupDot, { backgroundColor: m.groups?.status === 'open' ? LIVE : PRIMARY }]} />
                 <Text style={s.groupName} numberOfLines={1}>{m.groups?.name || 'Trybe'}</Text>
                 <Text style={s.groupArrow}>›</Text>

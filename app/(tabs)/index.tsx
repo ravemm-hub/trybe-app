@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, StatusBar, ActivityIndicator, Pressable, Linking, Alert } from 'react-native'
+import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, StatusBar, ActivityIndicator, Pressable, Linking, Alert, Modal } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../src/lib/supabase'
 import { getContactName, normalizePhone } from '../../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, INVITE_MSG, AGENT_IDS } from '../../src/constants'
 
-type Tab = 'trybes' | 'dms' | 'contacts'
+type Tab = 'trybes' | 'dms' | 'spaces' | 'contacts'
 
 export default function ChatsScreen() {
   const router = useRouter()
@@ -15,10 +15,15 @@ export default function ChatsScreen() {
   const [userId, setUserId] = useState<string | null>(null)
   const [groups, setGroups] = useState<any[]>([])
   const [dms, setDms] = useState<any[]>([])
+  const [spaces, setSpaces] = useState<any[]>([])
   const [contactNames, setContactNames] = useState<Record<string, string>>({})
   const [contacts, setContacts] = useState<any[]>([])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
+  const [showSpaceModal, setShowSpaceModal] = useState(false)
+  const [spaceTitle, setSpaceTitle] = useState('')
+  const [spaceEmoji, setSpaceEmoji] = useState('✦')
+  const [creatingSpace, setCreatingSpace] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -28,27 +33,61 @@ export default function ChatsScreen() {
 
   const loadAll = async (uid: string) => {
     setLoading(true)
-    await Promise.all([loadGroups(uid), loadDMs(uid), loadContacts(uid)])
+    await Promise.all([loadGroups(uid), loadDMs(uid), loadSpaces(uid), loadContacts(uid)])
     setLoading(false)
   }
 
   const loadGroups = async (uid: string) => {
-    const { data } = await supabase.from('group_members')
-      .select('group_id, last_read_at, groups(*)')
-      .eq('user_id', uid).order('created_at', { ascending: false })
-    if (!data) return
-    const items = await Promise.all(data.map(async (m: any) => {
-      const g = m.groups as any
-      const lastRead = m.last_read_at || new Date(0).toISOString()
-      const { count: unread } = await supabase.from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('group_id', m.group_id).neq('user_id', uid).neq('type', 'system').gt('created_at', lastRead)
-      const { data: lastMsg } = await supabase.from('messages')
-        .select('content, created_at').eq('group_id', m.group_id)
-        .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
-      return { ...g, unread: unread || 0, lastMsg: lastMsg?.[0] }
-    }))
-    setGroups(items)
+    try {
+      const { data: memberships } = await supabase.from('group_members')
+        .select('group_id, last_read_at')
+        .eq('user_id', uid)
+      if (!memberships?.length) { setGroups([]); return }
+      const groupIds = memberships.map((m: any) => m.group_id)
+      const lastReadById: Record<string, string> = {}
+      for (const m of memberships) lastReadById[m.group_id] = m.last_read_at || new Date(0).toISOString()
+
+      const { data: groupRows } = await supabase.from('groups').select('*').in('id', groupIds)
+      if (!groupRows?.length) { setGroups([]); return }
+
+      const items = await Promise.all(groupRows.map(async (g: any) => {
+        const lastRead = lastReadById[g.id] || new Date(0).toISOString()
+        const { count: unread } = await supabase.from('messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('group_id', g.id).neq('user_id', uid).neq('type', 'system').gt('created_at', lastRead)
+        const { data: lastMsg } = await supabase.from('messages')
+          .select('content, created_at').eq('group_id', g.id)
+          .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
+        return { ...g, unread: unread || 0, lastMsg: lastMsg?.[0] }
+      }))
+      items.sort((a, b) => new Date(b.lastMsg?.created_at || b.created_at || 0).getTime() - new Date(a.lastMsg?.created_at || a.created_at || 0).getTime())
+      setGroups(items)
+    } catch { setGroups([]) }
+  }
+
+  const loadSpaces = async (uid: string) => {
+    try {
+      const { data } = await supabase.from('teeby_spaces')
+        .select('*').eq('user_id', uid).order('created_at', { ascending: false })
+      setSpaces(data || [])
+    } catch { setSpaces([]) }
+  }
+
+  const createSpace = async () => {
+    if (!spaceTitle.trim() || !userId) return
+    setCreatingSpace(true)
+    try {
+      const { data, error } = await supabase.from('teeby_spaces')
+        .insert({ user_id: userId, title: spaceTitle.trim(), emoji: spaceEmoji.trim() || '✦' })
+        .select().single()
+      if (error || !data) throw error || new Error('Failed to create space')
+      setSpaces(prev => [data, ...prev])
+      setShowSpaceModal(false)
+      setSpaceTitle(''); setSpaceEmoji('✦')
+      router.push({ pathname: '/space', params: { id: data.id, title: data.title, emoji: data.emoji } })
+    } catch (e: any) {
+      Alert.alert('Error', e?.message || 'Could not create space')
+    } finally { setCreatingSpace(false) }
   }
 
   const loadDMs = async (uid: string) => {
@@ -120,16 +159,23 @@ export default function ChatsScreen() {
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <Text style={s.logo}>tryber</Text>
-        <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
-          <Text style={s.createBtnText}>+ Trybe</Text>
-        </TouchableOpacity>
+        {tab === 'spaces'
+          ? <TouchableOpacity style={s.createBtn} onPress={() => { setSpaceTitle(''); setSpaceEmoji('✦'); setShowSpaceModal(true) }}>
+              <Text style={s.createBtnText}>+ Space</Text>
+            </TouchableOpacity>
+          : <TouchableOpacity style={s.createBtn} onPress={() => router.push('/create')}>
+              <Text style={s.createBtnText}>+ Trybe</Text>
+            </TouchableOpacity>}
       </View>
 
       <View style={s.tabs}>
-        {(['trybes', 'dms', 'contacts'] as Tab[]).map(t => (
+        {(['trybes', 'dms', 'spaces', 'contacts'] as Tab[]).map(t => (
           <TouchableOpacity key={t} style={[s.tabBtn, tab === t && s.tabBtnActive]} onPress={() => setTab(t)}>
             <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]}>
-              {t === 'trybes' ? `Trybes${groups.length > 0 ? ` (${groups.length})` : ''}` : t === 'dms' ? `Chats${dms.length > 0 ? ` (${dms.length})` : ''}` : 'Contacts'}
+              {t === 'trybes' ? `Trybes${groups.length > 0 ? ` (${groups.length})` : ''}`
+                : t === 'dms' ? `Chats${dms.length > 0 ? ` (${dms.length})` : ''}`
+                : t === 'spaces' ? `Spaces${spaces.length > 0 ? ` (${spaces.length})` : ''}`
+                : 'Contacts'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -140,7 +186,7 @@ export default function ChatsScreen() {
           contentContainerStyle={groups.length === 0 ? { flex: 1 } : {}}
           ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>⚡</Text><Text style={s.emptyTitle}>No Trybes yet</Text><TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}><Text style={s.emptyBtnText}>Create a Trybe</Text></TouchableOpacity></View>}
           renderItem={({ item: g }) => (
-            <Pressable style={s.row} onPress={() => router.push({ pathname: g.status === 'open' ? '/chat' : '/lobby', params: { id: g.id, name: g.name, members: g.member_count || '0' } })}>
+            <Pressable style={s.row} onPress={() => router.push({ pathname: '/chat', params: { id: g.id, name: g.name, members: String(g.member_count || 0) } })}>
               <View style={[s.groupAvatar, g.status === 'open' && s.groupAvatarLive]}>
                 <Text style={s.groupAvatarText}>{g.name?.[0] || '⚡'}</Text>
                 {g.status === 'open' && <View style={s.liveDot} />}
@@ -182,6 +228,30 @@ export default function ChatsScreen() {
           }} />
       )}
 
+      {tab === 'spaces' && (
+        <FlatList data={spaces} keyExtractor={sp => sp.id}
+          contentContainerStyle={spaces.length === 0 ? { flex: 1 } : {}}
+          ListEmptyComponent={
+            <View style={s.empty}>
+              <Text style={s.emptyEmoji}>✦</Text>
+              <Text style={s.emptyTitle}>No Spaces yet</Text>
+              <Text style={s.emptySub}>Private topic-based chats with Teeby</Text>
+              <TouchableOpacity style={s.emptyBtn} onPress={() => { setSpaceTitle(''); setSpaceEmoji('✦'); setShowSpaceModal(true) }}>
+                <Text style={s.emptyBtnText}>Create a Space</Text>
+              </TouchableOpacity>
+            </View>
+          }
+          renderItem={({ item: sp }) => (
+            <Pressable style={s.row} onPress={() => router.push({ pathname: '/space', params: { id: sp.id, title: sp.title, emoji: sp.emoji } })}>
+              <View style={s.spaceAvatar}><Text style={s.spaceAvatarText}>{sp.emoji || '✦'}</Text></View>
+              <View style={s.rowInfo}>
+                <Text style={s.rowName} numberOfLines={1}>{sp.title}</Text>
+                <Text style={s.rowSub} numberOfLines={1}>Chat with Teeby ✦</Text>
+              </View>
+            </Pressable>
+          )} />
+      )}
+
       {tab === 'contacts' && (
         <View style={{ flex: 1 }}>
           <View style={s.searchRow}>
@@ -213,6 +283,25 @@ export default function ChatsScreen() {
             )} />
         </View>
       )}
+
+      <Modal visible={showSpaceModal} transparent animationType="fade" onRequestClose={() => setShowSpaceModal(false)}>
+        <View style={s.modalOverlay}>
+          <View style={s.modalCard}>
+            <Text style={s.modalTitle}>✦ New Space</Text>
+            <Text style={s.modalSub}>A private topic-based chat with Teeby</Text>
+            <View style={s.spaceForm}>
+              <TextInput style={s.emojiInput} value={spaceEmoji} onChangeText={t => setSpaceEmoji(t.slice(0, 2))} placeholder="✦" placeholderTextColor={GRAY} textAlign="center" />
+              <TextInput style={s.titleInput} value={spaceTitle} onChangeText={setSpaceTitle} placeholder="Title (e.g. Trip planning)" placeholderTextColor={GRAY} maxLength={50} autoFocus />
+            </View>
+            <TouchableOpacity style={[s.verifyBtn, (!spaceTitle.trim() || creatingSpace) && { opacity: 0.4 }]} onPress={createSpace} disabled={!spaceTitle.trim() || creatingSpace}>
+              {creatingSpace ? <ActivityIndicator color="#fff" /> : <Text style={s.verifyBtnText}>Create Space</Text>}
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setShowSpaceModal(false)} style={{ marginTop: 12 }}>
+              <Text style={{ color: GRAY, textAlign: 'center' }}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   )
 }
@@ -235,6 +324,8 @@ const s = StyleSheet.create({
   liveDot: { position: 'absolute', bottom: 0, right: 0, width: 12, height: 12, borderRadius: 6, backgroundColor: LIVE, borderWidth: 2, borderColor: CARD },
   dmAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
   dmAvatarText: { fontSize: 22 },
+  spaceAvatar: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: PRIMARY },
+  spaceAvatarText: { fontSize: 24 },
   rowInfo: { flex: 1 },
   rowTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
   rowName: { fontSize: 15, fontWeight: '600', color: TEXT, flex: 1, marginRight: 8 },
@@ -266,4 +357,13 @@ const s = StyleSheet.create({
   msgBtnText: { fontSize: 12, color: LIVE, fontWeight: '600' },
   inviteBtn: { backgroundColor: '#EEF0FF', paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16 },
   inviteBtnText: { fontSize: 12, color: PRIMARY, fontWeight: '600' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 32 },
+  modalCard: { backgroundColor: CARD, borderRadius: 24, padding: 24, width: '100%' },
+  modalTitle: { fontSize: 20, fontWeight: '800', color: TEXT, textAlign: 'center', marginBottom: 6 },
+  modalSub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 20 },
+  spaceForm: { flexDirection: 'row', gap: 10, marginBottom: 16 },
+  emojiInput: { width: 56, backgroundColor: BG, borderRadius: 14, paddingVertical: 14, fontSize: 24, color: TEXT, borderWidth: 1, borderColor: BORDER },
+  titleInput: { flex: 1, backgroundColor: BG, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: BORDER },
+  verifyBtn: { backgroundColor: PRIMARY, borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  verifyBtnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
 })

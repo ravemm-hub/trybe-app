@@ -3,6 +3,7 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityInd
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../src/lib/supabase'
+import { normalizePhone } from '../../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY } from '../../src/constants'
 
 export default function LoginScreen() {
@@ -24,15 +25,29 @@ export default function LoginScreen() {
   }
 
   const handleRegister = async () => {
-    if (!email || !password || !name) { Alert.alert('Missing fields', 'Please fill all fields'); return }
+    if (!name || !phone || !email || !password) { Alert.alert('Missing fields', 'Please fill name, phone, email and password'); return }
     setLoading(true)
-    const { data, error } = await supabase.auth.signUp({ email, password })
-    if (error) { setLoading(false); Alert.alert('Error', error.message); return }
-    if (data.user) {
-      const normalizedPhone = phone ? (phone.startsWith('0') ? phone : '0' + phone) : null
-      await supabase.from('profiles').update({ display_name: name, phone: normalizedPhone }).eq('id', data.user.id)
+    try {
+      const normalizedPhone = normalizePhone(phone)
+      const { data: existing } = await supabase.from('profiles').select('id').eq('phone', normalizedPhone).maybeSingle()
+      if (existing) { setLoading(false); Alert.alert('Phone already registered', 'This phone number is already in use. Please sign in instead.'); return }
+
+      const { data, error } = await supabase.auth.signUp({ email, password })
+      if (error) { setLoading(false); Alert.alert('Error', error.message); return }
+      if (data.user) {
+        const { error: upErr } = await supabase.from('profiles').update({ display_name: name, phone: normalizedPhone }).eq('id', data.user.id)
+        if (upErr) {
+          setLoading(false)
+          if (upErr.code === '23505' || /duplicate|unique/i.test(upErr.message)) Alert.alert('Phone already registered', 'This phone number is already in use. Please sign in instead.')
+          else Alert.alert('Error', upErr.message)
+          return
+        }
+      }
+      setLoading(false)
+    } catch (e: any) {
+      setLoading(false)
+      Alert.alert('Error', e?.message || 'Something went wrong')
     }
-    setLoading(false)
   }
 
   return (

@@ -3,7 +3,7 @@ import { supabase } from './supabase'
 import { EAS_PROJECT_ID } from '../constants'
 
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: true }),
+  handleNotification: async () => ({ shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: true }),
 })
 
 export async function registerPushToken(userId: string): Promise<string | null> {

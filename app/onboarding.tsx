@@ -6,6 +6,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage'
 import * as Location from 'expo-location'
 import { supabase } from '../src/lib/supabase'
 import { askClaude } from '../src/lib/claude'
+import { normalizePhone } from '../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER } from '../src/constants'
 
 type Step = 'welcome' | 'name' | 'phone' | 'vibe' | 'done'
@@ -68,7 +69,7 @@ export default function OnboardingScreen() {
 
   const handlePhone = async () => {
     if (!input.trim()) return
-    const p = input.trim().startsWith('0') ? input.trim() : '0' + input.trim()
+    const p = normalizePhone(input.trim())
     setPhone(p)
     addMsg('user', input.trim())
     setInput('')
@@ -91,7 +92,17 @@ export default function OnboardingScreen() {
 
   const createAccount = async () => {
     try {
-      const email = name.toLowerCase().replace(/\s+/g, '.') + '.' + Date.now() + '@tryber.app'
+      if (phone) {
+        const { data: existing } = await supabase.from('profiles').select('id').eq('phone', phone).maybeSingle()
+        if (existing) {
+          await typeMsg('Looks like that phone is already on Tryber! 📱\n\nLet me take you to sign in.')
+          setTimeout(() => router.replace('/(auth)/login'), 1500)
+          return
+        }
+      }
+      const email = phone
+        ? phone + '@tryber.app'
+        : name.toLowerCase().replace(/\s+/g, '.') + '.' + Date.now() + '@tryber.app'
       const password = Math.random().toString(36).substring(2, 14)
       const { data, error } = await supabase.auth.signUp({ email, password })
       if (error || !data.user) { await typeMsg('Hmm, something went wrong. Please try again!'); return }

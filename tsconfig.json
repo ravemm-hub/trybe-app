@@ -11,5 +11,6 @@
       "@components/*": ["./src/components/*"],
       "@types": ["./src/types/index"]
     }
-  }
+  },
+  "exclude": ["node_modules", "supabase"]
 }

@@ -1,17 +1,19 @@
-﻿import { CLAUDE_MODEL } from '../constants'
+﻿import { CLAUDE_MODEL, EDGE_URL, EDGE_AUTH } from '../constants'
 
-const ANTHROPIC_KEY = process.env.EXPO_PUBLIC_ANTHROPIC_KEY || ''
 const TAVILY_KEY = process.env.EXPO_PUBLIC_TAVILY_KEY || ''
 
+// Routes through the quick-endpoint Edge Function so the Anthropic key stays
+// server-side (set via `supabase secrets set ANTHROPIC_API_KEY=...`) instead of
+// being inlined into the app bundle.
 export async function askClaude(prompt: string, system?: string, maxTokens = 200): Promise<string> {
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch(EDGE_URL, {
       method: 'POST',
-      headers: { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({ model: CLAUDE_MODEL, max_tokens: maxTokens, system: system || undefined, messages: [{ role: 'user', content: prompt }] }),
+      headers: { Authorization: EDGE_AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt, system: system || undefined, max_tokens: maxTokens, model: CLAUDE_MODEL }),
     })
     const data = await res.json()
-    return data.content?.[0]?.text?.trim() || ''
+    return data.text?.trim() || ''
   } catch { return '' }
 }
 

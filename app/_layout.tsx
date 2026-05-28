@@ -77,8 +77,7 @@ export default function RootLayout() {
           <Stack.Screen name='chat' options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name='dm' options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name='create' options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name='lobby' options={{ animation: 'slide_from_right' }} />
-          <Stack.Screen name='contacts' options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name='space' options={{ animation: 'slide_from_right' }} />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

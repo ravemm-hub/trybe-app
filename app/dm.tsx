@@ -5,20 +5,24 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import { supabase } from '../src/lib/supabase'
 import { sendDM, markDMRead, markDMDelivered, editDM, deleteDM, getReceiptStatus } from '../src/services/dms'
 import { askClaude, translateText } from '../src/lib/claude'
-import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS, AGENTS } from '../src/constants'
+import { getContactName } from '../src/lib/contacts'
+import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, AGENT_IDS, AGENTS } from '../src/constants'
 import { DmMessage } from '../src/types'
 
-const LANGS = ['English', 'Hebrew', 'Arabic', 'Russian', 'French', 'Spanish', 'German']
+const LANGS = ['English', 'Hebrew', 'Arabic', 'Russian', 'French', 'Spanish']
 
 export default function DMScreen() {
   const insets = useSafeAreaInsets()
   const router = useRouter()
-  const { userId: otherUserId, userName, myMode: initMode, myAvatar, isAgent } = useLocalSearchParams<any>()
+  const params = useLocalSearchParams<any>()
+  const otherUserId = params?.userId || ''
+  const initMode = params?.myMode || 'lit'
+  const isAgentParam = params?.isAgent === '1'
   const listRef = useRef<FlatList>(null)
   const [myId, setMyId] = useState<string | null>(null)
+  const [displayName, setDisplayName] = useState(params?.userName || 'Chat')
   const [messages, setMessages] = useState<DmMessage[]>([])
   const [draft, setDraft] = useState('')
-  const [loading, setLoading] = useState(false)
   const [agentTyping, setAgentTyping] = useState(false)
   const [replyTo, setReplyTo] = useState<DmMessage | null>(null)
   const [editingMsg, setEditingMsg] = useState<DmMessage | null>(null)
@@ -27,26 +31,34 @@ export default function DMScreen() {
   const [selectedMsg, setSelectedMsg] = useState<DmMessage | null>(null)
   const [showMenu, setShowMenu] = useState(false)
 
-  const talkingToAgent = isAgent === '1' || AGENT_IDS.includes(otherUserId || '')
+  const talkingToAgent = isAgentParam || (otherUserId && AGENT_IDS.includes(otherUserId))
   const agentInfo = AGENTS.find(a => a.id === otherUserId)
 
   useEffect(() => {
+    if (!otherUserId) { router.back(); return }
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (!user) return
       setMyId(user.id)
+      // Load contact name
+      getContactName(otherUserId).then(cn => { if (cn) setDisplayName(cn) })
       loadMessages(user.id)
       if (!talkingToAgent) markDMDelivered(user.id)
     })
   }, [])
 
   const loadMessages = async (uid: string) => {
-    const { data } = await supabase.from('dm_messages').select('*')
-      .or('and(sender_id.eq.' + uid + ',receiver_id.eq.' + otherUserId + '),and(sender_id.eq.' + otherUserId + ',receiver_id.eq.' + uid + ')')
-      .eq('deleted_for_all', false).order('created_at', { ascending: true }).limit(100)
-    if (data) {
-      setMessages(data as DmMessage[])
-      markDMRead(otherUserId!, uid)
-    }
+    try {
+      const { data, error } = await supabase.from('dm_messages').select('*')
+        .or('and(sender_id.eq.' + uid + ',receiver_id.eq.' + otherUserId + '),and(sender_id.eq.' + otherUserId + ',receiver_id.eq.' + uid + ')')
+        .eq('deleted_for_all', false).order('created_at', { ascending: true }).limit(100)
+      if (error) { console.error('DM load error:', error); return }
+      if (data) {
+        setMessages(data as DmMessage[])
+        markDMRead(otherUserId, uid)
+        setTimeout(() => listRef.current?.scrollToEnd({ animated: false }), 100)
+      }
+    } catch (e) { console.error('DM loadMessages error:', e) }
+
     const channel = supabase.channel('dm:' + uid + ':' + otherUserId)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, async ({ new: msg }) => {
         const isOurs = (msg.sender_id === uid && msg.receiver_id === otherUserId) || (msg.sender_id === otherUserId && msg.receiver_id === uid)
@@ -63,7 +75,7 @@ export default function DMScreen() {
   }
 
   const sendMessage = useCallback(async () => {
-    if (!draft.trim() || !myId) return
+    if (!draft.trim() || !myId || !otherUserId) return
     let content = draft.trim()
     setDraft('')
     if (editingMsg) {
@@ -72,32 +84,23 @@ export default function DMScreen() {
       return
     }
     if (translateTo && !talkingToAgent) content = await translateText(content, translateTo)
-    await sendDM({ senderId: myId, receiverId: otherUserId!, content, senderMode: initMode || 'lit', replyToId: replyTo?.id || null, replyPreview: replyTo?.content?.slice(0, 60) || null })
+    await sendDM({ senderId: myId, receiverId: otherUserId, content, senderMode: initMode || 'lit', replyToId: replyTo?.id || null, replyPreview: replyTo?.content?.slice(0, 60) || null })
     setReplyTo(null)
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
-    if (talkingToAgent) {
+    if (talkingToAgent && agentInfo) {
       setAgentTyping(true)
       const timeout = setTimeout(() => setAgentTyping(false), 15000)
       try {
         await new Promise(r => setTimeout(r, 1000 + Math.random() * 1500))
-        const lang = agentInfo?.lang === 'he' ? 'Hebrew' : 'English'
-        const reply = await askClaude('You are ' + (agentInfo?.name || 'an assistant') + ', ' + (agentInfo?.personality || 'friendly') + '. Someone wrote: "' + content + '". Reply in ' + lang + ', 1-2 sentences, casual.', undefined, 100)
+        const lang = agentInfo.lang === 'he' ? 'Hebrew' : 'English'
+        const reply = await askClaude('You are ' + agentInfo.name + ', ' + agentInfo.personality + '. Someone wrote: "' + content + '". Reply in ' + lang + ', 1-2 sentences, casual.', undefined, 100)
         if (reply) await supabase.from('dm_messages').insert({ sender_id: otherUserId, receiver_id: myId, content: reply, sender_mode: 'lit', receiver_mode: 'lit' })
-      } finally { setAgentTyping(false); clearTimeout(timeout) }
+      } catch {}
+      finally { setAgentTyping(false); clearTimeout(timeout) }
     }
   }, [draft, myId, otherUserId, replyTo, translateTo, editingMsg, talkingToAgent, agentInfo, initMode])
 
   const handleLongPress = (msg: DmMessage) => { setSelectedMsg(msg); setShowMenu(true) }
-
-  const handleDelete = (msg: DmMessage) => {
-    setShowMenu(false)
-    Alert.alert('Delete message', 'Delete for everyone?', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteDM(msg.id, myId!) },
-    ])
-  }
-
-  const displayName = userName || 'Chat'
 
   const receiptIcon = (msg: DmMessage) => {
     if (msg.sender_id !== myId) return null
@@ -112,7 +115,7 @@ export default function DMScreen() {
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}><Text style={s.backText}>‹</Text></TouchableOpacity>
         <View style={[s.hAvatar, talkingToAgent && s.hAvatarAgent]}>
-          <Text style={s.hAvatarText}>{talkingToAgent ? '✦' : (myAvatar || displayName[0] || '?')}</Text>
+          <Text style={s.hAvatarText}>{talkingToAgent ? '✦' : (displayName?.[0] || '?')}</Text>
         </View>
         <View style={s.hInfo}>
           <Text style={s.hName} numberOfLines={1}>{displayName}</Text>
@@ -126,45 +129,66 @@ export default function DMScreen() {
         )}
       </View>
 
-      <FlatList ref={listRef} data={messages} keyExtractor={m => m.id}
-        contentContainerStyle={{ paddingVertical: 8 }}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-        renderItem={({ item: msg }) => {
-          const isMe = msg.sender_id === myId
-          if (msg.deleted_for_all) return <Text style={s.deleted}>🚫 Message deleted</Text>
-          return (
-            <TouchableOpacity onLongPress={() => handleLongPress(msg)} activeOpacity={0.85} style={[s.msgWrap, isMe && s.msgWrapMe]}>
-              {msg.reply_to_id && (
-                <View style={[s.replyBar, isMe && s.replyBarMe]}>
-                  <View style={s.replyLine} />
-                  <Text style={s.replyText} numberOfLines={1}>{msg.reply_preview || '...'}</Text>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 60}>
+        <FlatList ref={listRef} data={messages} keyExtractor={m => m.id}
+          contentContainerStyle={{ paddingVertical: 8 }}
+          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
+          renderItem={({ item: msg }) => {
+            const isMe = msg.sender_id === myId
+            if (msg.deleted_for_all) return <Text style={s.deleted}>🚫 Message deleted</Text>
+            return (
+              <TouchableOpacity onLongPress={() => handleLongPress(msg)} activeOpacity={0.85} style={[s.msgWrap, isMe && s.msgWrapMe]}>
+                {msg.reply_to_id && (
+                  <View style={[s.replyBar, isMe && s.replyBarMe]}>
+                    <View style={s.replyLine} />
+                    <Text style={s.replyText} numberOfLines={1}>{msg.reply_preview || '...'}</Text>
+                  </View>
+                )}
+                <View style={[s.bubble, isMe ? s.bubbleMe : s.bubbleThem]}>
+                  <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text>
+                  <View style={s.bubbleMeta}>
+                    {msg.edited_at && <Text style={[s.edited, isMe && { color: 'rgba(255,255,255,0.5)' }]}>edited</Text>}
+                    <Text style={[s.time, isMe && s.timeMe]}>{new Date(msg.created_at).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}</Text>
+                    {receiptIcon(msg)}
+                  </View>
                 </View>
-              )}
-              {msg.is_forwarded && <Text style={[s.forwarded, isMe && s.forwardedMe]}>↪️ Forwarded</Text>}
-              <View style={[s.bubble, isMe ? s.bubbleMe : s.bubbleThem]}>
-                <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text>
-                <View style={s.bubbleMeta}>
-                  {msg.edited_at && <Text style={[s.edited, isMe && { color: 'rgba(255,255,255,0.5)' }]}>edited</Text>}
-                  <Text style={[s.time, isMe && s.timeMe]}>{new Date(msg.created_at).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })}</Text>
-                  {receiptIcon(msg)}
-                </View>
+              </TouchableOpacity>
+            )
+          }}
+          ListFooterComponent={agentTyping ? (
+            <View style={s.msgWrap}>
+              <View style={[s.bubble, s.bubbleThem, { paddingVertical: 14 }]}>
+                <Text style={{ fontSize: 18, color: PRIMARY, letterSpacing: 4 }}>· · ·</Text>
               </View>
-            </TouchableOpacity>
-          )
-        }}
-        ListFooterComponent={agentTyping ? (
-          <View style={s.msgWrap}>
-            <View style={[s.bubble, s.bubbleThem, { paddingVertical: 14 }]}>
-              <Text style={{ fontSize: 18, color: PRIMARY, letterSpacing: 4 }}>· · ·</Text>
             </View>
+          ) : null}
+        />
+
+        {replyTo && (
+          <View style={s.replyBarInput}>
+            <View style={s.replyLine} />
+            <Text style={s.replyPreviewText} numberOfLines={1}>{replyTo.content}</Text>
+            <TouchableOpacity onPress={() => setReplyTo(null)}><Text style={{ fontSize: 18, color: GRAY }}>✕</Text></TouchableOpacity>
           </View>
-        ) : null}
-      />
+        )}
+
+        <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
+          {translateTo && !talkingToAgent && (
+            <View style={s.transIndicator}><Text style={s.transIndicatorText}>🌐 → {translateTo}</Text></View>
+          )}
+          <TextInput style={s.input} value={draft} onChangeText={setDraft}
+            placeholder={editingMsg ? 'Edit message...' : 'Message...'}
+            placeholderTextColor={GRAY} multiline returnKeyType="send" onSubmitEditing={sendMessage} />
+          <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={sendMessage} disabled={!draft.trim()}>
+            <Text style={s.sendBtnText}>{editingMsg ? '✓' : '↑'}</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
 
       <Modal visible={showTranslate} transparent animationType="slide" onRequestClose={() => setShowTranslate(false)}>
         <TouchableOpacity style={s.modalOverlay} onPress={() => setShowTranslate(false)} activeOpacity={1}>
           <View style={s.translateSheet}>
-            <Text style={s.translateTitle}>Translate messages to:</Text>
+            <Text style={s.translateTitle}>Translate to:</Text>
             <TouchableOpacity style={[s.translateOpt, !translateTo && s.translateOptActive]} onPress={() => { setTranslateTo(null); setShowTranslate(false) }}>
               <Text style={[s.translateOptText, !translateTo && { color: '#fff' }]}>Off</Text>
             </TouchableOpacity>
@@ -183,11 +207,10 @@ export default function DMScreen() {
             {[
               { icon: '↩️', label: 'Reply', onPress: () => { setReplyTo(selectedMsg!); setShowMenu(false) } },
               { icon: '📋', label: 'Copy', onPress: () => setShowMenu(false) },
-              { icon: '📤', label: 'Forward', onPress: () => setShowMenu(false) },
               { icon: '🌐', label: 'Translate', onPress: () => { setShowMenu(false); setShowTranslate(true) } },
               ...(selectedMsg?.sender_id === myId ? [
                 { icon: '✏️', label: 'Edit', onPress: () => { setEditingMsg(selectedMsg!); setDraft(selectedMsg!.content); setShowMenu(false) } },
-                { icon: '🗑️', label: 'Delete', onPress: () => handleDelete(selectedMsg!) },
+                { icon: '🗑️', label: 'Delete', onPress: () => { setShowMenu(false); Alert.alert('Delete', 'Delete for everyone?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => deleteDM(selectedMsg!.id, myId!) }]) } },
               ] : [
                 { icon: '🚩', label: 'Report', onPress: () => setShowMenu(false) },
               ]),
@@ -200,28 +223,6 @@ export default function DMScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
-
-      {replyTo && (
-        <View style={s.replyBarInput}>
-          <View style={s.replyLine} />
-          <Text style={s.replyPreviewText} numberOfLines={1}>{replyTo.content}</Text>
-          <TouchableOpacity onPress={() => setReplyTo(null)}><Text style={{ fontSize: 18, color: GRAY }}>✕</Text></TouchableOpacity>
-        </View>
-      )}
-
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={insets.top + 8}>
-        <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-          {translateTo && !talkingToAgent && (
-            <View style={s.transIndicator}><Text style={s.transIndicatorText}>🌐 → {translateTo}</Text></View>
-          )}
-          <TextInput style={s.input} value={draft} onChangeText={setDraft}
-            placeholder={editingMsg ? 'Edit message...' : 'Message...'}
-            placeholderTextColor={GRAY} multiline returnKeyType="send" onSubmitEditing={sendMessage} />
-          <TouchableOpacity style={[s.sendBtn, !draft.trim() && s.sendBtnOff]} onPress={sendMessage} disabled={!draft.trim()}>
-            <Text style={s.sendBtnText}>{editingMsg ? '✓' : '↑'}</Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingView>
     </View>
   )
 }
@@ -246,8 +247,6 @@ const s = StyleSheet.create({
   replyBarMe: { alignSelf: 'flex-end' },
   replyLine: { width: 3, backgroundColor: PRIMARY, borderRadius: 2 },
   replyText: { fontSize: 12, color: GRAY, flex: 1 },
-  forwarded: { fontSize: 11, color: GRAY, marginBottom: 2 },
-  forwardedMe: { alignSelf: 'flex-end' },
   bubble: { maxWidth: '80%', borderRadius: 18, paddingHorizontal: 14, paddingVertical: 8 },
   bubbleThem: { backgroundColor: CARD, borderBottomLeftRadius: 4, borderWidth: 0.5, borderColor: BORDER },
   bubbleMe: { backgroundColor: PRIMARY, borderBottomRightRadius: 4 },
@@ -257,6 +256,15 @@ const s = StyleSheet.create({
   edited: { fontSize: 10, color: GRAY },
   time: { fontSize: 10, color: GRAY },
   timeMe: { color: 'rgba(255,255,255,0.6)' },
+  replyBarInput: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(108,99,255,0.06)', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: BORDER },
+  replyPreviewText: { flex: 1, fontSize: 13, color: GRAY },
+  transIndicator: { backgroundColor: '#EEF0FF', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, alignSelf: 'flex-start', marginLeft: 12, marginBottom: 4 },
+  transIndicatorText: { fontSize: 11, color: PRIMARY, fontWeight: '600' },
+  inputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8, backgroundColor: CARD, borderTopWidth: 0.5, borderColor: BORDER },
+  input: { flex: 1, backgroundColor: BG, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: TEXT, maxHeight: 100, borderWidth: 1, borderColor: BORDER },
+  sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
+  sendBtnOff: { opacity: 0.4 },
+  sendBtnText: { color: '#fff', fontSize: 20, fontWeight: '700' },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   translateSheet: { backgroundColor: CARD, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, gap: 8 },
   translateTitle: { fontSize: 16, fontWeight: '700', color: TEXT, marginBottom: 8 },
@@ -268,13 +276,4 @@ const s = StyleSheet.create({
   menuItem: { width: '23%', alignItems: 'center', paddingVertical: 12, borderRadius: 12, backgroundColor: BG },
   menuIcon: { fontSize: 22, marginBottom: 4 },
   menuLabel: { fontSize: 10, color: TEXT, fontWeight: '500' },
-  replyBarInput: { flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(108,99,255,0.06)', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: BORDER },
-  replyPreviewText: { flex: 1, fontSize: 13, color: GRAY },
-  transIndicator: { backgroundColor: '#EEF0FF', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, alignSelf: 'flex-start', marginLeft: 12, marginBottom: 4 },
-  transIndicatorText: { fontSize: 11, color: PRIMARY, fontWeight: '600' },
-  inputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end', paddingHorizontal: 12, paddingTop: 8, backgroundColor: CARD, borderTopWidth: 0.5, borderColor: BORDER },
-  input: { flex: 1, backgroundColor: BG, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 10, fontSize: 15, color: TEXT, maxHeight: 100, borderWidth: 1, borderColor: BORDER },
-  sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
-  sendBtnOff: { opacity: 0.4 },
-  sendBtnText: { color: '#fff', fontSize: 20, fontWeight: '700' },
 })
