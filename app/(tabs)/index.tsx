@@ -3,7 +3,7 @@ import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, StatusBa
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter, useFocusEffect } from 'expo-router'
 import { supabase } from '../../src/lib/supabase'
-import { getContactName, normalizePhone } from '../../src/lib/contacts'
+import { getContactName, getContactNameMap, normalizePhone } from '../../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, INVITE_MSG, AGENT_IDS } from '../../src/constants'
 
 type Tab = 'trybes' | 'dms' | 'spaces'
@@ -17,8 +17,10 @@ export default function ChatsScreen() {
   const [dms, setDms] = useState<any[]>([])
   const [spaces, setSpaces] = useState<any[]>([])
   const [contactNames, setContactNames] = useState<Record<string, string>>({})
+  const [nameMap, setNameMap] = useState<Record<string, string>>({})
   const [contacts, setContacts] = useState<any[]>([])
   const [search, setSearch] = useState('')
+  const [searchResults, setSearchResults] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [showSpaceModal, setShowSpaceModal] = useState(false)
   const [spaceTitle, setSpaceTitle] = useState('')
@@ -26,6 +28,7 @@ export default function ChatsScreen() {
   const [creatingSpace, setCreatingSpace] = useState(false)
 
   useEffect(() => {
+    getContactNameMap().then(setNameMap)
     supabase.auth.getUser().then(({ data: { user } }) => {
       if (user) { setUserId(user.id); loadAll(user.id) }
     })
@@ -35,6 +38,24 @@ export default function ChatsScreen() {
   useFocusEffect(useCallback(() => {
     if (userId) { loadGroups(userId); loadDMs(userId); loadSpaces(userId) }
   }, [userId]))
+
+  // Search all users (to start a chat with anyone) when the search box has text.
+  useEffect(() => {
+    const q = search.trim()
+    if (q.length < 2) { setSearchResults([]); return }
+    let active = true
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await supabase.from('profiles')
+          .select('id, display_name, username, avatar_char')
+          .or(`display_name.ilike.%${q}%,username.ilike.%${q}%`)
+          .neq('id', userId || '00000000-0000-0000-0000-000000000000')
+          .limit(25)
+        if (active) setSearchResults((data || []).filter((p: any) => !AGENT_IDS.includes(p.id)))
+      } catch {}
+    }, 300)
+    return () => { active = false; clearTimeout(t) }
+  }, [search, userId])
 
   const loadAll = async (uid: string) => {
     setLoading(true)
@@ -131,7 +152,7 @@ export default function ChatsScreen() {
         if (!phone) continue
         list.push({ id: c.id || phone, name: c.name, phone, initials: c.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase(), onTryber: false })
       }
-      const allPhones = [...new Set(list.flatMap((c: any) => { const n = normalizePhone(c.phone); return [c.phone, n, '+972' + n.slice(1)] }))]
+      const allPhones = [...new Set(list.flatMap((c: any) => { const n = normalizePhone(c.phone); return [c.phone, n, '+972' + n.slice(1), '972' + n.slice(1)] }))]
       const { data: users } = await supabase.from('profiles').select('id, phone, display_name, username').in('phone', allPhones)
       const tryberMap = new Map()
       for (const u of users || []) {
@@ -157,6 +178,8 @@ export default function ChatsScreen() {
 
   // Contacts who are NOT on the app — shown at the bottom of Chats to invite.
   const inviteContacts = contacts.filter(c => !c.onTryber)
+  const searching = !!search.trim()
+  const groupMatches = searching ? groups.filter(g => (g.name || '').toLowerCase().includes(search.trim().toLowerCase())) : []
 
   if (loading) return <View style={[s.container, { paddingTop: insets.top }]}><ActivityIndicator color={PRIMARY} style={{ flex: 1 }} /></View>
 
@@ -174,19 +197,56 @@ export default function ChatsScreen() {
             </TouchableOpacity>}
       </View>
 
-      <View style={s.tabs}>
-        {(['trybes', 'dms', 'spaces'] as Tab[]).map(t => (
-          <TouchableOpacity key={t} style={[s.tabBtn, tab === t && s.tabBtnActive]} onPress={() => setTab(t)}>
-            <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]}>
-              {t === 'trybes' ? `Trybes${groups.length > 0 ? ` (${groups.length})` : ''}`
-                : t === 'dms' ? `Chats${dms.length > 0 ? ` (${dms.length})` : ''}`
-                : `My Spaces${spaces.length > 0 ? ` (${spaces.length})` : ''}`}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <View style={s.searchRow}>
+        <TextInput style={s.searchInput} value={search} onChangeText={setSearch} placeholder="🔍 Search people or Trybes..." placeholderTextColor={GRAY} autoCapitalize="none" />
       </View>
 
-      {tab === 'trybes' && (
+      {!searching && (
+        <View style={s.tabs}>
+          {(['trybes', 'dms', 'spaces'] as Tab[]).map(t => (
+            <TouchableOpacity key={t} style={[s.tabBtn, tab === t && s.tabBtnActive]} onPress={() => setTab(t)}>
+              <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]}>
+                {t === 'trybes' ? `Trybes${groups.length > 0 ? ` (${groups.length})` : ''}`
+                  : t === 'dms' ? `Chats${dms.length > 0 ? ` (${dms.length})` : ''}`
+                  : `My Spaces${spaces.length > 0 ? ` (${spaces.length})` : ''}`}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
+
+      {searching && (
+        <FlatList
+          data={searchResults}
+          keyExtractor={p => p.id}
+          keyboardShouldPersistTaps="handled"
+          ListHeaderComponent={groupMatches.length > 0 ? (
+            <View>
+              <View style={s.sectionHeader}><Text style={s.sectionHeaderText}>TRYBES</Text></View>
+              {groupMatches.map(g => (
+                <Pressable key={g.id} style={s.row} onPress={() => router.push({ pathname: '/chat', params: { id: g.id, name: g.name, members: String(g.member_count || 0) } })}>
+                  <View style={s.groupAvatar}><Text style={s.groupAvatarText}>{g.name?.[0] || '⚡'}</Text></View>
+                  <View style={s.rowInfo}><Text style={s.rowName} numberOfLines={1}>{g.name}</Text><Text style={s.rowSub}>{g.member_count || 0} members</Text></View>
+                </Pressable>
+              ))}
+              <View style={s.sectionHeader}><Text style={s.sectionHeaderText}>PEOPLE</Text></View>
+            </View>
+          ) : (<View style={s.sectionHeader}><Text style={s.sectionHeaderText}>PEOPLE</Text></View>)}
+          ListEmptyComponent={groupMatches.length === 0 ? <View style={s.empty}><Text style={s.emptySub}>No people found</Text></View> : null}
+          renderItem={({ item: p }) => {
+            const dn = nameMap[p.id] || p.display_name || p.username || 'User'
+            return (
+              <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: p.id, userName: dn, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
+                <View style={s.dmAvatar}><Text style={s.dmAvatarText}>{p.avatar_char || dn[0] || '?'}</Text></View>
+                <View style={s.rowInfo}><Text style={s.rowName} numberOfLines={1}>{dn}</Text><Text style={s.rowSub}>@{p.username || 'user'}</Text></View>
+                <Text style={s.msgBtnText}>💬 Message</Text>
+              </Pressable>
+            )
+          }}
+        />
+      )}
+
+      {!searching && tab === 'trybes' && (
         <FlatList data={groups} keyExtractor={g => g.id}
           contentContainerStyle={groups.length === 0 ? { flex: 1 } : {}}
           ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>⚡</Text><Text style={s.emptyTitle}>No Trybes yet</Text><TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}><Text style={s.emptyBtnText}>Create a Trybe</Text></TouchableOpacity></View>}
@@ -208,7 +268,7 @@ export default function ChatsScreen() {
           )} />
       )}
 
-      {tab === 'dms' && (
+      {!searching && tab === 'dms' && (
         <FlatList data={dms} keyExtractor={d => d.otherId}
           contentContainerStyle={(dms.length === 0 && inviteContacts.length === 0) ? { flex: 1 } : {}}
           ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>💬</Text><Text style={s.emptyTitle}>No chats yet</Text><Text style={s.emptySub}>Find people on Explore</Text></View>}
@@ -250,7 +310,7 @@ export default function ChatsScreen() {
           }} />
       )}
 
-      {tab === 'spaces' && (
+      {!searching && tab === 'spaces' && (
         <FlatList data={spaces} keyExtractor={sp => sp.id}
           contentContainerStyle={spaces.length === 0 ? { flex: 1 } : {}}
           ListEmptyComponent={

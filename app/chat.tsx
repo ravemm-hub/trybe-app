@@ -10,6 +10,7 @@ import { uuidv4 } from '../src/lib/uuid'
 import { useChatAttachments } from '../src/hooks/useChatAttachments'
 import { MediaBubble } from '../src/components/MediaBubble'
 import { MediaKind } from '../src/lib/upload'
+import { getContactNameMap } from '../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS } from '../src/constants'
 import { Message } from '../src/types'
 
@@ -30,11 +31,13 @@ export default function ChatScreen() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [memberCount, setMemberCount] = useState(parseInt(members) || 0)
   const [translations, setTranslations] = useState<Record<string, string>>({})
+  const [contactNames, setContactNames] = useState<Record<string, string>>({})
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null)
   const [forwardGroups, setForwardGroups] = useState<any[]>([])
   const [forwarding, setForwarding] = useState(false)
 
   useEffect(() => {
+    getContactNameMap().then(setContactNames)
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return
       setUserId(user.id)
@@ -46,7 +49,7 @@ export default function ChatScreen() {
 
     const channel = supabase.channel('group:' + id)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'group_id=eq.' + id }, async ({ new: msg }) => {
-        const { data: full } = await supabase.from('messages').select('*, profile:profiles(id,display_name,username,avatar_char)').eq('id', msg.id).single()
+        const { data: full } = await supabase.from('messages').select('*, profile:profiles(id,display_name,username,avatar_char,ghost_name)').eq('id', msg.id).single()
         if (full) setMessages(prev => { if (prev.find(m => m.id === full.id)) return prev; return [...prev, full as Message] })
         setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
       })
@@ -59,7 +62,7 @@ export default function ChatScreen() {
 
   const loadMessages = useCallback(async () => {
     const { data } = await supabase.from('messages')
-      .select('*, profile:profiles(id,display_name,username,avatar_char)')
+      .select('*, profile:profiles(id,display_name,username,avatar_char,ghost_name)')
       .eq('group_id', id).eq('deleted_for_all', false)
       .order('created_at', { ascending: true }).limit(100)
     if (data) setMessages(data as Message[])
@@ -202,7 +205,9 @@ export default function ChatScreen() {
                   <Text style={s.deleted}>🚫 Message deleted</Text>
                 </View>
               )
-              const displayName = isGhost && !isMe ? '👻 Anonymous' : (msg.profile?.display_name || msg.profile?.username || 'User')
+              const displayName = isGhost && !isMe
+                ? '👻 ' + ((msg.profile as any)?.ghost_name || 'Anonymous')
+                : (contactNames[msg.user_id || ''] || msg.profile?.display_name || msg.profile?.username || 'User')
               return (
                 <TouchableOpacity onLongPress={() => handleLongPress(msg)} activeOpacity={0.85} style={[s.msgWrap, isMe && s.msgWrapMe]}>
                   {!isMe && (

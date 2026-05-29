@@ -18,6 +18,13 @@ export async function getContactName(userId: string): Promise<string | null> {
   } catch { return null }
 }
 
+// Full { userId: savedContactName } map, for resolving names in group chat / lists.
+export async function getContactNameMap(): Promise<Record<string, string>> {
+  try {
+    return JSON.parse((await AsyncStorage.getItem(NAMES_KEY)) || '{}')
+  } catch { return {} }
+}
+
 export async function saveContactName(myId: string, theirId: string, name: string) {
   try {
     const raw = await AsyncStorage.getItem(NAMES_KEY)
@@ -55,7 +62,7 @@ export async function getEnrichedContacts(): Promise<EnrichedContact[]> {
       list.push({ id: c.id || phone, name: c.name, phone, initials: c.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase(), onTryber: false })
     }
     if (!list.length) return []
-    const allPhones = [...new Set(list.flatMap(c => { const n = normalizePhone(c.phone); return [c.phone, n, '+972' + n.slice(1)] }))]
+    const allPhones = [...new Set(list.flatMap(c => { const n = normalizePhone(c.phone); return [c.phone, n, '+972' + n.slice(1), '972' + n.slice(1)] }))]
     const { data: users } = await supabase.from('profiles').select('id, phone').in('phone', allPhones)
     const map = new Map<string, any>()
     for (const u of users || []) { if (!u.phone) continue; const n = normalizePhone(u.phone); map.set(u.phone, u); map.set(n, u); map.set('+972' + n.slice(1), u) }
@@ -82,7 +89,7 @@ export async function loadAndMatchContacts(userId: string) {
     if (!list.length) return
     const allPhones = [...new Set(list.flatMap(c => {
       const n = normalizePhone(c.phone)
-      return [c.phone, n, '+972' + n.slice(1)]
+      return [c.phone, n, '+972' + n.slice(1), '972' + n.slice(1)]
     }))]
     const { data: users } = await supabase.from('profiles').select('id, phone').in('phone', allPhones)
     const map = JSON.parse(await AsyncStorage.getItem(NAMES_KEY) || '{}')

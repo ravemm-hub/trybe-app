@@ -21,6 +21,7 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#6C63FF"
       },
+      "softwareKeyboardLayoutMode": "resize",
       "package": "com.tryber.app",
       "permissions": [
         "ACCESS_FINE_LOCATION",

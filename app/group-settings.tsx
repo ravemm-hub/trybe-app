@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Alert, Linking } from 'react-native'
+import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Alert, Linking } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import * as Location from 'expo-location'
@@ -10,7 +10,8 @@ import { NearbyMap, MapUser } from '../src/components/NearbyMap'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, INVITE_MSG, AGENT_IDS } from '../src/constants'
 
 type Tab = 'contacts' | 'map' | 'requests' | 'members'
-const RADII = [1, 3, 5, 10, 25]
+const RADII = [10, 20, 50, 100, 500, 1000, 5000, 25000] // meters
+const fmtR = (m: number) => (m < 1000 ? m + 'm' : m / 1000 + 'km')
 
 export default function GroupSettingsScreen() {
   const insets = useSafeAreaInsets()
@@ -30,9 +31,13 @@ export default function GroupSettingsScreen() {
   const [center, setCenter] = useState<{ lat: number; lon: number } | null>(null)
   const [nearby, setNearby] = useState<MapUser[]>([])
   const [selected, setSelected] = useState<string[]>([])
-  const [radiusKm, setRadiusKm] = useState(5)
+  const [radiusM, setRadiusM] = useState(1000)
+  const [mapMode, setMapMode] = useState<'map' | 'list'>('map')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [editName, setEditName] = useState(groupName)
+  const [editDesc, setEditDesc] = useState('')
+  const [savingEdit, setSavingEdit] = useState(false)
 
   useEffect(() => {
     if (!groupId) { router.back(); return }
@@ -41,6 +46,8 @@ export default function GroupSettingsScreen() {
       setMyId(user.id)
       const { data: p } = await supabase.from('profiles').select('display_name, username').eq('id', user.id).single()
       setMyName(p?.display_name || p?.username || 'Someone')
+      const { data: g } = await supabase.from('groups').select('name, description').eq('id', groupId).single()
+      if (g) { setEditName(g.name || groupName); setEditDesc(g.description || '') }
       await loadMembers()
       loadRequests()
       getEnrichedContacts().then(setContacts)
@@ -71,6 +78,14 @@ export default function GroupSettingsScreen() {
     await loadRequests()
     setBusy(false)
   }
+  const saveGroup = async () => {
+    if (!editName.trim()) return
+    setSavingEdit(true)
+    try { await supabase.from('groups').update({ name: editName.trim(), description: editDesc.trim() || null }).eq('id', groupId) } catch {}
+    setSavingEdit(false)
+    Alert.alert('Saved', 'Trybe details updated.')
+  }
+
   const removeMember = (m: any) => {
     Alert.alert('Remove member', 'Remove ' + (m.profile?.display_name || 'this member') + ' from ' + groupName + '?', [
       { text: 'Cancel', style: 'cancel' },
@@ -108,6 +123,8 @@ export default function GroupSettingsScreen() {
     setBusy(false)
     Alert.alert('Added', n > 0 ? `${n} ${n > 1 ? 'people were' : 'person was'} added to ${groupName}.` : 'They are already members.')
   }
+
+  const toggleNearby = (uid: string) => setSelected(prev => prev.includes(uid) ? prev.filter(x => x !== uid) : [...prev, uid])
 
   const invite = (c: EnrichedContact) => {
     Linking.openURL('whatsapp://send?phone=' + c.phone + '&text=' + encodeURIComponent(INVITE_MSG)).catch(() => {})
@@ -174,16 +191,37 @@ export default function GroupSettingsScreen() {
           {!center
             ? <View style={s.empty}><Text style={s.emptyEmoji}>📍</Text><Text style={s.emptySub}>Enable location to see people nearby on the map</Text></View>
             : <>
-                <View style={s.radiusRow}>
-                  {RADII.map(km => (
-                    <TouchableOpacity key={km} style={[s.radChip, radiusKm === km && s.radChipActive]} onPress={() => setRadiusKm(km)}>
-                      <Text style={[s.radChipText, radiusKm === km && { color: '#fff' }]}>{km}km</Text>
+                <View style={s.modeRow}>
+                  {(['map', 'list'] as const).map(mm => (
+                    <TouchableOpacity key={mm} style={[s.modeBtn, mapMode === mm && s.modeBtnActive]} onPress={() => setMapMode(mm)}>
+                      <Text style={[s.modeBtnText, mapMode === mm && { color: PRIMARY }]}>{mm === 'map' ? '🗺️ Map' : '📋 List'}</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
-                <View style={{ flex: 1 }}>
-                  <NearbyMap center={center} users={nearby} radiusM={radiusKm * 1000} onSelection={setSelected} />
-                </View>
+                {mapMode === 'map' && (
+                  <View style={s.radiusRow}>
+                    {RADII.map(m => (
+                      <TouchableOpacity key={m} style={[s.radChip, radiusM === m && s.radChipActive]} onPress={() => setRadiusM(m)}>
+                        <Text style={[s.radChipText, radiusM === m && { color: '#fff' }]}>{fmtR(m)}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+                {mapMode === 'map'
+                  ? <View style={{ flex: 1 }}><NearbyMap center={center} users={nearby} radiusM={radiusM} onSelection={setSelected} /></View>
+                  : <FlatList data={nearby} keyExtractor={u => u.id} style={{ flex: 1 }}
+                      contentContainerStyle={nearby.length === 0 ? { flex: 1 } : {}}
+                      ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>📡</Text><Text style={s.emptySub}>No one nearby right now</Text></View>}
+                      renderItem={({ item: u }) => {
+                        const sel = selected.includes(u.id)
+                        return (
+                          <TouchableOpacity style={s.row} onPress={() => toggleNearby(u.id)}>
+                            <View style={[s.avatar, sel && s.avatarTryber]}><Text style={s.initials}>{(u.name || '?')[0]}</Text></View>
+                            <View style={s.info}><Text style={s.name}>{u.name}</Text></View>
+                            <Text style={{ fontSize: 13, fontWeight: '700', color: sel ? LIVE : PRIMARY }}>{sel ? '✓ Selected' : '+ Add'}</Text>
+                          </TouchableOpacity>
+                        )
+                      }} />}
                 <View style={[s.mapFooter, { paddingBottom: Math.max(insets.bottom, 10) }]}>
                   <TouchableOpacity style={[s.addSelBtn, (!selected.length || busy) && { opacity: 0.4 }]} disabled={!selected.length || busy} onPress={addSelected}>
                     {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.addSelText}>Add {selected.length || ''} selected to Trybe</Text>}
@@ -212,6 +250,18 @@ export default function GroupSettingsScreen() {
 
       {tab === 'members' && (
         <FlatList data={members} keyExtractor={m => m.user_id}
+          ListHeaderComponent={
+            <View style={s.editSection}>
+              <Text style={s.editLabel}>TRYBE NAME</Text>
+              <TextInput style={s.editInput} value={editName} onChangeText={setEditName} maxLength={50} placeholderTextColor={GRAY} />
+              <Text style={s.editLabel}>DESCRIPTION</Text>
+              <TextInput style={[s.editInput, { minHeight: 64, textAlignVertical: 'top' }]} value={editDesc} onChangeText={setEditDesc} multiline maxLength={200} placeholder="What's this Trybe about?" placeholderTextColor={GRAY} />
+              <TouchableOpacity style={[s.saveBtn, (savingEdit || !editName.trim()) && { opacity: 0.5 }]} onPress={saveGroup} disabled={savingEdit || !editName.trim()}>
+                {savingEdit ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnText}>Save changes</Text>}
+              </TouchableOpacity>
+              <Text style={s.membersLabel}>MEMBERS</Text>
+            </View>
+          }
           renderItem={({ item: m }) => (
             <View style={s.row}>
               <View style={s.avatar}><Text style={s.initials}>{m.profile?.avatar_char || (m.profile?.display_name || '?')[0]}</Text></View>
@@ -261,7 +311,11 @@ const s = StyleSheet.create({
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
   emptyEmoji: { fontSize: 48 },
   emptySub: { fontSize: 14, color: GRAY, textAlign: 'center' },
-  radiusRow: { flexDirection: 'row', gap: 8, padding: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER, justifyContent: 'center' },
+  modeRow: { flexDirection: 'row', gap: 8, padding: 10, backgroundColor: CARD, justifyContent: 'center' },
+  modeBtn: { paddingHorizontal: 20, paddingVertical: 8, borderRadius: 18, backgroundColor: BG, borderWidth: 1, borderColor: BORDER },
+  modeBtnActive: { backgroundColor: '#EEF0FF', borderColor: PRIMARY },
+  modeBtnText: { fontSize: 14, fontWeight: '700', color: GRAY },
+  radiusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 10, paddingBottom: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER, justifyContent: 'center' },
   radChip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16, backgroundColor: BG, borderWidth: 1, borderColor: BORDER },
   radChipActive: { backgroundColor: PRIMARY, borderColor: PRIMARY },
   radChipText: { fontSize: 13, color: TEXT, fontWeight: '600' },
@@ -270,4 +324,10 @@ const s = StyleSheet.create({
   addSelText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   leaveBtn: { margin: 16, paddingVertical: 14, borderRadius: 14, backgroundColor: 'rgba(255,59,48,0.08)', alignItems: 'center' },
   leaveText: { color: DANGER, fontSize: 15, fontWeight: '700' },
+  editSection: { backgroundColor: CARD, padding: 16, borderBottomWidth: 0.5, borderColor: BORDER },
+  editLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginBottom: 6, marginTop: 10 },
+  editInput: { backgroundColor: BG, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: BORDER },
+  saveBtn: { backgroundColor: PRIMARY, borderRadius: 12, paddingVertical: 13, alignItems: 'center', marginTop: 16 },
+  saveBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  membersLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginTop: 20 },
 })

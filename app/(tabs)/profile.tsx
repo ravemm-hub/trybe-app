@@ -16,6 +16,7 @@ export default function ProfileScreen() {
   const [username, setUsername] = useState('')
   const [bio, setBio] = useState('')
   const [phone, setPhone] = useState('')
+  const [ghostName, setGhostName] = useState('')
   const [avatarChar, setAvatarChar] = useState('🦊')
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [showAvatarPicker, setShowAvatarPicker] = useState(false)
@@ -32,7 +33,7 @@ export default function ProfileScreen() {
     if (!user) return
     setUserId(user.id)
     const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
-    if (p) { setDisplayName(p.display_name || ''); setUsername(p.username || ''); setBio(p.bio || ''); setPhone(p.phone || ''); setAvatarChar(p.avatar_char || '🦊'); setAvatarUrl(p.avatar_url || null); setCredits(p.teeby_credits ?? 20) }
+    if (p) { setDisplayName(p.display_name || ''); setUsername(p.username || ''); setBio(p.bio || ''); setPhone(p.phone || ''); setGhostName(p.ghost_name || ''); setAvatarChar(p.avatar_char || '🦊'); setAvatarUrl(p.avatar_url || null); setCredits(p.teeby_credits ?? 20) }
     const { data: groups } = await supabase.from('group_members').select('group_id, groups(name, status)').eq('user_id', user.id).limit(10)
     if (groups) setMyGroups(groups)
     const { count: msgCount } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('user_id', user.id)
@@ -43,7 +44,7 @@ export default function ProfileScreen() {
   const save = async () => {
     if (!userId) return
     setSaving(true)
-    await supabase.from('profiles').update({ display_name: displayName.trim(), bio: bio.trim() || null, avatar_char: avatarChar, phone: phone.trim() || null }).eq('id', userId)
+    await supabase.from('profiles').update({ display_name: displayName.trim(), bio: bio.trim() || null, avatar_char: avatarChar, phone: phone.trim() || null, ghost_name: ghostName.trim() || null }).eq('id', userId)
     setSaving(false)
     Alert.alert('✓ Saved', 'Profile updated!')
   }
@@ -124,6 +125,9 @@ export default function ProfileScreen() {
 
         <Text style={s.sectionLabel}>PHONE</Text>
         <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="0501234567" placeholderTextColor={GRAY} keyboardType="phone-pad" maxLength={20} />
+
+        <Text style={s.sectionLabel}>👻 ANONYMOUS NAME (GHOST MODE)</Text>
+        <TextInput style={s.input} value={ghostName} onChangeText={setGhostName} placeholder="e.g. Mystery Fox — shown when you're in ghost mode" placeholderTextColor={GRAY} maxLength={30} />
 
         <Text style={s.sectionLabel}>BIO</Text>
         <TextInput style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]} value={bio} onChangeText={setBio} placeholder="Tell people about yourself..." placeholderTextColor={GRAY} multiline maxLength={150} />
