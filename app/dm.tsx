@@ -184,6 +184,11 @@ export default function DMScreen() {
           </TouchableOpacity>
         )}
         {!talkingToAgent && (
+          <TouchableOpacity onPress={() => router.push({ pathname: '/shared-list', params: { userId: otherUserId, userName: displayName } })} style={s.translateBtn}>
+            <Text style={{ fontSize: 18 }}>📝</Text>
+          </TouchableOpacity>
+        )}
+        {!talkingToAgent && (
           <TouchableOpacity onPress={() => setShowTranslate(true)} style={s.translateBtn}>
             <Text style={{ fontSize: 18 }}>🌐</Text>
             {translateTo && <View style={s.translateDot} />}
