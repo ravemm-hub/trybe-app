@@ -118,7 +118,7 @@ export default function SpaceScreen() {
           />
       }
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 8 : 0}>
+      <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={0}>
         <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
           <TextInput style={s.input} value={draft} onChangeText={setDraft} placeholder="Message Teeby..." placeholderTextColor={GRAY} multiline returnKeyType="send" onSubmitEditing={send} editable={!sending} />
           <TouchableOpacity style={[s.sendBtn, (!draft.trim() || sending) && s.sendBtnOff]} onPress={send} disabled={!draft.trim() || sending}>

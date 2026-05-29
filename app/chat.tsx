@@ -298,7 +298,7 @@ export default function ChatScreen() {
         </View>
       )}
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 8 : 0}>
+      <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={0}>
         {att.isRecording ? (
           <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
             <View style={s.recordBar}><View style={s.recDot} /><Text style={s.recText}>Recording voice note…</Text></View>

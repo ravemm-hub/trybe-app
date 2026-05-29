@@ -203,7 +203,7 @@ export default function FeedScreen() {
       />
 
       <Modal visible={!!commentsPost} transparent animationType="slide" onRequestClose={() => setCommentsPost(null)}>
-        <KeyboardAvoidingView style={s.cOverlay} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView style={s.cOverlay} behavior="padding" keyboardVerticalOffset={0}>
           <View style={[s.cSheet, { paddingBottom: Math.max(insets.bottom, 12) }]}>
             <View style={s.cHeader}>
               <Text style={s.cTitle}>Comments</Text>

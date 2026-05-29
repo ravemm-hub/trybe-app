@@ -85,8 +85,8 @@ export default function ChatsScreen() {
           .select('id', { count: 'exact', head: true })
           .eq('group_id', g.id).neq('user_id', uid).neq('type', 'system').gt('created_at', lastRead)
         const { data: lastMsg } = await supabase.from('messages')
-          .select('content, created_at').eq('group_id', g.id)
-          .eq('type', 'text').order('created_at', { ascending: false }).limit(1)
+          .select('content, created_at, type').eq('group_id', g.id)
+          .neq('type', 'system').order('created_at', { ascending: false }).limit(1)
         return { ...g, unread: unread || 0, lastMsg: lastMsg?.[0] }
       }))
       items.sort((a, b) => new Date(b.lastMsg?.created_at || b.created_at || 0).getTime() - new Date(a.lastMsg?.created_at || a.created_at || 0).getTime())
@@ -121,7 +121,7 @@ export default function ChatsScreen() {
 
   const loadDMs = async (uid: string) => {
     const { data } = await supabase.from('dm_messages')
-      .select('sender_id, receiver_id, sender_mode, receiver_mode, content, created_at')
+      .select('sender_id, receiver_id, sender_mode, receiver_mode, content, created_at, media_type')
       .or(`sender_id.eq.${uid},receiver_id.eq.${uid}`)
       .order('created_at', { ascending: false })
     if (!data) return
@@ -170,6 +170,16 @@ export default function ChatsScreen() {
       }).sort((a: any, b: any) => (b.onTryber ? 1 : 0) - (a.onTryber ? 1 : 0) || a.name.localeCompare(b.name))
       setContacts(enriched)
     } catch {}
+  }
+
+  // Last-message preview that handles media (photo/voice/file) instead of showing blank.
+  const preview = (m: any): string => {
+    if (!m) return ''
+    const t = m.type || m.media_type
+    if (t === 'image') return '📷 Photo'
+    if (t === 'audio') return '🎤 Voice message'
+    if (t === 'file') return '📄 File'
+    return m.content || ''
   }
 
   const fmt = (ts: string) => {
@@ -264,7 +274,7 @@ export default function ChatsScreen() {
                   <Text style={s.rowName} numberOfLines={1}>{g.name}</Text>
                   {g.lastMsg && <Text style={s.rowTime}>{fmt(g.lastMsg.created_at)}</Text>}
                 </View>
-                <Text style={s.rowSub} numberOfLines={1}>{g.lastMsg?.content || `${g.member_count || 0} members`}</Text>
+                <Text style={s.rowSub} numberOfLines={1}>{preview(g.lastMsg) || `${g.member_count || 0} members`}</Text>
               </View>
               {g.unread > 0 && <View style={s.unread}><Text style={s.unreadText}>{g.unread > 99 ? '99+' : g.unread}</Text></View>}
             </Pressable>
@@ -305,7 +315,7 @@ export default function ChatsScreen() {
                   {contactNames[d.otherId] && contactNames[d.otherId] !== d.profile?.display_name && (
                     <Text style={s.rowAppName}>App: {d.profile?.display_name}</Text>
                   )}
-                  <Text style={s.rowSub} numberOfLines={1}>{d.lastMsg?.content}</Text>
+                  <Text style={s.rowSub} numberOfLines={1}>{preview(d.lastMsg)}</Text>
                 </View>
                 {d.unread > 0 && <View style={s.unread}><Text style={s.unreadText}>{d.unread}</Text></View>}
               </Pressable>
