@@ -48,8 +48,11 @@ export default function GroupSettingsScreen() {
       setMyName(p?.display_name || p?.username || 'Someone')
       const { data: g } = await supabase.from('groups').select('name, description').eq('id', groupId).single()
       if (g) { setEditName(g.name || groupName); setEditDesc(g.description || '') }
-      await loadMembers()
-      loadRequests()
+      const mem = await getGroupMembers(groupId)
+      setMembers(mem); setMemberIds(new Set(mem.map((m: any) => m.user_id)))
+      const admin = mem.some((m: any) => m.user_id === user.id && m.role === 'admin')
+      if (!admin) setTab('members')
+      if (admin) loadRequests()
       getEnrichedContacts().then(setContacts)
       loadNearby(user.id)
       setLoading(false)
@@ -140,6 +143,9 @@ export default function GroupSettingsScreen() {
 
   if (loading) return <View style={[s.container, { paddingTop: insets.top }]}><ActivityIndicator color={PRIMARY} style={{ flex: 1 }} /></View>
 
+  const isAdmin = !!myId && members.some(m => m.user_id === myId && m.role === 'admin')
+  const visibleTabs: Tab[] = isAdmin ? ['contacts', 'map', 'requests', 'members'] : ['members']
+
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
@@ -154,7 +160,7 @@ export default function GroupSettingsScreen() {
       </View>
 
       <View style={s.tabs}>
-        {(['contacts', 'map', 'requests', 'members'] as Tab[]).map(t => (
+        {visibleTabs.map(t => (
           <TouchableOpacity key={t} style={[s.tabBtn, tab === t && s.tabBtnActive]} onPress={() => setTab(t)}>
             <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]} numberOfLines={1}>
               {t === 'contacts' ? '👥' : t === 'map' ? '📍 Map' : t === 'requests' ? `Requests${requests.length ? ` (${requests.length})` : ''}` : `Members (${members.length})`}
@@ -163,7 +169,7 @@ export default function GroupSettingsScreen() {
         ))}
       </View>
 
-      {tab === 'contacts' && (
+      {isAdmin && tab === 'contacts' && (
         <FlatList data={contacts} keyExtractor={c => c.id}
           contentContainerStyle={contacts.length === 0 ? { flex: 1 } : {}}
           ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>👥</Text><Text style={s.emptySub}>No contacts found (allow contacts access)</Text></View>}
@@ -186,7 +192,7 @@ export default function GroupSettingsScreen() {
           }} />
       )}
 
-      {tab === 'map' && (
+      {isAdmin && tab === 'map' && (
         <View style={{ flex: 1 }}>
           {!center
             ? <View style={s.empty}><Text style={s.emptyEmoji}>📍</Text><Text style={s.emptySub}>Enable location to see people nearby on the map</Text></View>
@@ -231,7 +237,7 @@ export default function GroupSettingsScreen() {
         </View>
       )}
 
-      {tab === 'requests' && (
+      {isAdmin && tab === 'requests' && (
         <FlatList data={requests} keyExtractor={r => r.id}
           contentContainerStyle={requests.length === 0 ? { flex: 1 } : {}}
           ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>📨</Text><Text style={s.emptySub}>No pending join requests</Text></View>}
@@ -250,7 +256,7 @@ export default function GroupSettingsScreen() {
 
       {tab === 'members' && (
         <FlatList data={members} keyExtractor={m => m.user_id}
-          ListHeaderComponent={
+          ListHeaderComponent={isAdmin ? (
             <View style={s.editSection}>
               <Text style={s.editLabel}>TRYBE NAME</Text>
               <TextInput style={s.editInput} value={editName} onChangeText={setEditName} maxLength={50} placeholderTextColor={GRAY} />
@@ -261,7 +267,7 @@ export default function GroupSettingsScreen() {
               </TouchableOpacity>
               <Text style={s.membersLabel}>MEMBERS</Text>
             </View>
-          }
+          ) : null}
           renderItem={({ item: m }) => (
             <View style={s.row}>
               <View style={s.avatar}><Text style={s.initials}>{m.profile?.avatar_char || (m.profile?.display_name || '?')[0]}</Text></View>
@@ -269,7 +275,7 @@ export default function GroupSettingsScreen() {
                 <Text style={s.name}>{m.profile?.display_name || m.profile?.username || 'User'}{m.user_id === myId ? ' (you)' : ''}</Text>
                 <Text style={s.sub}>{m.role === 'admin' ? '👑 Admin' : 'Member'}</Text>
               </View>
-              {m.user_id !== myId && m.role !== 'admin' && (
+              {isAdmin && m.user_id !== myId && m.role !== 'admin' && (
                 <TouchableOpacity style={s.declineBtn} onPress={() => removeMember(m)}><Text style={s.declineText}>Remove</Text></TouchableOpacity>
               )}
             </View>
