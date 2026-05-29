@@ -36,6 +36,8 @@ export default function DMScreen() {
   const [selectedMsg, setSelectedMsg] = useState<DmMessage | null>(null)
   const [showMenu, setShowMenu] = useState(false)
   const [translations, setTranslations] = useState<Record<string, string>>({})
+  const [myMode, setMyMode] = useState<'lit' | 'ghost'>(params?.myMode === 'ghost' ? 'ghost' : 'lit')
+  const [otherGhostName, setOtherGhostName] = useState('')
 
   const talkingToAgent = isAgentParam || (otherUserId && AGENT_IDS.includes(otherUserId))
   const agentInfo = AGENTS.find(a => a.id === otherUserId)
@@ -49,6 +51,7 @@ export default function DMScreen() {
       const uid = user.id
       // Load contact name
       getContactName(otherUserId).then(cn => { if (cn) setDisplayName(cn) })
+      if (!talkingToAgent) supabase.from('profiles').select('ghost_name').eq('id', otherUserId).single().then(({ data }) => setOtherGhostName(data?.ghost_name || ''))
       loadMessages(uid)
       if (!talkingToAgent) markDMDelivered(uid)
 
@@ -95,14 +98,14 @@ export default function DMScreen() {
     const mid = uuidv4()
     const curReply = replyTo
     const optimistic = {
-      id: mid, sender_id: myId, receiver_id: otherUserId, content, sender_mode: initMode || 'lit', receiver_mode: 'lit',
+      id: mid, sender_id: myId, receiver_id: otherUserId, content, sender_mode: myMode, receiver_mode: 'lit',
       read_at: null, delivered_at: null, edited_at: null, deleted_for_all: false, is_forwarded: false,
       reply_to_id: curReply?.id || null, reply_preview: curReply?.content?.slice(0, 60) || null, created_at: new Date().toISOString(),
     } as unknown as DmMessage
     setMessages(prev => [...prev, optimistic])
     setReplyTo(null)
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
-    const { error: sendErr } = await sendDM({ id: mid, senderId: myId, receiverId: otherUserId, content, senderMode: initMode || 'lit', replyToId: curReply?.id || null, replyPreview: curReply?.content?.slice(0, 60) || null })
+    const { error: sendErr } = await sendDM({ id: mid, senderId: myId, receiverId: otherUserId, content, senderMode: myMode, replyToId: curReply?.id || null, replyPreview: curReply?.content?.slice(0, 60) || null })
     if (sendErr) setMessages(prev => prev.filter(m => m.id !== mid))
     if (talkingToAgent && agentInfo) {
       setAgentTyping(true)
@@ -117,7 +120,7 @@ export default function DMScreen() {
       } catch {}
       finally { setAgentTyping(false); clearTimeout(timeout) }
     }
-  }, [draft, myId, otherUserId, replyTo, translateTo, editingMsg, talkingToAgent, agentInfo, initMode])
+  }, [draft, myId, otherUserId, replyTo, translateTo, editingMsg, talkingToAgent, agentInfo, myMode])
 
   const sendMediaDM = async (url: string, kind: MediaKind) => {
     if (!myId || !otherUserId) return
@@ -159,13 +162,27 @@ export default function DMScreen() {
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}><Text style={s.backText}>‹</Text></TouchableOpacity>
-        <View style={[s.hAvatar, talkingToAgent && s.hAvatarAgent]}>
-          <Text style={s.hAvatarText}>{talkingToAgent ? '✦' : (displayName?.[0] || '?')}</Text>
-        </View>
-        <View style={s.hInfo}>
-          <Text style={s.hName} numberOfLines={1}>{displayName}</Text>
-          {talkingToAgent && <Text style={s.hSub}>AI Agent · Always on</Text>}
-        </View>
+        {(() => {
+          const lastTheir = [...messages].reverse().find(m => m.sender_id === otherUserId)
+          const theirGhost = !talkingToAgent && lastTheir?.sender_mode === 'ghost'
+          const headerName = talkingToAgent ? displayName : (theirGhost ? '👻 ' + (otherGhostName || 'Anonymous') : displayName)
+          return (
+            <>
+              <View style={[s.hAvatar, talkingToAgent && s.hAvatarAgent]}>
+                <Text style={s.hAvatarText}>{talkingToAgent ? '✦' : (theirGhost ? '👻' : (displayName?.[0] || '?'))}</Text>
+              </View>
+              <View style={s.hInfo}>
+                <Text style={s.hName} numberOfLines={1}>{headerName}</Text>
+                <Text style={s.hSub}>{talkingToAgent ? 'AI Agent · Always on' : (myMode === 'ghost' ? "You're 👻 anonymous" : "You're 🔥 visible")}</Text>
+              </View>
+            </>
+          )
+        })()}
+        {!talkingToAgent && (
+          <TouchableOpacity onPress={() => setMyMode(m => m === 'lit' ? 'ghost' : 'lit')} style={[s.modeToggle, myMode === 'ghost' && s.modeToggleGhost]}>
+            <Text style={{ fontSize: 18 }}>{myMode === 'ghost' ? '👻' : '🔥'}</Text>
+          </TouchableOpacity>
+        )}
         {!talkingToAgent && (
           <TouchableOpacity onPress={() => setShowTranslate(true)} style={s.translateBtn}>
             <Text style={{ fontSize: 18 }}>🌐</Text>
@@ -299,6 +316,8 @@ const s = StyleSheet.create({
   hInfo: { flex: 1 },
   hName: { fontSize: 16, fontWeight: '700', color: TEXT },
   hSub: { fontSize: 11, color: LIVE },
+  modeToggle: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
+  modeToggleGhost: { backgroundColor: '#EDEDED' },
   translateBtn: { padding: 8, position: 'relative' },
   translateDot: { position: 'absolute', top: 6, right: 6, width: 8, height: 8, borderRadius: 4, backgroundColor: PRIMARY },
   deleted: { fontSize: 13, color: GRAY, fontStyle: 'italic', textAlign: 'center', paddingVertical: 8 },

@@ -30,6 +30,7 @@ export default function ChatScreen() {
   const [showMenu, setShowMenu] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
   const [memberCount, setMemberCount] = useState(parseInt(members) || 0)
+  const [groupDesc, setGroupDesc] = useState('')
   const [translations, setTranslations] = useState<Record<string, string>>({})
   const [contactNames, setContactNames] = useState<Record<string, string>>({})
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null)
@@ -43,6 +44,8 @@ export default function ChatScreen() {
       setUserId(user.id)
       const { data: member } = await supabase.from('group_members').select('role').eq('group_id', id).eq('user_id', user.id).single()
       if (member?.role === 'admin') setIsAdmin(true)
+      const { data: g } = await supabase.from('groups').select('description, member_count').eq('id', id).single()
+      if (g) { setGroupDesc(g.description || ''); if (g.member_count != null) setMemberCount(g.member_count) }
       loadMessages()
       markGroupRead(id, user.id)
     })
@@ -178,7 +181,7 @@ export default function ChatScreen() {
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}><Text style={s.backText}>‹</Text></TouchableOpacity>
         <TouchableOpacity style={s.hInfo} activeOpacity={0.6} onPress={() => router.push({ pathname: '/group-settings', params: { id, name } })}>
           <Text style={s.hName} numberOfLines={1}>{name}</Text>
-          <Text style={s.hSub}>{memberCount} members · ⚙️ info & settings</Text>
+          <Text style={s.hSub} numberOfLines={1}>{memberCount} members{groupDesc ? ' · ' + groupDesc : ' · ⚙️ settings'}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={s.modeBtn} onPress={() => router.push({ pathname: '/group-settings', params: { id, name } })}>
           <Text style={s.modeBtnText}>⚙️</Text>
