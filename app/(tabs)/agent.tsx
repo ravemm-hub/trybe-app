@@ -1,15 +1,33 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import { supabase } from '../../src/lib/supabase'
 import { askClaude } from '../../src/lib/claude'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
 
+// Adds an event to the device calendar (best-effort).
+async function addCalendarEvent(title: string, iso: string): Promise<boolean> {
+  try {
+    const Calendar = require('expo-calendar')
+    const { status } = await Calendar.requestCalendarPermissionsAsync()
+    if (status !== 'granted') return false
+    const cals = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
+    const def = cals.find((c: any) => c.allowsModifications) || cals[0]
+    if (!def) return false
+    const start = new Date(iso)
+    if (isNaN(start.getTime())) return false
+    await Calendar.createEventAsync(def.id, { title, startDate: start, endDate: new Date(start.getTime() + 3600000) })
+    return true
+  } catch { return false }
+}
+
 type Msg = { id: string; role: 'user' | 'assistant'; content: string; created_at: string }
 
 export default function AgentScreen() {
   const insets = useSafeAreaInsets()
+  const router = useRouter()
   const listRef = useRef<FlatList>(null)
   const [messages, setMessages] = useState<Msg[]>([])
   const [draft, setDraft] = useState('')
@@ -52,6 +70,52 @@ export default function AgentScreen() {
     } catch {}
   }
 
+  // Detect + execute Teeby action tags, strip them from the visible text, and confirm.
+  const runActions = useCallback(async (text: string): Promise<string> => {
+    let out = text
+    const cg = out.match(/\[CREATE_GROUP:([^\]]+)\]/i)
+    if (cg && userId) {
+      const [name, desc] = cg[1].split('|')
+      out = out.replace(cg[0], '').trim()
+      try {
+        const { data: group } = await supabase.from('groups').insert({
+          name: (name || 'New Trybe').trim(), description: (desc || '').trim() || null, status: 'open',
+          is_private: false, is_secret: false, member_count: 0, created_by: userId, min_members: 1,
+          archive_at: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString(),
+        }).select().single()
+        if (group) {
+          await supabase.from('group_members').insert({ group_id: group.id, user_id: userId, role: 'admin' })
+          out += `\n\n✅ Created the Trybe "${group.name}" — opening it…`
+          setTimeout(() => router.push({ pathname: '/chat', params: { id: group.id, name: group.name, members: '1' } }), 1300)
+        }
+      } catch {}
+    }
+    const cs = out.match(/\[CREATE_SPACE:([^\]]+)\]/i)
+    if (cs && userId) {
+      const [t, emoji] = cs[1].split('|')
+      out = out.replace(cs[0], '').trim()
+      try {
+        const { data: sp } = await supabase.from('teeby_spaces').insert({ user_id: userId, title: (t || 'Space').trim(), emoji: (emoji || '✦').trim() }).select().single()
+        if (sp) { out += `\n\n✅ Created the Space "${sp.title}".`; setTimeout(() => router.push({ pathname: '/space', params: { id: sp.id, title: sp.title, emoji: sp.emoji } }), 1300) }
+      } catch {}
+    }
+    const cal = out.match(/\[CAL:([^|]+)\|([^\]]+)\]/i)
+    if (cal) {
+      out = out.replace(cal[0], '').trim()
+      const ok = await addCalendarEvent(cal[1].trim(), cal[2].trim())
+      if (ok) out += `\n\n📅 Added "${cal[1].trim()}" to your calendar.`
+    }
+    const op = out.match(/\[OPEN:(\w+)\]/i)
+    if (op) {
+      out = out.replace(op[0], '').trim()
+      const dest = op[1].toLowerCase()
+      const route = (dest === 'explore' || dest === 'radar' || dest === 'nearby') ? '/(tabs)/explore'
+        : dest === 'feed' ? '/(tabs)/feed' : (dest === 'market' || dest === 'marketplace') ? '/(tabs)/marketplace' : null
+      if (route) setTimeout(() => router.push(route as any), 900)
+    }
+    return out.trim()
+  }, [userId, router])
+
   const send = useCallback(async () => {
     if (!draft.trim() || loading || !userId || credits <= 0) return
     const text = draft.trim()
@@ -65,10 +129,19 @@ export default function AgentScreen() {
       if (saved) setMessages(prev => prev.map(m => m.id === tempMsg.id ? saved : m))
       const history = messages.slice(-10).map(m => ({ role: m.role, content: m.content }))
       history.push({ role: 'user', content: text })
-      const system = 'You are Teeby, a highly intelligent personal AI in the Tryber social app.\nUser: ' + userName + ' | Location: ' + (locationCtx || 'Israel') + ' | Credits: ' + credits + '/20\nYou can search the web for current info, prices, news, places, images or links — include helpful links when relevant.\nAlways respond in the SAME language the user writes in.\nBe warm, proactive, witty. 2-4 sentences max. Use emojis naturally.\nFor calendar: respond with [CAL:title|YYYY-MM-DDTHH:MM:SS]\nFor creating group: respond with [CREATE_GROUP:name]'
+      const system = 'You are Teeby, a proactive AI assistant inside the Tryber social app. You can DO things, not just chat.\n'
+        + 'User: ' + userName + ' | Location: ' + (locationCtx || 'Israel') + ' | Credits: ' + credits + '/20\n'
+        + 'When the user wants an action, include EXACTLY ONE tag in your reply — it will be executed and hidden from the user (never show the raw tag):\n'
+        + '- Create a Trybe (group): [CREATE_GROUP:Name|short description]\n'
+        + '- Create a private Teeby Space: [CREATE_SPACE:Title|emoji]\n'
+        + '- Add to calendar: [CAL:Title|YYYY-MM-DDTHH:MM:SS]\n'
+        + '- Open a screen: [OPEN:explore] to find people nearby, [OPEN:feed], or [OPEN:market]\n'
+        + 'You can also search the web for current info, prices, news, places or links — include helpful links when relevant.\n'
+        + 'Always reply in the SAME language the user writes in. Be warm, witty, concise (2-4 sentences). Confirm in natural language what you are doing.'
       const reply = await askClaude(history.map(m => m.role + ': ' + m.content).join('\n'), system, 400, true)
       if (!reply) throw new Error('No reply')
-      const { data: savedReply } = await supabase.from('agent_messages').insert({ user_id: userId, role: 'assistant', content: reply }).select().single()
+      const cleaned = (await runActions(reply)) || reply
+      const { data: savedReply } = await supabase.from('agent_messages').insert({ user_id: userId, role: 'assistant', content: cleaned }).select().single()
       if (savedReply) setMessages(prev => [...prev, savedReply])
       const newCredits = credits - 1
       setCredits(newCredits)
