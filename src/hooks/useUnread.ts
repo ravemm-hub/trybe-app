@@ -34,6 +34,8 @@ export function useUnread() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, scheduleRefresh)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, scheduleRefresh)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'dm_messages' }, scheduleRefresh)
+      // last_read_at changes when you open a chat -> recompute so the badge drops.
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'group_members' }, scheduleRefresh)
       .subscribe()
     return () => { if (timer.current) clearTimeout(timer.current); supabase.removeChannel(channel) }
   }, [refresh, scheduleRefresh])

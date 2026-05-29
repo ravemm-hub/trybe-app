@@ -21,7 +21,7 @@ function TabIcon({ emoji, count, focused }: { emoji: string; count?: number; foc
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets()
-  const { groupUnread } = useUnread()
+  const { total } = useUnread()
 
   return (
     <Tabs screenOptions={{
@@ -43,7 +43,7 @@ export default function TabsLayout() {
       tabBarInactiveTintColor: GRAY,
       tabBarLabelStyle: { fontSize: 10, fontWeight: '500', marginTop: 2 },
     }}>
-      <Tabs.Screen name='index' options={{ title: 'Chats', tabBarIcon: ({ focused }) => <TabIcon emoji='💬' count={groupUnread} focused={focused} /> }} />
+      <Tabs.Screen name='index' options={{ title: 'Chats', tabBarIcon: ({ focused }) => <TabIcon emoji='💬' count={total} focused={focused} /> }} />
       <Tabs.Screen name='feed' options={{ title: 'Feed', tabBarIcon: ({ focused }) => <TabIcon emoji='🌐' focused={focused} /> }} />
       <Tabs.Screen name='marketplace' options={{ title: 'Market', tabBarIcon: ({ focused }) => <TabIcon emoji='🛍️' focused={focused} /> }} />
       <Tabs.Screen name='explore' options={{ title: 'Explore', tabBarIcon: ({ focused }) => <TabIcon emoji='📡' focused={focused} /> }} />

@@ -98,6 +98,7 @@ export default function AgentScreen() {
       </View>
 
       <FlatList ref={listRef} data={messages} keyExtractor={m => m.id}
+        style={{ flex: 1 }}
         contentContainerStyle={{ paddingVertical: 12, gap: 8 }}
         onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
         renderItem={({ item: m }) => (

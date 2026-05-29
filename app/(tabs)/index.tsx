@@ -3,7 +3,7 @@ import { View, Text, FlatList, TouchableOpacity, TextInput, StyleSheet, StatusBa
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter, useFocusEffect } from 'expo-router'
 import { supabase } from '../../src/lib/supabase'
-import { getContactName, getContactNameMap, normalizePhone } from '../../src/lib/contacts'
+import { getContactName, getContactNameMap, normalizePhone, loadAndMatchContacts } from '../../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, INVITE_MSG, AGENT_IDS } from '../../src/constants'
 
 type Tab = 'trybes' | 'dms' | 'spaces'
@@ -28,9 +28,12 @@ export default function ChatsScreen() {
   const [creatingSpace, setCreatingSpace] = useState(false)
 
   useEffect(() => {
-    getContactNameMap().then(setNameMap)
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) { setUserId(user.id); loadAll(user.id) }
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
+      if (!user) return
+      setUserId(user.id)
+      try { await loadAndMatchContacts(user.id) } catch {}
+      getContactNameMap().then(setNameMap)
+      loadAll(user.id)
     })
   }, [])
 

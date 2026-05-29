@@ -88,6 +88,7 @@ export default function SpaceScreen() {
       {loading
         ? <ActivityIndicator color={PRIMARY} style={{ flex: 1 }} />
         : <FlatList ref={listRef} data={messages} keyExtractor={m => m.id}
+            style={{ flex: 1 }}
             contentContainerStyle={{ paddingVertical: 12, gap: 8 }}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
             ListEmptyComponent={

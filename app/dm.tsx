@@ -176,6 +176,7 @@ export default function DMScreen() {
 
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 60 : 0}>
         <FlatList ref={listRef} data={messages} keyExtractor={m => m.id}
+          style={{ flex: 1 }}
           contentContainerStyle={{ paddingVertical: 8 }}
           onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
           renderItem={({ item: msg }) => {

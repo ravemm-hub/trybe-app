@@ -193,6 +193,7 @@ export default function ChatScreen() {
       {loading
         ? <View style={{ flex: 1 }} />
         : <FlatList ref={listRef} data={messages} keyExtractor={m => m.id}
+            style={{ flex: 1 }}
             contentContainerStyle={{ paddingVertical: 8 }}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
             renderItem={({ item: msg }) => {
