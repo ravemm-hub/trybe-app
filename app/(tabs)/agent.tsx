@@ -14,7 +14,11 @@ async function addCalendarEvent(title: string, iso: string): Promise<boolean> {
     const { status } = await Calendar.requestCalendarPermissionsAsync()
     if (status !== 'granted') return false
     const cals = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT)
-    const def = cals.find((c: any) => c.allowsModifications) || cals[0]
+    const mod = cals.filter((c: any) => c.allowsModifications)
+    // Prefer a Google-synced calendar so the event lands in Google Calendar (syncs to the cloud).
+    const isGoogle = (c: any) =>
+      ((c.source?.type || '') + (c.source?.name || '') + (c.ownerAccount || '') + (c.accountName || '')).toLowerCase().match(/google|gmail|@/)
+    const def = mod.find(isGoogle) || mod.find((c: any) => c.isPrimary) || mod[0] || cals[0]
     if (!def) return false
     const start = new Date(iso)
     if (isNaN(start.getTime())) return false
