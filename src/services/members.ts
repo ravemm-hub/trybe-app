@@ -36,3 +36,24 @@ export async function addMembers(groupId: string, groupName: string, userIds: st
 export async function leaveGroup(groupId: string, userId: string) {
   return supabase.from('group_members').delete().eq('group_id', groupId).eq('user_id', userId)
 }
+
+// Admin-only removal of another member (RLS on group_members only allows self-delete).
+export async function removeMemberAdmin(groupId: string, userId: string) {
+  return supabase.rpc('remove_group_member', { p_group: groupId, p_user: userId })
+}
+
+export async function getJoinRequests(groupId: string) {
+  const { data } = await supabase.from('join_requests')
+    .select('id, user_id, status, created_at, profile:profiles(display_name, username, avatar_char)')
+    .eq('group_id', groupId).eq('status', 'pending').order('created_at', { ascending: true })
+  return data || []
+}
+
+export async function approveRequest(groupId: string, groupName: string, req: any, addedByName: string) {
+  await addMembers(groupId, groupName, [req.user_id], addedByName)
+  await supabase.from('join_requests').update({ status: 'approved' }).eq('id', req.id)
+}
+
+export async function declineRequest(reqId: string) {
+  return supabase.from('join_requests').update({ status: 'declined' }).eq('id', reqId)
+}

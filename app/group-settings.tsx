@@ -5,11 +5,11 @@ import { useLocalSearchParams, useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import { supabase } from '../src/lib/supabase'
 import { getEnrichedContacts, EnrichedContact } from '../src/lib/contacts'
-import { getGroupMembers, addMembers, leaveGroup } from '../src/services/members'
+import { getGroupMembers, addMembers, leaveGroup, removeMemberAdmin, getJoinRequests, approveRequest, declineRequest } from '../src/services/members'
 import { NearbyMap, MapUser } from '../src/components/NearbyMap'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, INVITE_MSG, AGENT_IDS } from '../src/constants'
 
-type Tab = 'contacts' | 'map' | 'members'
+type Tab = 'contacts' | 'map' | 'requests' | 'members'
 const RADII = [1, 3, 5, 10, 25]
 
 export default function GroupSettingsScreen() {
@@ -25,6 +25,7 @@ export default function GroupSettingsScreen() {
   const [myName, setMyName] = useState('')
   const [members, setMembers] = useState<any[]>([])
   const [memberIds, setMemberIds] = useState<Set<string>>(new Set())
+  const [requests, setRequests] = useState<any[]>([])
   const [contacts, setContacts] = useState<EnrichedContact[]>([])
   const [center, setCenter] = useState<{ lat: number; lon: number } | null>(null)
   const [nearby, setNearby] = useState<MapUser[]>([])
@@ -41,6 +42,7 @@ export default function GroupSettingsScreen() {
       const { data: p } = await supabase.from('profiles').select('display_name, username').eq('id', user.id).single()
       setMyName(p?.display_name || p?.username || 'Someone')
       await loadMembers()
+      loadRequests()
       getEnrichedContacts().then(setContacts)
       loadNearby(user.id)
       setLoading(false)
@@ -52,6 +54,29 @@ export default function GroupSettingsScreen() {
     setMembers(data)
     setMemberIds(new Set(data.map((m: any) => m.user_id)))
   }, [groupId])
+
+  const loadRequests = useCallback(async () => {
+    setRequests(await getJoinRequests(groupId))
+  }, [groupId])
+
+  const approve = async (req: any) => {
+    setBusy(true)
+    await approveRequest(groupId, groupName, req, myName)
+    await loadRequests(); await loadMembers()
+    setBusy(false)
+  }
+  const decline = async (req: any) => {
+    setBusy(true)
+    await declineRequest(req.id)
+    await loadRequests()
+    setBusy(false)
+  }
+  const removeMember = (m: any) => {
+    Alert.alert('Remove member', 'Remove ' + (m.profile?.display_name || 'this member') + ' from ' + groupName + '?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Remove', style: 'destructive', onPress: async () => { await removeMemberAdmin(groupId, m.user_id); await loadMembers() } },
+    ])
+  }
 
   const loadNearby = async (uid: string) => {
     try {
@@ -112,10 +137,10 @@ export default function GroupSettingsScreen() {
       </View>
 
       <View style={s.tabs}>
-        {(['contacts', 'map', 'members'] as Tab[]).map(t => (
+        {(['contacts', 'map', 'requests', 'members'] as Tab[]).map(t => (
           <TouchableOpacity key={t} style={[s.tabBtn, tab === t && s.tabBtnActive]} onPress={() => setTab(t)}>
-            <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]}>
-              {t === 'contacts' ? '👥 Contacts' : t === 'map' ? '📍 Nearby map' : `Members (${members.length})`}
+            <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]} numberOfLines={1}>
+              {t === 'contacts' ? '👥' : t === 'map' ? '📍 Map' : t === 'requests' ? `Requests${requests.length ? ` (${requests.length})` : ''}` : `Members (${members.length})`}
             </Text>
           </TouchableOpacity>
         ))}
@@ -168,6 +193,23 @@ export default function GroupSettingsScreen() {
         </View>
       )}
 
+      {tab === 'requests' && (
+        <FlatList data={requests} keyExtractor={r => r.id}
+          contentContainerStyle={requests.length === 0 ? { flex: 1 } : {}}
+          ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>📨</Text><Text style={s.emptySub}>No pending join requests</Text></View>}
+          renderItem={({ item: r }) => (
+            <View style={s.row}>
+              <View style={s.avatar}><Text style={s.initials}>{r.profile?.avatar_char || (r.profile?.display_name || '?')[0]}</Text></View>
+              <View style={s.info}>
+                <Text style={s.name}>{r.profile?.display_name || r.profile?.username || 'User'}</Text>
+                <Text style={s.sub}>wants to join</Text>
+              </View>
+              <TouchableOpacity style={s.addBtn} disabled={busy} onPress={() => approve(r)}><Text style={s.addBtnText}>Approve</Text></TouchableOpacity>
+              <TouchableOpacity style={s.declineBtn} disabled={busy} onPress={() => decline(r)}><Text style={s.declineText}>✕</Text></TouchableOpacity>
+            </View>
+          )} />
+      )}
+
       {tab === 'members' && (
         <FlatList data={members} keyExtractor={m => m.user_id}
           renderItem={({ item: m }) => (
@@ -177,6 +219,9 @@ export default function GroupSettingsScreen() {
                 <Text style={s.name}>{m.profile?.display_name || m.profile?.username || 'User'}{m.user_id === myId ? ' (you)' : ''}</Text>
                 <Text style={s.sub}>{m.role === 'admin' ? '👑 Admin' : 'Member'}</Text>
               </View>
+              {m.user_id !== myId && m.role !== 'admin' && (
+                <TouchableOpacity style={s.declineBtn} onPress={() => removeMember(m)}><Text style={s.declineText}>Remove</Text></TouchableOpacity>
+              )}
             </View>
           )}
           ListFooterComponent={
@@ -210,6 +255,8 @@ const s = StyleSheet.create({
   addBtnText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   inviteBtn: { backgroundColor: '#EEF0FF', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16 },
   inviteBtnText: { color: PRIMARY, fontSize: 13, fontWeight: '600' },
+  declineBtn: { backgroundColor: 'rgba(255,59,48,0.08)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16 },
+  declineText: { color: DANGER, fontSize: 13, fontWeight: '700' },
   inGroup: { fontSize: 12, color: LIVE, fontWeight: '600' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 10 },
   emptyEmoji: { fontSize: 48 },

@@ -41,6 +41,8 @@ export default function ExploreScreen() {
       .eq('status', 'open').order('member_count', { ascending: false }).limit(50)
     const { data: memberships } = await supabase.from('group_members').select('group_id').eq('user_id', uid)
     setMyGroups(new Set((memberships || []).map((m: any) => m.group_id)))
+    const { data: reqs } = await supabase.from('join_requests').select('group_id').eq('user_id', uid).eq('status', 'pending')
+    setPending(new Set((reqs || []).map((r: any) => r.group_id)))
     setGroups(allGroups || [])
     setLoading(false); setRefreshing(false)
   }
@@ -57,6 +59,7 @@ export default function ExploreScreen() {
     }
     if (group.is_private) {
       if (pending.has(group.id)) return
+      try { await supabase.from('join_requests').insert({ group_id: group.id, user_id: userId, status: 'pending' }) } catch {}
       setPending(prev => new Set([...prev, group.id]))
       Alert.alert('✓ Request sent', 'Waiting for Admin approval')
       return
