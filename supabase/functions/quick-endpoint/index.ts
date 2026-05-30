@@ -105,6 +105,7 @@ Deno.serve(async (req) => {
   try { payload = await req.json() } catch { return json({ ok: true }) }
 
   const prompt = (payload.prompt ?? '').trim()
+  const imageUrl: string | undefined = payload.image_url
 
   // Group-agent ping (sent after a group message). No prompt -> maybe make the agent reply.
   if (payload.group_id && !prompt) {
@@ -121,11 +122,18 @@ Deno.serve(async (req) => {
   if (!ANTHROPIC_API_KEY) return json({ error: 'Server not configured' }, 500)
 
   const maxTokens = Math.min(Math.max(Number(payload.max_tokens) || 200, 1), MAX_OUTPUT_TOKENS)
+  // Vision: when an image URL is provided, send a multimodal user message.
+  const userContent: unknown = imageUrl
+    ? [
+        { type: 'text', text: prompt },
+        { type: 'image', source: { type: 'url', url: imageUrl } },
+      ]
+    : prompt
   const reqBody: Record<string, unknown> = {
     model: payload.model || DEFAULT_MODEL,
     max_tokens: maxTokens,
     system: payload.system || undefined,
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{ role: 'user', content: userContent }],
   }
   if (payload.web) reqBody.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }]
 

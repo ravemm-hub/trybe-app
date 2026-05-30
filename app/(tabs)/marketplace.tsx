@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react'
-import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, Alert, RefreshControl, ActivityIndicator, Modal, ScrollView } from 'react-native'
+import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, Alert, RefreshControl, ActivityIndicator, Modal, ScrollView, Image, KeyboardAvoidingView } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
+import * as ImagePicker from 'expo-image-picker'
 import { supabase } from '../../src/lib/supabase'
+import { uploadMedia } from '../../src/lib/upload'
+import { askClaude } from '../../src/lib/claude'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
 
 const CATEGORIES = ['All', 'Items', 'Services', 'Housing', 'Jobs', 'Other']
@@ -22,6 +25,9 @@ export default function MarketplaceScreen() {
   const [price, setPrice] = useState('')
   const [newCategory, setNewCategory] = useState('Items')
   const [posting, setPosting] = useState(false)
+  const [mediaUrl, setMediaUrl] = useState<string | null>(null)
+  const [uploadingMedia, setUploadingMedia] = useState(false)
+  const [aiBusy, setAiBusy] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id) })
@@ -38,12 +44,46 @@ export default function MarketplaceScreen() {
   const createListing = async () => {
     if (!title.trim() || !userId) return
     setPosting(true)
+    const { error } = await supabase.from('listings').insert({
+      user_id: userId, title: title.trim(), description: description.trim() || null,
+      price: price ? parseFloat(price) : 0, category: newCategory, status: 'active', media_url: mediaUrl,
+    })
+    setPosting(false)
+    if (error) { Alert.alert('Could not create listing', error.message); return }
+    setTitle(''); setDescription(''); setPrice(''); setNewCategory('Items'); setMediaUrl(null)
+    setShowCreate(false); load()
+  }
+
+  const pickMedia = async () => {
+    if (!userId) return
+    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+    if (!granted) { Alert.alert('Permission needed', 'Allow photo access.'); return }
+    const res = await ImagePicker.launchImageLibraryAsync({ quality: 0.7, mediaTypes: ImagePicker.MediaTypeOptions.Images })
+    if (res.canceled || !res.assets?.[0]) return
+    setUploadingMedia(true)
+    const url = await uploadMedia(res.assets[0].uri, 'image', res.assets[0].uri.split('.').pop())
+    setUploadingMedia(false)
+    if (url) setMediaUrl(url); else Alert.alert('Upload failed', 'Could not upload the image.')
+  }
+
+  const aiSuggest = async () => {
+    if (!mediaUrl && !title.trim()) { Alert.alert('Add an image or a title first', 'Teeby needs something to work with ✦'); return }
+    setAiBusy(true)
+    const cats = CATEGORIES.filter(c => c !== 'All').join(', ')
+    const prompt = mediaUrl
+      ? `Identify the product in the image. Suggest a realistic title (3-6 words), one-sentence description, a fair price in ILS, and one category from: ${cats}. Reply ONLY as compact JSON: {"title":"...","description":"...","price":NUMBER,"category":"..."}`
+      : `User is listing for sale: "${title.trim()}". Suggest a fair price in ILS, a one-sentence description, and one category from: ${cats}. Reply ONLY as compact JSON: {"title":"...","description":"...","price":NUMBER,"category":"..."}`
+    const reply = await askClaude(prompt, 'You are a marketplace assistant. Be precise and honest about prices in ILS.', 300, true, mediaUrl || undefined)
+    setAiBusy(false)
     try {
-      await supabase.from('listings').insert({ user_id: userId, title: title.trim(), description: description.trim() || null, price: price ? parseFloat(price) : 0, category: newCategory, status: 'active' })
-      setTitle(''); setDescription(''); setPrice(''); setNewCategory('Items')
-      setShowCreate(false); load()
-    } catch (e: any) { Alert.alert('Error', e.message) }
-    finally { setPosting(false) }
+      const m = reply.match(/\{[\s\S]*\}/)
+      if (!m) throw new Error('no json')
+      const j = JSON.parse(m[0])
+      if (j.title) setTitle(String(j.title))
+      if (j.description) setDescription(String(j.description))
+      if (j.price != null) setPrice(String(j.price))
+      if (j.category && CATEGORIES.includes(j.category)) setNewCategory(j.category)
+    } catch { Alert.alert("Couldn't read Teeby's suggestion", 'Try again or fill it in manually.') }
   }
 
   const filtered = category === 'All' ? listings : listings.filter(l => l.category === category)
@@ -81,6 +121,7 @@ export default function MarketplaceScreen() {
         ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>🛍️</Text><Text style={s.emptyTitle}>Nothing listed yet</Text><TouchableOpacity style={s.emptyBtn} onPress={() => setShowCreate(true)}><Text style={s.emptyBtnText}>List something</Text></TouchableOpacity></View>}
         renderItem={({ item: l }) => (
           <TouchableOpacity style={s.card} onPress={() => setSelected(l)}>
+            {l.media_url ? <Image source={{ uri: l.media_url }} style={s.thumb} resizeMode="cover" /> : null}
             <View style={s.cardHeader}>
               <View style={s.sellerAvatar}>
                 <Text style={s.sellerAvatarText}>{l.profile?.avatar_char || l.profile?.display_name?.[0] || '?'}</Text>
@@ -106,11 +147,28 @@ export default function MarketplaceScreen() {
 
       {/* Create listing modal */}
       <Modal visible={showCreate} transparent animationType="slide" onRequestClose={() => setShowCreate(false)}>
-        <View style={s.modalOverlay}>
+        <KeyboardAvoidingView style={s.modalOverlay} behavior="padding" keyboardVerticalOffset={0}>
           <View style={s.modalCard}>
             <Text style={s.modalTitle}>New Listing</Text>
             <ScrollView showsVerticalScrollIndicator={false}>
-              <Text style={s.modalLabel}>TITLE *</Text>
+              <Text style={s.modalLabel}>PHOTO</Text>
+              <TouchableOpacity style={s.photoBox} onPress={pickMedia} disabled={uploadingMedia}>
+                {uploadingMedia ? <ActivityIndicator color={PRIMARY} />
+                  : mediaUrl ? <Image source={{ uri: mediaUrl }} style={s.photoImg} resizeMode="cover" />
+                  : <Text style={s.photoPlaceholder}>📷  Add photo</Text>}
+              </TouchableOpacity>
+              {mediaUrl && (
+                <TouchableOpacity onPress={() => setMediaUrl(null)} style={{ alignSelf: 'flex-end', marginTop: 4 }}>
+                  <Text style={{ fontSize: 12, color: GRAY }}>Remove</Text>
+                </TouchableOpacity>
+              )}
+
+              <View style={s.titleRow}>
+                <Text style={s.modalLabel}>TITLE *</Text>
+                <TouchableOpacity style={s.aiChip} onPress={aiSuggest} disabled={aiBusy}>
+                  {aiBusy ? <ActivityIndicator color={PRIMARY} size="small" /> : <Text style={s.aiChipText}>✦ Teeby suggest</Text>}
+                </TouchableOpacity>
+              </View>
               <TextInput style={s.modalInput} value={title} onChangeText={setTitle} placeholder="What are you selling?" placeholderTextColor={GRAY} maxLength={80} />
               <Text style={s.modalLabel}>DESCRIPTION</Text>
               <TextInput style={[s.modalInput, { minHeight: 80, textAlignVertical: 'top' }]} value={description} onChangeText={setDescription} placeholder="Details..." placeholderTextColor={GRAY} multiline maxLength={500} />
@@ -134,7 +192,7 @@ export default function MarketplaceScreen() {
               </View>
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Listing detail modal */}
@@ -170,6 +228,13 @@ const s = StyleSheet.create({
   catBtnText: { fontSize: 13, color: GRAY, fontWeight: '500' },
   catBtnTextActive: { color: '#fff' },
   card: { backgroundColor: CARD, borderRadius: 16, padding: 14, borderWidth: 0.5, borderColor: BORDER },
+  thumb: { width: '100%', height: 160, borderRadius: 12, marginBottom: 8 },
+  photoBox: { width: '100%', height: 140, borderRadius: 12, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: BORDER, overflow: 'hidden' },
+  photoImg: { width: '100%', height: '100%' },
+  photoPlaceholder: { fontSize: 15, color: GRAY, fontWeight: '600' },
+  titleRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 14 },
+  aiChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#EEF0FF', borderWidth: 1, borderColor: PRIMARY },
+  aiChipText: { fontSize: 12, color: PRIMARY, fontWeight: '700' },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 8 },
   sellerAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
   sellerAvatarText: { fontSize: 18 },

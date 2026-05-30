@@ -72,11 +72,11 @@ export default function FeedScreen() {
     if (BANNED.some(w => draft.toLowerCase().includes(w))) { Alert.alert('Content Policy', 'Inappropriate content detected.'); return }
     if (!userId) return
     setPosting(true)
-    try {
-      await supabase.from('posts').insert({ user_id: userId, content: draft.trim(), media_url: mediaUrl, is_anonymous: isAnon, likes: 0, dislikes: 0 })
-      setDraft(''); setMediaUrl(null); setIsAnon(false)
-      loadPosts()
-    } catch {} finally { setPosting(false) }
+    const { error } = await supabase.from('posts').insert({ user_id: userId, content: draft.trim(), media_url: mediaUrl, is_anonymous: isAnon, likes: 0, dislikes: 0 })
+    setPosting(false)
+    if (error) { Alert.alert('Could not post', error.message); return }
+    setDraft(''); setMediaUrl(null); setIsAnon(false)
+    loadPosts()
   }
 
   const react = async (postId: string, reaction: 'like' | 'dislike', currentReaction: string | null) => {
