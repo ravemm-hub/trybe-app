@@ -9,7 +9,7 @@ import { askClaude } from '../src/lib/claude'
 import { normalizePhone } from '../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER } from '../src/constants'
 
-type Step = 'welcome' | 'name' | 'phone' | 'vibe' | 'done'
+type Step = 'welcome' | 'name' | 'phone' | 'vibe' | 'code' | 'done'
 
 export default function OnboardingScreen() {
   const insets = useSafeAreaInsets()
@@ -19,6 +19,7 @@ export default function OnboardingScreen() {
   const [input, setInput] = useState('')
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
+  const [e164, setE164] = useState('')
   const [locationName, setLocationName] = useState('')
   const [typing, setTyping] = useState(false)
   const scrollRef = useRef<ScrollView>(null)
@@ -70,6 +71,7 @@ export default function OnboardingScreen() {
   const handlePhone = async () => {
     if (!input.trim()) return
     const p = normalizePhone(input.trim())
+    if (!/^0\d{8,9}$/.test(p)) { addMsg('user', input.trim()); setInput(''); await typeMsg('Hmm, that doesn\'t look like a valid mobile number 🤔\n\nTry again — e.g. 0501234567'); return }
     setPhone(p)
     addMsg('user', input.trim())
     setInput('')
@@ -85,41 +87,43 @@ export default function OnboardingScreen() {
     setTyping(true)
     const aiReply = await askClaude('User named ' + name + ' said about themselves: "' + vibe + '". Write a warm, fun 1-sentence response and tell them Tryber is perfect for them. Max 20 words.', undefined, 60)
     setTyping(false)
-    await typeMsg((aiReply || 'Tryber is made for you! 🎯') + '\n\nLet\'s get you set up. Creating your account...')
-    setStep('done')
-    await createAccount()
+    await typeMsg((aiReply || 'Tryber is made for you! 🎯') + '\n\nAlmost there — I\'m texting a 6-digit code to ' + phone + ' to verify it\'s you 📲')
+    const e = '+972' + phone.slice(1)
+    setE164(e)
+    const { error } = await supabase.auth.signInWithOtp({ phone: e })
+    if (error) {
+      await typeMsg('Couldn\'t send the code 😕 (' + error.message + ')\n\nLet\'s use the sign-in screen.')
+      setTimeout(() => router.replace('/(auth)/login'), 1800)
+      return
+    }
+    await typeMsg('Enter the 6-digit code I just sent you 🔑')
+    setStep('code')
   }
 
-  const createAccount = async () => {
-    try {
-      if (phone) {
-        const { data: existing } = await supabase.from('profiles').select('id').eq('phone', phone).maybeSingle()
-        if (existing) {
-          await typeMsg('Looks like that phone is already on Tryber! 📱\n\nLet me take you to sign in.')
-          setTimeout(() => router.replace('/(auth)/login'), 1500)
-          return
-        }
-      }
-      const email = phone
-        ? phone + '@tryber.app'
-        : name.toLowerCase().replace(/\s+/g, '.') + '.' + Date.now() + '@tryber.app'
-      const password = Math.random().toString(36).substring(2, 14)
-      const { data, error } = await supabase.auth.signUp({ email, password })
-      if (error || !data.user) { await typeMsg('Hmm, something went wrong. Please try again!'); return }
-      await supabase.from('profiles').update({ display_name: name, phone: phone || null }).eq('id', data.user.id)
-      await AsyncStorage.setItem('onboarding_done', '1')
-      await typeMsg('You\'re all set, ' + name + '! ✦\n\nWelcome to Tryber 🚀')
-      setTimeout(() => router.replace('/(tabs)'), 1500)
-    } catch {
-      await typeMsg('Something went wrong. Let\'s try the regular sign up!')
-      setTimeout(() => router.replace('/(auth)/login'), 1500)
+  const handleCode = async () => {
+    if (!input.trim()) return
+    const codeVal = input.trim()
+    addMsg('user', '••••••')
+    setInput('')
+    setTyping(true)
+    const { data, error } = await supabase.auth.verifyOtp({ phone: e164, token: codeVal, type: 'sms' })
+    setTyping(false)
+    if (error) { await typeMsg('That code didn\'t work 😅 — type the 6-digit code again (or wait for a new SMS).'); return }
+    const uid = data.user?.id
+    if (uid) {
+      try { await supabase.from('profiles').update({ display_name: name, phone }).eq('id', uid) } catch {}
+      try { await AsyncStorage.setItem('onboarding_done', '1') } catch {}
     }
+    setStep('done')
+    await typeMsg('You\'re all set, ' + name + '! ✦\n\nWelcome to Tryber 🚀')
+    setTimeout(() => router.replace('/(tabs)'), 1500)
   }
 
   const handleSend = () => {
     if (step === 'name') handleName()
     else if (step === 'phone') handlePhone()
     else if (step === 'vibe') handleVibe()
+    else if (step === 'code') handleCode()
   }
 
   const skipPhone = async () => {
@@ -162,14 +166,15 @@ export default function OnboardingScreen() {
         <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={0}>
           <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
             <TextInput style={s.input} value={input} onChangeText={setInput}
-              placeholder={step === 'name' ? 'Your name...' : step === 'phone' ? '0501234567' : 'Tell me about yourself...'}
-              placeholderTextColor={GRAY} keyboardType={step === 'phone' ? 'phone-pad' : 'default'}
+              placeholder={step === 'name' ? 'Your name...' : step === 'phone' ? '0501234567' : step === 'code' ? 'Enter 6-digit code' : 'Tell me about yourself...'}
+              placeholderTextColor={GRAY} keyboardType={step === 'phone' ? 'phone-pad' : step === 'code' ? 'number-pad' : 'default'}
+              maxLength={step === 'code' ? 6 : undefined}
               returnKeyType="send" onSubmitEditing={handleSend} autoFocus multiline={step === 'vibe'} />
             <TouchableOpacity style={[s.sendBtn, !input.trim() && s.sendBtnOff]} onPress={handleSend} disabled={!input.trim()}>
               <Text style={s.sendBtnText}>↑</Text>
             </TouchableOpacity>
           </View>
-          {step === 'phone' && (
+          {false && step === 'phone' && (
             <TouchableOpacity style={s.skipBtn} onPress={skipPhone}>
               <Text style={s.skipBtnText}>Skip for now</Text>
             </TouchableOpacity>

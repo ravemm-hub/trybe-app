@@ -1,82 +1,83 @@
-﻿import { useState } from 'react'
+import { useState } from 'react'
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useRouter } from 'expo-router'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { supabase } from '../../src/lib/supabase'
 import { normalizePhone } from '../../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY } from '../../src/constants'
 
 export default function LoginScreen() {
   const insets = useSafeAreaInsets()
-  const router = useRouter()
-  const [mode, setMode] = useState<'login' | 'register'>('login')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [step, setStep] = useState<'phone' | 'code'>('phone')
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
+  const [code, setCode] = useState('')
   const [loading, setLoading] = useState(false)
+  const [e164, setE164] = useState('')
+  const [normalized, setNormalized] = useState('')
 
-  const handleLogin = async () => {
-    if (!email || !password) { Alert.alert('Missing fields', 'Please enter email and password'); return }
+  const sendCode = async () => {
+    const norm = normalizePhone(phone.trim())
+    if (!/^0\d{8,9}$/.test(norm)) { Alert.alert('Invalid number', 'Enter a valid mobile number, e.g. 0501234567'); return }
+    const e = '+972' + norm.slice(1)
     setLoading(true)
-    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    const { error } = await supabase.auth.signInWithOtp({ phone: e })
     setLoading(false)
-    if (error) Alert.alert('Login failed', error.message)
+    if (error) { Alert.alert('Could not send code', error.message); return }
+    setE164(e); setNormalized(norm); setCode(''); setStep('code')
   }
 
-  const handleRegister = async () => {
-    if (!name || !phone || !email || !password) { Alert.alert('Missing fields', 'Please fill name, phone, email and password'); return }
+  const verify = async () => {
+    if (code.trim().length < 4) return
     setLoading(true)
-    try {
-      const normalizedPhone = normalizePhone(phone)
-      const { data: existing } = await supabase.from('profiles').select('id').eq('phone', normalizedPhone).maybeSingle()
-      if (existing) { setLoading(false); Alert.alert('Phone already registered', 'This phone number is already in use. Please sign in instead.'); return }
-
-      const { data, error } = await supabase.auth.signUp({ email, password })
-      if (error) { setLoading(false); Alert.alert('Error', error.message); return }
-      if (data.user) {
-        const { error: upErr } = await supabase.from('profiles').update({ display_name: name, phone: normalizedPhone }).eq('id', data.user.id)
-        if (upErr) {
-          setLoading(false)
-          if (upErr.code === '23505' || /duplicate|unique/i.test(upErr.message)) Alert.alert('Phone already registered', 'This phone number is already in use. Please sign in instead.')
-          else Alert.alert('Error', upErr.message)
-          return
-        }
-      }
-      setLoading(false)
-    } catch (e: any) {
-      setLoading(false)
-      Alert.alert('Error', e?.message || 'Something went wrong')
+    const { data, error } = await supabase.auth.verifyOtp({ phone: e164, token: code.trim(), type: 'sms' })
+    if (error) { setLoading(false); Alert.alert('Wrong or expired code', error.message); return }
+    const uid = data.user?.id
+    if (uid) {
+      const updates: any = { phone: normalized }
+      if (name.trim()) updates.display_name = name.trim()
+      try { await supabase.from('profiles').update(updates).eq('id', uid) } catch {}
+      try { await AsyncStorage.setItem('onboarding_done', '1') } catch {}
     }
+    setLoading(false)
+    // _layout's onAuthStateChange navigates into the app once the session is set.
+  }
+
+  const resend = async () => {
+    setLoading(true)
+    const { error } = await supabase.auth.signInWithOtp({ phone: e164 })
+    setLoading(false)
+    Alert.alert(error ? 'Error' : 'Code sent', error ? error.message : 'A new code is on its way.')
   }
 
   return (
-    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={s.inner}>
         <Text style={s.logo}>tryber</Text>
-        <Text style={s.tagline}>The Next Generation of SocialAIsing</Text>
+        <Text style={s.tagline}>The next generation of social ✦</Text>
 
-        <View style={s.tabs}>
-          <TouchableOpacity style={[s.tab, mode === 'login' && s.tabActive]} onPress={() => setMode('login')}>
-            <Text style={[s.tabText, mode === 'login' && s.tabTextActive]}>Sign In</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[s.tab, mode === 'register' && s.tabActive]} onPress={() => setMode('register')}>
-            <Text style={[s.tabText, mode === 'register' && s.tabTextActive]}>Sign Up</Text>
-          </TouchableOpacity>
-        </View>
-
-        {mode === 'register' && (
+        {step === 'phone' ? (
           <>
-            <TextInput style={s.input} value={name} onChangeText={setName} placeholder='Your name' placeholderTextColor={GRAY} autoCorrect={false} />
-            <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder='Phone (e.g. 0501234567)' placeholderTextColor={GRAY} keyboardType='phone-pad' />
+            <TextInput style={s.input} value={name} onChangeText={setName} placeholder="Your name (new here? add it)" placeholderTextColor={GRAY} autoCorrect={false} />
+            <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="Phone — e.g. 0501234567" placeholderTextColor={GRAY} keyboardType="phone-pad" autoFocus />
+            <TouchableOpacity style={[s.btn, loading && { opacity: 0.6 }]} onPress={sendCode} disabled={loading}>
+              {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Send code by SMS</Text>}
+            </TouchableOpacity>
+            <Text style={s.hint}>We'll text you a one-time code. No password needed.</Text>
+          </>
+        ) : (
+          <>
+            <Text style={s.codeLabel}>Enter the 6-digit code sent to {e164}</Text>
+            <TextInput style={[s.input, s.codeInput]} value={code} onChangeText={setCode} placeholder="••••••" placeholderTextColor={GRAY} keyboardType="number-pad" maxLength={6} autoFocus textAlign="center" />
+            <TouchableOpacity style={[s.btn, loading && { opacity: 0.6 }]} onPress={verify} disabled={loading}>
+              {loading ? <ActivityIndicator color="#fff" /> : <Text style={s.btnText}>Verify & enter</Text>}
+            </TouchableOpacity>
+            <View style={s.codeFooter}>
+              <TouchableOpacity onPress={() => { setStep('phone'); setCode('') }}><Text style={s.link}>‹ Change number</Text></TouchableOpacity>
+              <TouchableOpacity onPress={resend} disabled={loading}><Text style={s.link}>Resend code</Text></TouchableOpacity>
+            </View>
           </>
         )}
-        <TextInput style={s.input} value={email} onChangeText={setEmail} placeholder='Email' placeholderTextColor={GRAY} autoCapitalize='none' keyboardType='email-address' />
-        <TextInput style={s.input} value={password} onChangeText={setPassword} placeholder='Password' placeholderTextColor={GRAY} secureTextEntry />
-
-        <TouchableOpacity style={[s.btn, loading && { opacity: 0.6 }]} onPress={mode === 'login' ? handleLogin : handleRegister} disabled={loading}>
-          {loading ? <ActivityIndicator color='#fff' /> : <Text style={s.btnText}>{mode === 'login' ? 'Sign In' : 'Create Account'}</Text>}
-        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   )
@@ -87,12 +88,12 @@ const s = StyleSheet.create({
   inner: { flex: 1, paddingHorizontal: 24, justifyContent: 'center' },
   logo: { fontSize: 42, fontWeight: '800', color: PRIMARY, letterSpacing: -1, textAlign: 'center', marginBottom: 8 },
   tagline: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 40 },
-  tabs: { flexDirection: 'row', backgroundColor: CARD, borderRadius: 16, padding: 4, marginBottom: 24 },
-  tab: { flex: 1, paddingVertical: 10, borderRadius: 12, alignItems: 'center' },
-  tabActive: { backgroundColor: PRIMARY },
-  tabText: { fontSize: 15, fontWeight: '600', color: GRAY },
-  tabTextActive: { color: '#fff' },
   input: { backgroundColor: CARD, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: TEXT, marginBottom: 12, borderWidth: 1, borderColor: 'rgba(108,99,255,0.1)' },
+  codeInput: { fontSize: 28, fontWeight: '800', letterSpacing: 10, color: TEXT },
+  codeLabel: { fontSize: 14, color: TEXT, textAlign: 'center', marginBottom: 16 },
   btn: { backgroundColor: PRIMARY, borderRadius: 16, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
   btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  hint: { fontSize: 12, color: GRAY, textAlign: 'center', marginTop: 16 },
+  codeFooter: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 18 },
+  link: { fontSize: 14, color: PRIMARY, fontWeight: '600' },
 })
