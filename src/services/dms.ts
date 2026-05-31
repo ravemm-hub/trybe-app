@@ -1,5 +1,6 @@
 ﻿import { supabase } from '../lib/supabase'
 import { emit, UNREAD_CHANGED } from '../lib/events'
+import { EDGE_URL, EDGE_AUTH, AGENT_IDS } from '../constants'
 
 export async function sendDM(params: { id?: string; senderId: string; receiverId: string; content: string; senderMode?: string; receiverMode?: string; replyToId?: string | null; replyPreview?: string | null; mediaUrl?: string | null; mediaType?: string }) {
   const row: any = {
@@ -9,7 +10,28 @@ export async function sendDM(params: { id?: string; senderId: string; receiverId
     media_url: params.mediaUrl || null, media_type: params.mediaType || null,
   }
   if (params.id) row.id = params.id
-  return supabase.from('dm_messages').insert(row)
+  const res = await supabase.from('dm_messages').insert(row)
+  // Fan out a push notification to the receiver via the edge function — skip
+  // agent receivers (agents don't have devices). Ghost mode hides the sender's
+  // real name behind 👻 Anonymous so the push doesn't leak identity.
+  if (!res.error && !AGENT_IDS.includes(params.receiverId)) {
+    const isGhost = (params.senderMode || 'lit') === 'ghost'
+    let senderName = ''
+    if (!isGhost) {
+      try {
+        const { data: p } = await supabase.from('profiles').select('display_name, username').eq('id', params.senderId).single()
+        senderName = (p?.display_name || p?.username || '').slice(0, 60)
+      } catch {}
+    } else {
+      senderName = '👻 Anonymous'
+    }
+    const previewBody = (params.content || '').trim() || (params.mediaUrl ? (params.mediaType === 'audio' ? '🎤 Voice message' : params.mediaType === 'file' ? '📄 File' : '📷 Photo') : '')
+    fetch(EDGE_URL, {
+      method: 'POST', headers: { Authorization: EDGE_AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dm: { sender_id: params.senderId, receiver_id: params.receiverId, sender_name: senderName, content: previewBody } }),
+    }).catch(() => {})
+  }
+  return res
 }
 
 export async function markDMRead(senderId: string, receiverId: string) {

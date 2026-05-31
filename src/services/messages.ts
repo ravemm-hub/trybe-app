@@ -12,7 +12,26 @@ export async function sendMessage(params: { id?: string; groupId: string; userId
   }
   if (params.id) row.id = params.id
   const { error } = await supabase.from('messages').insert(row)
-  if (!error) fetch(EDGE_URL, { method: 'POST', headers: { Authorization: EDGE_AUTH, 'Content-Type': 'application/json' }, body: JSON.stringify({ group_id: params.groupId }) }).catch(() => {})
+  if (!error) {
+    // Ping the edge function so it (a) triggers an agent reply when relevant and
+    // (b) fans out push notifications to all other group members. Anonymous
+    // senders (ghost mode) hide their name from the push title.
+    const isGhost = params.senderMode === 'ghost'
+    let senderName = ''
+    if (!isGhost) {
+      try {
+        const { data: p } = await supabase.from('profiles').select('display_name, username').eq('id', params.userId).single()
+        senderName = (p?.display_name || p?.username || '').slice(0, 60)
+      } catch {}
+    } else {
+      senderName = '👻 Anonymous'
+    }
+    const previewBody = (params.content || '').trim() || (params.mediaUrl ? (params.kind === 'audio' ? '🎤 Voice message' : params.kind === 'file' ? '📄 File' : '📷 Photo') : '')
+    fetch(EDGE_URL, {
+      method: 'POST', headers: { Authorization: EDGE_AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group_id: params.groupId, sender_id: params.userId, sender_name: senderName, content: previewBody }),
+    }).catch(() => {})
+  }
   return error
 }
 

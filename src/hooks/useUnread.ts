@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 import { getGroupUnread } from '../services/messages'
 import { getDMUnread } from '../services/dms'
 import { on, UNREAD_CHANGED } from '../lib/events'
+import { setAppBadge } from '../lib/push'
+import { getUnreadNotificationCount } from '../services/social'
 
 export function useUnread() {
   const [groupUnread, setGroupUnread] = useState(0)
@@ -12,14 +14,20 @@ export function useUnread() {
   const refresh = useCallback(async () => {
     try {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      if (!user) { setAppBadge(0); return }
       const { data: myGroups } = await supabase.from('group_members').select('group_id, last_read_at').eq('user_id', user.id)
       let total = 0
       for (const g of myGroups || []) {
         total += await getGroupUnread(g.group_id, user.id, g.last_read_at || new Date(0).toISOString())
       }
+      const dm = await getDMUnread(user.id)
+      const notif = await getUnreadNotificationCount(user.id).catch(() => 0)
       setGroupUnread(total)
-      setDmUnread(await getDMUnread(user.id))
+      setDmUnread(dm)
+      // Sync the launcher-icon badge to the true unread total (groups + DMs +
+      // social notifications). Pushes increment via the OS; this brings it back
+      // in sync when the user has read messages without tapping a push.
+      setAppBadge(total + dm + notif)
     } catch {}
   }, [])
 

@@ -67,6 +67,70 @@ function sb(path: string, init?: RequestInit) {
   })
 }
 
+// ─── Push notifications via Expo Push API ──────────────────────────────────
+// We send pushes server-side from the edge function so the client never has
+// to know the recipients' push tokens (and so anonymous senders stay anonymous
+// even at the network level).
+
+async function expoPush(messages: Array<{ to: string; title: string; body: string; data?: Record<string, unknown>; sound?: string }>) {
+  if (!messages.length) return
+  try {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(messages.map(m => ({ sound: 'default', ...m }))),
+    })
+  } catch { /* best-effort */ }
+}
+
+// Pushes for a NEW GROUP MESSAGE — to every member except the sender + agents,
+// who has a push_token, and whose last_read_at is older than the message time.
+async function pushForGroupMessage(groupId: string, senderId: string, contentRaw: string, senderName: string) {
+  try {
+    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return
+    // Get group name + members + push tokens in one shot.
+    const [{ 0: g } = { 0: null } as any, members] = await Promise.all([
+      sb(`groups?id=eq.${groupId}&select=name`).then(r => r.json()),
+      sb(`group_members?group_id=eq.${groupId}&select=user_id`).then(r => r.json()),
+    ])
+    const groupName = (g && g.name) || 'Trybe'
+    const recipientIds: string[] = (members || [])
+      .map((m: any) => m.user_id)
+      .filter((uid: string) => uid && uid !== senderId && !AGENT_IDS.includes(uid))
+    if (!recipientIds.length) return
+    const profs = await sb(`profiles?id=in.(${recipientIds.join(',')})&select=id,push_token`).then(r => r.json())
+    const tokens: Array<{ to: string; uid: string }> = (profs || [])
+      .filter((p: any) => p.push_token && /^ExponentPushToken\[|^ExpoPushToken\[/.test(p.push_token))
+      .map((p: any) => ({ to: p.push_token, uid: p.id }))
+    if (!tokens.length) return
+    const body = (contentRaw || '').slice(0, 140) || '📷 New message'
+    await expoPush(tokens.map(t => ({
+      to: t.to,
+      title: senderName ? `${senderName} · ${groupName}` : groupName,
+      body,
+      data: { group_id: groupId, group_name: groupName, sender_id: senderId, type: 'group_message' },
+    })))
+  } catch { /* best-effort */ }
+}
+
+// Push for a NEW DM — to the receiver only.
+async function pushForDM(senderId: string, receiverId: string, contentRaw: string, senderName: string) {
+  try {
+    if (!SUPABASE_URL || !SERVICE_ROLE_KEY) return
+    if (!receiverId || receiverId === senderId) return
+    const profs = await sb(`profiles?id=eq.${receiverId}&select=push_token`).then(r => r.json())
+    const tok = profs?.[0]?.push_token
+    if (!tok || !/^ExponentPushToken\[|^ExpoPushToken\[/.test(tok)) return
+    const body = (contentRaw || '').slice(0, 140) || '📷 New message'
+    await expoPush([{
+      to: tok,
+      title: senderName || 'New message',
+      body,
+      data: { dm_user_id: senderId, sender_name: senderName, type: 'dm_message' },
+    }])
+  } catch { /* best-effort */ }
+}
+
 async function maybeGroupAgentReply(groupId: string) {
   try {
     if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !ANTHROPIC_API_KEY) return
@@ -117,8 +181,22 @@ Deno.serve(async (req) => {
   const imageUrl: string | undefined = payload.image_url
 
   // Group-agent ping (sent after a group message). No prompt -> maybe make the agent reply.
+  // Also fans out push notifications to all group members (except sender) in parallel.
   if (payload.group_id && !prompt) {
-    await maybeGroupAgentReply(String(payload.group_id))
+    const senderName = String(payload.sender_name || '').slice(0, 60)
+    const senderId = String(payload.sender_id || '')
+    const content = String(payload.content || '')
+    await Promise.all([
+      maybeGroupAgentReply(String(payload.group_id)),
+      senderId ? pushForGroupMessage(String(payload.group_id), senderId, content, senderName) : Promise.resolve(),
+    ])
+    return json({ ok: true })
+  }
+
+  // DM push fan-out — { dm: { sender_id, receiver_id, sender_name, content } }
+  if (payload.dm && !prompt) {
+    const dm = payload.dm || {}
+    await pushForDM(String(dm.sender_id || ''), String(dm.receiver_id || ''), String(dm.content || ''), String(dm.sender_name || '').slice(0, 60))
     return json({ ok: true })
   }
 
