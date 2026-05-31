@@ -204,7 +204,26 @@ export default function ChatsScreen() {
   // Contacts who are NOT on the app — shown at the bottom of Chats to invite.
   const inviteContacts = contacts.filter(c => !c.onTryber)
   const searching = !!search.trim()
-  const groupMatches = searching ? groups.filter(g => (g.name || '').toLowerCase().includes(search.trim().toLowerCase())) : []
+  const searchLower = search.trim().toLowerCase()
+  const groupMatches = searching ? groups.filter(g => (g.name || '').toLowerCase().includes(searchLower)) : []
+  // Device contacts that match the search and are NOT yet Tryber users
+  // — surfaced so the user can invite them by name from one search box.
+  const contactMatches = searching
+    ? contacts.filter(c => !c.onTryber && (
+        (c.name || '').toLowerCase().includes(searchLower) ||
+        (c.phone || '').toLowerCase().includes(searchLower)
+      )).slice(0, 50)
+    : []
+  // Device contacts who ARE Tryber users — surface them in the people row even
+  // if the profiles ilike() missed them (e.g. they have no display_name set).
+  const contactTryberMatches = searching
+    ? contacts.filter(c => c.onTryber && c.tryberUserId
+        && (c.name || '').toLowerCase().includes(searchLower)
+        && !searchResults.find(p => p.id === c.tryberUserId))
+        .slice(0, 25)
+        .map(c => ({ id: c.tryberUserId, display_name: c.name, username: null, avatar_char: null, __fromContacts: true }))
+    : []
+  const allPeopleMatches = [...searchResults, ...contactTryberMatches]
 
   if (loading) return <View style={[s.container, { paddingTop: insets.top }]}><ActivityIndicator color={PRIMARY} style={{ flex: 1 }} /></View>
 
@@ -242,28 +261,50 @@ export default function ChatsScreen() {
 
       {searching && (
         <FlatList
-          data={searchResults}
-          keyExtractor={p => p.id}
+          data={allPeopleMatches}
+          keyExtractor={p => 'u:' + p.id}
           keyboardShouldPersistTaps="handled"
-          ListHeaderComponent={groupMatches.length > 0 ? (
+          ListHeaderComponent={(
             <View>
-              <View style={s.sectionHeader}><Text style={s.sectionHeaderText}>TRYBES</Text></View>
-              {groupMatches.map(g => (
-                <Pressable key={g.id} style={s.row} onPress={() => router.push({ pathname: '/chat', params: { id: g.id, name: g.name, members: String(g.member_count || 0) } })}>
-                  <View style={s.groupAvatar}><Text style={s.groupAvatarText}>{g.name?.[0] || '⚡'}</Text></View>
-                  <View style={s.rowInfo}><Text style={s.rowName} numberOfLines={1}>{g.name}</Text><Text style={s.rowSub}>{g.member_count || 0} members</Text></View>
-                </Pressable>
-              ))}
-              <View style={s.sectionHeader}><Text style={s.sectionHeaderText}>PEOPLE</Text></View>
+              {groupMatches.length > 0 && (
+                <>
+                  <View style={s.sectionHeader}><Text style={s.sectionHeaderText}>TRYBES</Text></View>
+                  {groupMatches.map(g => (
+                    <Pressable key={g.id} style={s.row} onPress={() => router.push({ pathname: '/chat', params: { id: g.id, name: g.name, members: String(g.member_count || 0) } })}>
+                      <View style={s.groupAvatar}><Text style={s.groupAvatarText}>{g.name?.[0] || '⚡'}</Text></View>
+                      <View style={s.rowInfo}><Text style={s.rowName} numberOfLines={1}>{g.name}</Text><Text style={s.rowSub}>{g.member_count || 0} members</Text></View>
+                    </Pressable>
+                  ))}
+                </>
+              )}
+              {allPeopleMatches.length > 0 && <View style={s.sectionHeader}><Text style={s.sectionHeaderText}>PEOPLE ON TRYBER</Text></View>}
             </View>
-          ) : (<View style={s.sectionHeader}><Text style={s.sectionHeaderText}>PEOPLE</Text></View>)}
-          ListEmptyComponent={groupMatches.length === 0 ? <View style={s.empty}><Text style={s.emptySub}>No people found</Text></View> : null}
+          )}
+          ListFooterComponent={contactMatches.length > 0 ? (
+            <View>
+              <View style={s.sectionHeader}><Text style={s.sectionHeaderText}>📇 INVITE FROM YOUR CONTACTS</Text></View>
+              {contactMatches.map(c => (
+                <View key={'c:' + c.id} style={s.contactRow}>
+                  <View style={s.cAvatar}><Text style={s.cInitials}>{c.initials}</Text></View>
+                  <View style={s.cInfo}>
+                    <Text style={s.cName}>{c.name}</Text>
+                    <Text style={s.cPhone}>{c.phone}</Text>
+                  </View>
+                  <TouchableOpacity style={s.inviteBtn} onPress={() => Linking.openURL('whatsapp://send?phone=' + c.phone + '&text=' + encodeURIComponent(INVITE_MSG)).catch(() => Linking.openURL('sms:' + c.phone + '?body=' + encodeURIComponent(INVITE_MSG)).catch(() => {}))}>
+                    <Text style={s.inviteBtnText}>Invite</Text>
+                  </TouchableOpacity>
+                </View>
+              ))}
+            </View>
+          ) : null}
+          ListEmptyComponent={(groupMatches.length === 0 && contactMatches.length === 0) ? <View style={s.empty}><Text style={s.emptySub}>No people, Trybes, or contacts found</Text></View> : null}
           renderItem={({ item: p }) => {
             const dn = nameMap[p.id] || p.display_name || p.username || 'User'
+            const sub = p.__fromContacts ? '📇 in your contacts' : ('@' + (p.username || 'user'))
             return (
               <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: p.id, userName: dn, myMode: 'lit', theirMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
                 <View style={s.dmAvatar}><Text style={s.dmAvatarText}>{p.avatar_char || dn[0] || '?'}</Text></View>
-                <View style={s.rowInfo}><Text style={s.rowName} numberOfLines={1}>{dn}</Text><Text style={s.rowSub}>@{p.username || 'user'}</Text></View>
+                <View style={s.rowInfo}><Text style={s.rowName} numberOfLines={1}>{dn}</Text><Text style={s.rowSub}>{sub}</Text></View>
                 <Text style={s.msgBtnText}>💬 Message</Text>
               </Pressable>
             )
