@@ -5,7 +5,9 @@ import { useRouter, useFocusEffect } from 'expo-router'
 import { pickImageAsset, uploadMedia } from '../../src/lib/upload'
 import { supabase } from '../../src/lib/supabase'
 import { uuidv4 } from '../../src/lib/uuid'
-import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER } from '../../src/constants'
+import { getFollowingFeed, getFollowingSet, followUser, unfollowUser, getUnreadNotificationCount } from '../../src/services/social'
+import { getContactNameMap } from '../../src/lib/contacts'
+import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS } from '../../src/constants'
 
 const BANNED = ['spam', 'hate', 'violence', 'xxx', 'porn']
 
@@ -26,41 +28,95 @@ export default function FeedScreen() {
   const [loadingComments, setLoadingComments] = useState(false)
   const [commentDraft, setCommentDraft] = useState('')
   const [postingComment, setPostingComment] = useState(false)
+  const [filter, setFilter] = useState<'all' | 'following'>('all')
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set())
+  const [contactNames, setContactNames] = useState<Record<string, string>>({})
+  const [unread, setUnread] = useState(0)
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id) })
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) { setUserId(user.id); refreshUnread(user.id) }
+    })
+    getContactNameMap().then(setContactNames)
     loadPosts()
   }, [])
 
   // Auto-refresh when returning to the Feed tab so new posts from other users show up.
-  useFocusEffect(useCallback(() => { loadPosts() }, []))
+  useFocusEffect(useCallback(() => {
+    loadPosts()
+    if (userId) refreshUnread(userId)
+    getContactNameMap().then(setContactNames)
+  }, [userId, filter]))
+
+  const refreshUnread = async (uid: string) => {
+    try { setUnread(await getUnreadNotificationCount(uid)) } catch {}
+  }
+
+  // Reload when the filter changes.
+  useEffect(() => { loadPosts() }, [filter])
 
   const loadPosts = async () => {
     try {
-      const { data, error } = await supabase.from('posts')
-        .select('*, profile:profiles(id,display_name,username,avatar_char)')
-        .order('created_at', { ascending: false }).limit(50)
-      if (error) {
-        // Network/RLS error — show feed empty but don't crash.
-        console.warn('loadPosts error:', error.message)
-        setPosts([])
-      } else if (data) {
-        const { data: { user } } = await supabase.auth.getUser()
-        let merged = data
-        if (user) {
-          const { data: reactions } = await supabase.from('post_reactions')
-            .select('post_id, reaction').eq('user_id', user.id)
-          const reactMap: Record<string, string> = {}
-          for (const r of reactions || []) reactMap[r.post_id] = r.reaction
-          merged = data.map(p => ({ ...p, my_reaction: reactMap[p.id] || null })) as any
+      const { data: { user } } = await supabase.auth.getUser()
+      let rawPosts: any[] = []
+      if (filter === 'following' && user) {
+        // RPC returns posts only — fetch profiles separately for embed parity.
+        const rows = await getFollowingFeed(user.id, 50)
+        if (rows.length) {
+          const userIds = [...new Set(rows.map((r: any) => r.user_id))]
+          const { data: profs } = await supabase.from('profiles').select('id,display_name,username,avatar_char').in('id', userIds)
+          const pmap = new Map((profs || []).map((p: any) => [p.id, p]))
+          rawPosts = rows.map((r: any) => ({ ...r, profile: pmap.get(r.user_id) || null }))
         }
-        setPosts(merged)
+      } else {
+        const { data, error } = await supabase.from('posts')
+          .select('*, profile:profiles(id,display_name,username,avatar_char)')
+          .is('group_id', null)
+          .order('created_at', { ascending: false }).limit(50)
+        if (error) { console.warn('loadPosts error:', error.message); rawPosts = [] }
+        else rawPosts = data || []
       }
+      // Build my-reaction map (so heart UI shows what I already pressed).
+      let merged = rawPosts
+      if (user && rawPosts.length) {
+        const { data: reactions } = await supabase.from('post_reactions')
+          .select('post_id, reaction').eq('user_id', user.id)
+          .in('post_id', rawPosts.map((p: any) => p.id))
+        const reactMap: Record<string, string> = {}
+        for (const r of reactions || []) reactMap[r.post_id] = r.reaction
+        merged = rawPosts.map((p: any) => ({ ...p, my_reaction: reactMap[p.id] || null }))
+        // Resolve which authors I follow (so the "+ Follow" chip can flip immediately).
+        const authorIds = [...new Set(rawPosts.map((p: any) => p.user_id).filter((id: string) => id && id !== user.id))]
+        if (authorIds.length) {
+          const followSet = await getFollowingSet(user.id, authorIds)
+          setFollowingIds(followSet)
+        }
+      }
+      setPosts(merged)
     } catch (e: any) {
       console.warn('loadPosts threw:', e?.message)
     } finally {
       setLoading(false); setRefreshing(false)
     }
+  }
+
+  // Toggle follow on a post's author. Optimistic update for the chip.
+  const toggleFollowAuthor = async (authorId: string) => {
+    if (!userId || !authorId || authorId === userId) return
+    if (followingIds.has(authorId)) {
+      setFollowingIds(prev => { const n = new Set(prev); n.delete(authorId); return n })
+      const { error } = await unfollowUser(userId, authorId)
+      if (error) setFollowingIds(prev => new Set(prev).add(authorId))
+    } else {
+      setFollowingIds(prev => new Set(prev).add(authorId))
+      const { error } = await followUser(userId, authorId)
+      if (error) setFollowingIds(prev => { const n = new Set(prev); n.delete(authorId); return n })
+    }
+  }
+
+  const openProfile = (authorId: string) => {
+    if (!authorId || AGENT_IDS.includes(authorId)) return
+    router.push({ pathname: '/profile-view', params: { userId: authorId } })
   }
 
   const pickMedia = async () => {
@@ -160,7 +216,23 @@ export default function FeedScreen() {
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
-      <View style={s.header}><Text style={s.title}>Feed</Text></View>
+      <View style={s.header}>
+        <Text style={s.title}>Feed</Text>
+        <TouchableOpacity style={s.bellBtn} onPress={() => router.push('/notifications')}>
+          <Text style={s.bellIcon}>🔔</Text>
+          {unread > 0 && <View style={s.bellBadge}><Text style={s.bellBadgeText}>{unread > 9 ? '9+' : unread}</Text></View>}
+        </TouchableOpacity>
+      </View>
+
+      <View style={s.filterRow}>
+        {(['all', 'following'] as const).map(f => (
+          <TouchableOpacity key={f} style={[s.filterBtn, filter === f && s.filterBtnActive]} onPress={() => setFilter(f)}>
+            <Text style={[s.filterBtnText, filter === f && s.filterBtnTextActive]}>
+              {f === 'all' ? '🌐 Everyone' : '✓ Following'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <FlatList data={posts} keyExtractor={p => p.id}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadPosts() }} tintColor={PRIMARY} />}
@@ -191,21 +263,25 @@ export default function FeedScreen() {
           </View>
         )}
         renderItem={({ item: p }) => {
-          const displayName = p.is_anonymous ? '👻 Anonymous' : (p.profile?.display_name || p.profile?.username || 'User')
+          const baseName = contactNames[p.user_id] || p.profile?.display_name || p.profile?.username || 'User'
+          const displayName = p.is_anonymous ? '👻 Anonymous' : baseName
           const isOwn = p.user_id === userId
+          const isFollowingAuthor = !isOwn && !p.is_anonymous && followingIds.has(p.user_id)
           return (
             <View style={s.post}>
               <View style={s.postHeader}>
-                <View style={s.postAvatar}>
-                  <Text style={s.postAvatarText}>{p.is_anonymous ? '👻' : (p.profile?.avatar_char || displayName[0] || '?')}</Text>
-                </View>
-                <View style={s.postHeaderInfo}>
+                <TouchableOpacity disabled={p.is_anonymous} onPress={() => openProfile(p.user_id)}>
+                  <View style={s.postAvatar}>
+                    <Text style={s.postAvatarText}>{p.is_anonymous ? '👻' : (p.profile?.avatar_char || displayName[0] || '?')}</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity style={s.postHeaderInfo} disabled={p.is_anonymous} onPress={() => openProfile(p.user_id)}>
                   <Text style={s.postName}>{displayName}</Text>
                   <Text style={s.postTime}>{fmt(p.created_at)}</Text>
-                </View>
-                {!isOwn && !p.is_anonymous && (
-                  <TouchableOpacity style={s.dmBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: p.user_id, userName: p.profile?.display_name || 'User', myMode: 'lit', theirMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
-                    <Text style={s.dmBtnText}>💬 DM</Text>
+                </TouchableOpacity>
+                {!isOwn && !p.is_anonymous && !AGENT_IDS.includes(p.user_id) && (
+                  <TouchableOpacity style={[s.followChip, isFollowingAuthor && s.followingChip]} onPress={() => toggleFollowAuthor(p.user_id)}>
+                    <Text style={[s.followChipText, isFollowingAuthor && s.followingChipText]}>{isFollowingAuthor ? '✓' : '+ Follow'}</Text>
                   </TouchableOpacity>
                 )}
               </View>
@@ -271,8 +347,21 @@ export default function FeedScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: BG },
-  header: { paddingHorizontal: 20, paddingVertical: 14, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingVertical: 14, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
   title: { fontSize: 22, fontWeight: '800', color: TEXT },
+  bellBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: BORDER, position: 'relative' },
+  bellIcon: { fontSize: 18 },
+  bellBadge: { position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, backgroundColor: DANGER, paddingHorizontal: 4, alignItems: 'center', justifyContent: 'center' },
+  bellBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
+  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
+  filterBtn: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16, backgroundColor: BG, borderWidth: 1, borderColor: BORDER },
+  filterBtnActive: { backgroundColor: PRIMARY, borderColor: PRIMARY },
+  filterBtnText: { fontSize: 13, color: GRAY, fontWeight: '600' },
+  filterBtnTextActive: { color: '#fff' },
+  followChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: PRIMARY },
+  followChipText: { fontSize: 12, color: '#fff', fontWeight: '700' },
+  followingChip: { backgroundColor: '#EEF0FF', borderWidth: 1, borderColor: PRIMARY },
+  followingChipText: { color: PRIMARY },
   composer: { backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER, padding: 16 },
   composerInput: { fontSize: 15, color: TEXT, minHeight: 60, textAlignVertical: 'top', marginBottom: 12 },
   composerFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
