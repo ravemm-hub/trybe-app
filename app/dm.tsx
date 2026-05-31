@@ -10,7 +10,7 @@ import { uuidv4 } from '../src/lib/uuid'
 import { useChatAttachments } from '../src/hooks/useChatAttachments'
 import { MediaBubble } from '../src/components/MediaBubble'
 import { MediaKind } from '../src/lib/upload'
-import { getContactName } from '../src/lib/contacts'
+import { getContactName, loadAndMatchContacts } from '../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS, AGENTS } from '../src/constants'
 import { DmMessage } from '../src/types'
 
@@ -103,8 +103,12 @@ export default function DMScreen() {
   // would still show the registered display_name until the screen remounts.
   useFocusEffect(useCallback(() => {
     if (!otherUserId) return
-    getContactName(otherUserId).then(cn => { if (cn) setDisplayName(cn) })
-    if (myId && !talkingToAgent) markDMRead(otherUserId, myId)
+    ;(async () => {
+      if (myId) { try { await loadAndMatchContacts(myId) } catch {} }
+      const cn = await getContactName(otherUserId)
+      if (cn) setDisplayName(cn)
+      if (myId && !talkingToAgent) markDMRead(otherUserId, myId)
+    })()
   }, [otherUserId, myId, talkingToAgent]))
 
   const sendMessage = useCallback(async () => {

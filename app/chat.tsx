@@ -10,7 +10,7 @@ import { uuidv4 } from '../src/lib/uuid'
 import { useChatAttachments } from '../src/hooks/useChatAttachments'
 import { MediaBubble } from '../src/components/MediaBubble'
 import { MediaKind } from '../src/lib/upload'
-import { getContactNameMap } from '../src/lib/contacts'
+import { getContactNameMap, loadAndMatchContacts } from '../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS } from '../src/constants'
 import { Message } from '../src/types'
 
@@ -65,10 +65,15 @@ export default function ChatScreen() {
     return () => { supabase.removeChannel(channel) }
   }, [id])
 
-  // Re-pull saved contact names + re-mark read whenever this screen regains focus.
+  // Re-resolve names + re-mark read whenever this screen regains focus.
+  // Re-running loadAndMatchContacts catches the case where the user's other-side
+  // account was just merged: the map gets the new user_id mapping refilled.
   useFocusEffect(useCallback(() => {
-    getContactNameMap().then(setContactNames)
-    if (userId) markGroupRead(id, userId)
+    (async () => {
+      if (userId) { try { await loadAndMatchContacts(userId) } catch {} }
+      setContactNames(await getContactNameMap())
+      if (userId) markGroupRead(id, userId)
+    })()
   }, [id, userId]))
 
   const loadMessages = useCallback(async () => {
