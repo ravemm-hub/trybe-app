@@ -5,16 +5,38 @@ const TAVILY_KEY = process.env.EXPO_PUBLIC_TAVILY_KEY || ''
 // Routes through the quick-endpoint Edge Function so the Anthropic key stays
 // server-side (set via `supabase secrets set ANTHROPIC_API_KEY=...`) instead of
 // being inlined into the app bundle.
+function deviceTz(): string {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Jerusalem' }
+  catch { return 'Asia/Jerusalem' }
+}
 export async function askClaude(prompt: string, system?: string, maxTokens = 200, web = false, imageUrl?: string): Promise<string> {
   try {
     const res = await fetch(EDGE_URL, {
       method: 'POST',
       headers: { Authorization: EDGE_AUTH, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt, system: system || undefined, max_tokens: maxTokens, model: CLAUDE_MODEL, web, image_url: imageUrl }),
+      body: JSON.stringify({
+        prompt, system: system || undefined, max_tokens: maxTokens, model: CLAUDE_MODEL,
+        web, image_url: imageUrl,
+        tz: deviceTz(), client_now: new Date().toISOString(),
+      }),
     })
     const data = await res.json()
     return data.text?.trim() || ''
   } catch { return '' }
+}
+
+// Parses `IMAGE_URL: https://...` lines the agent emits when asked for an image.
+// Returns { text, imageUrls } so the UI can render the image(s) underneath the text.
+export function parseImageHints(reply: string): { text: string; imageUrls: string[] } {
+  const imageUrls: string[] = []
+  const lines = reply.split(/\r?\n/)
+  const kept: string[] = []
+  for (const line of lines) {
+    const m = line.match(/^\s*IMAGE_URL\s*:\s*(https?:\/\/\S+)\s*$/i)
+    if (m) { imageUrls.push(m[1]); continue }
+    kept.push(line)
+  }
+  return { text: kept.join('\n').trim(), imageUrls }
 }
 
 export async function translateText(text: string, targetLang: string): Promise<string> {

@@ -85,7 +85,16 @@ async function maybeGroupAgentReply(groupId: string) {
     const history = msgs.slice().reverse()
       .map((x: any) => (AGENT_IDS.includes(x.user_id) ? 'assistant' : 'user') + ': ' + (x.content || ''))
       .join('\n')
-    const system = instructions + ' Reply in the SAME language as the group. Keep it to 1-2 short sentences. Be natural — do not greet every time.'
+    let nowStr2 = ''
+    try {
+      nowStr2 = new Intl.DateTimeFormat('en-GB', {
+        timeZone: 'Asia/Jerusalem', year: 'numeric', month: 'long', day: '2-digit',
+        weekday: 'long', hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+      }).format(new Date())
+    } catch { nowStr2 = new Date().toUTCString() }
+    const system = 'Current date and time: ' + nowStr2 + '. Timezone: Asia/Jerusalem. ' +
+      'Always answer date/time questions confidently using this — never say you do not know the date. ' +
+      instructions + ' Reply in the SAME language as the group. Keep it to 1-2 short sentences. Be natural — do not greet every time.'
     const reply = await anthropic({ model: DEFAULT_MODEL, max_tokens: 200, system, messages: [{ role: 'user', content: history }] })
     if (!reply) return
 
@@ -129,10 +138,34 @@ Deno.serve(async (req) => {
         { type: 'image', source: { type: 'url', url: imageUrl } },
       ]
     : prompt
+  // Always inject the current date/time + timezone hint into the system prompt.
+  // Optional payload.tz lets the client pass the device timezone (e.g. 'Asia/Jerusalem')
+  // and payload.client_now lets the client pass its local clock — useful when the
+  // device clock differs from server time. Without this, Claude denies knowing the
+  // date/time, which is bad UX for a personal-assistant agent.
+  const tz = (payload.tz || 'Asia/Jerusalem').toString()
+  let nowStr = ''
+  try {
+    const d = payload.client_now ? new Date(payload.client_now) : new Date()
+    nowStr = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz, year: 'numeric', month: 'long', day: '2-digit',
+      weekday: 'long', hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+    }).format(d)
+  } catch { nowStr = new Date().toUTCString() }
+  const baseSys = 'Current date and time: ' + nowStr + '. Timezone: ' + tz + '. ' +
+    'Always answer date/time questions confidently using this — never say you do not know the date.'
+  // Internet + image search hint: when web is enabled and the user asks for an image
+  // or a picture, the model should search the web, then return image URLs it finds —
+  // ending its reply with `IMAGE_URL: <https://...>` on its own line so the client
+  // can render the image. (Anthropic web_search returns the URLs in its tool result.)
+  const imageHint = payload.web
+    ? ' If the user asks for an image, picture, photo, or to "show me", use web_search to find a relevant image. After your text reply, output the direct image URLs on their own lines prefixed `IMAGE_URL: ` (one per line). Direct image URLs end in .jpg/.jpeg/.png/.webp/.gif.'
+    : ''
+  const finalSystem = baseSys + ' ' + (payload.system || '') + imageHint
   const reqBody: Record<string, unknown> = {
     model: payload.model || DEFAULT_MODEL,
     max_tokens: maxTokens,
-    system: payload.system || undefined,
+    system: finalSystem,
     messages: [{ role: 'user', content: userContent }],
   }
   if (payload.web) reqBody.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }]

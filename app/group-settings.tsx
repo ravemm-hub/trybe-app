@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import { supabase } from '../src/lib/supabase'
-import { getEnrichedContacts, EnrichedContact } from '../src/lib/contacts'
+import { getEnrichedContacts, EnrichedContact, getContactNameMap, loadAndMatchContacts } from '../src/lib/contacts'
 import { getGroupMembers, addMembers, leaveGroup, removeMemberAdmin, getJoinRequests, approveRequest, declineRequest } from '../src/services/members'
 import { NearbyMap, MapUser } from '../src/components/NearbyMap'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, INVITE_MSG, AGENT_IDS } from '../src/constants'
@@ -38,6 +38,7 @@ export default function GroupSettingsScreen() {
   const [editName, setEditName] = useState(groupName)
   const [editDesc, setEditDesc] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
+  const [contactNames, setContactNames] = useState<Record<string, string>>({})
 
   useEffect(() => {
     if (!groupId) { router.back(); return }
@@ -54,6 +55,10 @@ export default function GroupSettingsScreen() {
       if (!admin) setTab('members')
       if (admin) loadRequests()
       getEnrichedContacts().then(setContacts)
+      // Refresh device-contact matches FIRST so nearby/member lists immediately
+      // show people by the name saved on the user's phone, not by their app-handle.
+      try { await loadAndMatchContacts(user.id) } catch {}
+      setContactNames(await getContactNameMap())
       loadNearby(user.id)
       setLoading(false)
     })
@@ -103,9 +108,18 @@ export default function GroupSettingsScreen() {
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
       setCenter({ lat: loc.coords.latitude, lon: loc.coords.longitude })
       const { data } = await supabase.rpc('nearby_users', { p_lat: loc.coords.latitude, p_lon: loc.coords.longitude, radius_m: 50000 })
+      // Pull the freshest contact-name map right before mapping so a contact saved
+      // moments ago (in another screen) shows the contact name here too.
+      const cmap = await getContactNameMap()
       const list: MapUser[] = (data || [])
         .filter((u: any) => u.id !== uid && !AGENT_IDS.includes(u.id) && u.lat && u.lon)
-        .map((u: any) => ({ id: u.id, name: u.identity_mode === 'ghost' ? 'Ghost' : (u.display_name || u.username || 'User'), lat: u.lat, lon: u.lon }))
+        .map((u: any) => ({
+          id: u.id,
+          // Priority: contact-name > display_name > username > 'User'. Ghost mode wins for privacy.
+          name: u.identity_mode === 'ghost' ? 'Ghost' : (cmap[u.id] || u.display_name || u.username || 'User'),
+          lat: u.lat,
+          lon: u.lon,
+        }))
       setNearby(list)
     } catch {}
   }
@@ -241,17 +255,20 @@ export default function GroupSettingsScreen() {
         <FlatList data={requests} keyExtractor={r => r.id}
           contentContainerStyle={requests.length === 0 ? { flex: 1 } : {}}
           ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>📨</Text><Text style={s.emptySub}>No pending join requests</Text></View>}
-          renderItem={({ item: r }) => (
-            <View style={s.row}>
-              <View style={s.avatar}><Text style={s.initials}>{r.profile?.avatar_char || (r.profile?.display_name || '?')[0]}</Text></View>
-              <View style={s.info}>
-                <Text style={s.name}>{r.profile?.display_name || r.profile?.username || 'User'}</Text>
-                <Text style={s.sub}>wants to join</Text>
+          renderItem={({ item: r }) => {
+            const dn = contactNames[r.user_id] || r.profile?.display_name || r.profile?.username || 'User'
+            return (
+              <View style={s.row}>
+                <View style={s.avatar}><Text style={s.initials}>{r.profile?.avatar_char || dn[0] || '?'}</Text></View>
+                <View style={s.info}>
+                  <Text style={s.name}>{dn}</Text>
+                  <Text style={s.sub}>wants to join</Text>
+                </View>
+                <TouchableOpacity style={s.addBtn} disabled={busy} onPress={() => approve(r)}><Text style={s.addBtnText}>Approve</Text></TouchableOpacity>
+                <TouchableOpacity style={s.declineBtn} disabled={busy} onPress={() => decline(r)}><Text style={s.declineText}>✕</Text></TouchableOpacity>
               </View>
-              <TouchableOpacity style={s.addBtn} disabled={busy} onPress={() => approve(r)}><Text style={s.addBtnText}>Approve</Text></TouchableOpacity>
-              <TouchableOpacity style={s.declineBtn} disabled={busy} onPress={() => decline(r)}><Text style={s.declineText}>✕</Text></TouchableOpacity>
-            </View>
-          )} />
+            )
+          }} />
       )}
 
       {tab === 'members' && (
@@ -268,18 +285,23 @@ export default function GroupSettingsScreen() {
               <Text style={s.membersLabel}>MEMBERS</Text>
             </View>
           ) : null}
-          renderItem={({ item: m }) => (
-            <View style={s.row}>
-              <View style={s.avatar}><Text style={s.initials}>{m.profile?.avatar_char || (m.profile?.display_name || '?')[0]}</Text></View>
-              <View style={s.info}>
-                <Text style={s.name}>{m.profile?.display_name || m.profile?.username || 'User'}{m.user_id === myId ? ' (you)' : ''}</Text>
-                <Text style={s.sub}>{m.role === 'admin' ? '👑 Admin' : 'Member'}</Text>
+          renderItem={({ item: m }) => {
+            const dn = (m.user_id === myId)
+              ? (m.profile?.display_name || m.profile?.username || 'You')
+              : (contactNames[m.user_id] || m.profile?.display_name || m.profile?.username || 'User')
+            return (
+              <View style={s.row}>
+                <View style={s.avatar}><Text style={s.initials}>{m.profile?.avatar_char || dn[0] || '?'}</Text></View>
+                <View style={s.info}>
+                  <Text style={s.name}>{dn}{m.user_id === myId ? ' (you)' : ''}</Text>
+                  <Text style={s.sub}>{m.role === 'admin' ? '👑 Admin' : 'Member'}</Text>
+                </View>
+                {isAdmin && m.user_id !== myId && m.role !== 'admin' && (
+                  <TouchableOpacity style={s.declineBtn} onPress={() => removeMember(m)}><Text style={s.declineText}>Remove</Text></TouchableOpacity>
+                )}
               </View>
-              {isAdmin && m.user_id !== myId && m.role !== 'admin' && (
-                <TouchableOpacity style={s.declineBtn} onPress={() => removeMember(m)}><Text style={s.declineText}>Remove</Text></TouchableOpacity>
-              )}
-            </View>
-          )}
+            )
+          }}
           ListFooterComponent={
             <TouchableOpacity style={s.leaveBtn} onPress={leave}><Text style={s.leaveText}>Leave Trybe</Text></TouchableOpacity>
           } />

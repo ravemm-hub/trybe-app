@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import { supabase } from '../../src/lib/supabase'
+import { getContactNameMap } from '../../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
 
 type Tab = 'groups' | 'radar'
@@ -26,6 +27,11 @@ export default function ExploreScreen() {
   const [codeInput, setCodeInput] = useState('')
   const [codeGroupId, setCodeGroupId] = useState<string | null>(null)
   const [codeLoading, setCodeLoading] = useState(false)
+  const [contactNames, setContactNames] = useState<Record<string, string>>({})
+
+  // Keep the contact-name map fresh so Radar shows people by the name saved
+  // in the user's device contacts, not by their app-handle.
+  useEffect(() => { getContactNameMap().then(setContactNames) }, [tab])
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
@@ -200,16 +206,21 @@ export default function ExploreScreen() {
                 contentContainerStyle={{ padding: 12, gap: 10 }}
                 ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>🔍</Text><Text style={s.emptyTitle}>No one nearby yet</Text></View>}
                 ListHeaderComponent={nearby.length > 0 ? <Text style={s.nearbyCount}>{nearby.length} people nearby</Text> : null}
-                renderItem={({ item: u }) => (
-                  <TouchableOpacity style={s.userCard} onPress={() => router.push({ pathname: '/dm', params: { userId: u.id, userName: u.identity_mode === 'ghost' ? '👻 Ghost' : (u.display_name || u.username), myMode, theirMode: u.identity_mode === 'ghost' ? 'ghost' : 'lit', myAvatar: '📡', isAgent: '0' } })}>
-                    <View style={s.userAvatar}><Text style={s.userAvatarText}>{u.identity_mode === 'ghost' ? '👻' : (u.display_name?.[0] || '?')}</Text></View>
-                    <View style={s.userInfo}>
-                      <Text style={s.userName}>{u.identity_mode === 'ghost' ? 'Ghost' : (u.display_name || u.username)}</Text>
-                      <Text style={s.userDist}>{u.distance_m < 1000 ? Math.round(u.distance_m) + 'm' : (u.distance_m / 1000).toFixed(1) + 'km'} away</Text>
-                    </View>
-                    <Text style={{ fontSize: 22 }}>💬</Text>
-                  </TouchableOpacity>
-                )}
+                renderItem={({ item: u }) => {
+                  const dn = u.identity_mode === 'ghost'
+                    ? 'Ghost'
+                    : (contactNames[u.id] || u.display_name || u.username || 'User')
+                  return (
+                    <TouchableOpacity style={s.userCard} onPress={() => router.push({ pathname: '/dm', params: { userId: u.id, userName: u.identity_mode === 'ghost' ? '👻 Ghost' : dn, myMode, theirMode: u.identity_mode === 'ghost' ? 'ghost' : 'lit', myAvatar: '📡', isAgent: '0' } })}>
+                      <View style={s.userAvatar}><Text style={s.userAvatarText}>{u.identity_mode === 'ghost' ? '👻' : (dn[0] || '?')}</Text></View>
+                      <View style={s.userInfo}>
+                        <Text style={s.userName}>{dn}</Text>
+                        <Text style={s.userDist}>{u.distance_m < 1000 ? Math.round(u.distance_m) + 'm' : (u.distance_m / 1000).toFixed(1) + 'km'} away</Text>
+                      </View>
+                      <Text style={{ fontSize: 22 }}>💬</Text>
+                    </TouchableOpacity>
+                  )
+                }}
               />
           }
         </View>

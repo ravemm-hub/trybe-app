@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, Alert, Image, RefreshControl, ActivityIndicator, Modal, KeyboardAvoidingView, Platform } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useRouter } from 'expo-router'
+import { useRouter, useFocusEffect } from 'expo-router'
 import { pickImageAsset, uploadMedia } from '../../src/lib/upload'
 import { supabase } from '../../src/lib/supabase'
+import { uuidv4 } from '../../src/lib/uuid'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER } from '../../src/constants'
 
 const BANNED = ['spam', 'hate', 'violence', 'xxx', 'porn']
@@ -31,19 +32,35 @@ export default function FeedScreen() {
     loadPosts()
   }, [])
 
+  // Auto-refresh when returning to the Feed tab so new posts from other users show up.
+  useFocusEffect(useCallback(() => { loadPosts() }, []))
+
   const loadPosts = async () => {
-    const { data } = await supabase.from('posts').select('*, profile:profiles(id,display_name,username,avatar_char)')
-      .order('created_at', { ascending: false }).limit(50)
-    if (data) {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        const { data: reactions } = await supabase.from('post_reactions').select('post_id, reaction').eq('user_id', user.id)
-        const reactMap: Record<string, string> = {}
-        for (const r of reactions || []) reactMap[r.post_id] = r.reaction
-        setPosts(data.map(p => ({ ...p, my_reaction: reactMap[p.id] || null })))
-      } else setPosts(data)
+    try {
+      const { data, error } = await supabase.from('posts')
+        .select('*, profile:profiles(id,display_name,username,avatar_char)')
+        .order('created_at', { ascending: false }).limit(50)
+      if (error) {
+        // Network/RLS error — show feed empty but don't crash.
+        console.warn('loadPosts error:', error.message)
+        setPosts([])
+      } else if (data) {
+        const { data: { user } } = await supabase.auth.getUser()
+        let merged = data
+        if (user) {
+          const { data: reactions } = await supabase.from('post_reactions')
+            .select('post_id, reaction').eq('user_id', user.id)
+          const reactMap: Record<string, string> = {}
+          for (const r of reactions || []) reactMap[r.post_id] = r.reaction
+          merged = data.map(p => ({ ...p, my_reaction: reactMap[p.id] || null })) as any
+        }
+        setPosts(merged)
+      }
+    } catch (e: any) {
+      console.warn('loadPosts threw:', e?.message)
+    } finally {
+      setLoading(false); setRefreshing(false)
     }
-    setLoading(false); setRefreshing(false)
   }
 
   const pickMedia = async () => {
@@ -61,11 +78,33 @@ export default function FeedScreen() {
     if (BANNED.some(w => draft.toLowerCase().includes(w))) { Alert.alert('Content Policy', 'Inappropriate content detected.'); return }
     if (!userId) { Alert.alert('Sign in required', 'Your session expired — please sign in again.'); return }
     setPosting(true)
-    const { error } = await supabase.from('posts').insert({ user_id: userId, content: draft.trim(), media_url: mediaUrl, is_anonymous: isAnon, likes: 0, dislikes: 0 })
-    setPosting(false)
-    if (error) { Alert.alert('Could not post', error.message); return }
+    const tempId = uuidv4()
+    const contentTrim = draft.trim()
+    const mu = mediaUrl
+    const anon = isAnon
+    // Get my profile for the optimistic header (so name+avatar show immediately).
+    const { data: myProfile } = await supabase.from('profiles').select('id,display_name,username,avatar_char').eq('id', userId).single()
+    const optimistic = {
+      id: tempId, user_id: userId, content: contentTrim, media_url: mu, is_anonymous: anon,
+      likes: 0, dislikes: 0, comment_count: 0, group_id: null,
+      created_at: new Date().toISOString(),
+      profile: myProfile, my_reaction: null, __optimistic: true,
+    } as any
+    // Show the post AT THE TOP of the list instantly so the user sees their action.
+    setPosts(prev => [optimistic, ...prev])
     setDraft(''); setMediaUrl(null); setIsAnon(false)
-    loadPosts()
+    const { data: inserted, error } = await supabase.from('posts')
+      .insert({ user_id: userId, content: contentTrim, media_url: mu, is_anonymous: anon, likes: 0, dislikes: 0 })
+      .select('*, profile:profiles(id,display_name,username,avatar_char)').single()
+    setPosting(false)
+    if (error || !inserted) {
+      // Roll back the optimistic post and surface the reason.
+      setPosts(prev => prev.filter(p => p.id !== tempId))
+      Alert.alert('Could not post', error?.message || 'Unknown error')
+      return
+    }
+    // Swap optimistic → real row (keeps it at the top, no jump).
+    setPosts(prev => prev.map(p => p.id === tempId ? { ...(inserted as any), my_reaction: null } : p))
   }
 
   const react = async (postId: string, reaction: 'like' | 'dislike', currentReaction: string | null) => {
