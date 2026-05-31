@@ -201,7 +201,7 @@ export default function ExploreScreen() {
                 ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>🔍</Text><Text style={s.emptyTitle}>No one nearby yet</Text></View>}
                 ListHeaderComponent={nearby.length > 0 ? <Text style={s.nearbyCount}>{nearby.length} people nearby</Text> : null}
                 renderItem={({ item: u }) => (
-                  <TouchableOpacity style={s.userCard} onPress={() => router.push({ pathname: '/dm', params: { userId: u.id, userName: u.identity_mode === 'ghost' ? '👻 Ghost' : (u.display_name || u.username), myMode, myAvatar: '📡', isAgent: '0' } })}>
+                  <TouchableOpacity style={s.userCard} onPress={() => router.push({ pathname: '/dm', params: { userId: u.id, userName: u.identity_mode === 'ghost' ? '👻 Ghost' : (u.display_name || u.username), myMode, theirMode: u.identity_mode === 'ghost' ? 'ghost' : 'lit', myAvatar: '📡', isAgent: '0' } })}>
                     <View style={s.userAvatar}><Text style={s.userAvatarText}>{u.identity_mode === 'ghost' ? '👻' : (u.display_name?.[0] || '?')}</Text></View>
                     <View style={s.userInfo}>
                       <Text style={s.userName}>{u.identity_mode === 'ghost' ? 'Ghost' : (u.display_name || u.username)}</Text>

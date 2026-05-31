@@ -1,5 +1,6 @@
 ﻿import { supabase } from '../lib/supabase'
 import { EDGE_URL, EDGE_AUTH } from '../constants'
+import { emit, UNREAD_CHANGED } from '../lib/events'
 
 export async function sendMessage(params: { id?: string; groupId: string; userId: string; content: string; senderMode?: string; replyToId?: string | null; replyPreview?: string | null; isForwarded?: boolean; mediaUrl?: string | null; kind?: string }) {
   const row: any = {
@@ -27,7 +28,10 @@ export async function deleteMessage(messageId: string, userId: string) {
 }
 
 export async function markGroupRead(groupId: string, userId: string) {
-  return supabase.from('group_members').update({ last_read_at: new Date().toISOString() }).eq('group_id', groupId).eq('user_id', userId)
+  const res = await supabase.from('group_members').update({ last_read_at: new Date().toISOString() }).eq('group_id', groupId).eq('user_id', userId)
+  // Nudge the bottom-tab badge immediately instead of waiting on realtime.
+  emit(UNREAD_CHANGED)
+  return res
 }
 
 export async function getGroupUnread(groupId: string, userId: string, lastReadAt: string): Promise<number> {

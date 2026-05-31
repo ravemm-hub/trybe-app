@@ -2,9 +2,8 @@ import { useState, useEffect } from 'react'
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, Alert, RefreshControl, ActivityIndicator, Modal, ScrollView, Image, KeyboardAvoidingView } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
-import * as ImagePicker from 'expo-image-picker'
 import { supabase } from '../../src/lib/supabase'
-import { uploadMedia } from '../../src/lib/upload'
+import { uploadMedia, pickImageAsset } from '../../src/lib/upload'
 import { askClaude } from '../../src/lib/claude'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
 
@@ -42,7 +41,8 @@ export default function MarketplaceScreen() {
   }
 
   const createListing = async () => {
-    if (!title.trim() || !userId) return
+    if (!title.trim()) return
+    if (!userId) { Alert.alert('Sign in required', 'Your session expired — please sign in again.'); return }
     setPosting(true)
     const { error } = await supabase.from('listings').insert({
       user_id: userId, title: title.trim(), description: description.trim() || null,
@@ -56,12 +56,10 @@ export default function MarketplaceScreen() {
 
   const pickMedia = async () => {
     if (!userId) return
-    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync()
-    if (!granted) { Alert.alert('Permission needed', 'Allow photo access.'); return }
-    const res = await ImagePicker.launchImageLibraryAsync({ quality: 0.7, mediaTypes: ImagePicker.MediaTypeOptions.Images })
-    if (res.canceled || !res.assets?.[0]) return
+    const asset = await pickImageAsset()
+    if (!asset) return
     setUploadingMedia(true)
-    const url = await uploadMedia(res.assets[0].uri, 'image', res.assets[0].uri.split('.').pop())
+    const url = await uploadMedia(asset.uri, 'image', asset.ext)
     setUploadingMedia(false)
     if (url) setMediaUrl(url); else Alert.alert('Upload failed', 'Could not upload the image.')
   }
@@ -136,7 +134,7 @@ export default function MarketplaceScreen() {
             <View style={s.cardFooter}>
               <View style={s.catTag}><Text style={s.catTagText}>{l.category}</Text></View>
               {l.user_id !== userId && (
-                <TouchableOpacity style={s.dmBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: l.user_id, userName: l.profile?.display_name || 'Seller', myMode: 'lit', myAvatar: '🛍️', isAgent: '0' } })}>
+                <TouchableOpacity style={s.dmBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: l.user_id, userName: l.profile?.display_name || 'Seller', myMode: 'lit', theirMode: 'lit', myAvatar: '🛍️', isAgent: '0' } })}>
                   <Text style={s.dmBtnText}>💬 Message seller</Text>
                 </TouchableOpacity>
               )}
@@ -205,7 +203,7 @@ export default function MarketplaceScreen() {
               <Text style={[s.cardPrice, { fontSize: 24, marginBottom: 12 }]}>{selected.price > 0 ? '₪' + selected.price : 'Free'}</Text>
               <View style={s.catTag}><Text style={s.catTagText}>{selected.category}</Text></View>
               {selected.user_id !== userId && (
-                <TouchableOpacity style={[s.submitBtn, { marginTop: 16 }]} onPress={() => { setSelected(null); router.push({ pathname: '/dm', params: { userId: selected.user_id, userName: selected.profile?.display_name || 'Seller', myMode: 'lit', myAvatar: '🛍️', isAgent: '0' } }) }}>
+                <TouchableOpacity style={[s.submitBtn, { marginTop: 16 }]} onPress={() => { setSelected(null); router.push({ pathname: '/dm', params: { userId: selected.user_id, userName: selected.profile?.display_name || 'Seller', myMode: 'lit', theirMode: 'lit', myAvatar: '🛍️', isAgent: '0' } }) }}>
                   <Text style={s.submitBtnText}>💬 Message seller</Text>
                 </TouchableOpacity>
               )}

@@ -127,14 +127,26 @@ export default function ChatsScreen() {
     if (!data) return
     const seen = new Set<string>()
     const items: any[] = []
+    // Split into separate rows per (otherId, myMode, theirMode). Each identity combination is its own thread.
+    const seenPair = new Set<string>()
+    const profileCache: Record<string, any> = {}
     for (const msg of data) {
       const otherId = msg.sender_id === uid ? msg.receiver_id : msg.sender_id
-      if (seen.has(otherId) || AGENT_IDS.includes(otherId)) continue
-      seen.add(otherId)
-      const { data: p } = await supabase.from('profiles').select('display_name, username, avatar_char').eq('id', otherId).single()
+      if (AGENT_IDS.includes(otherId)) continue
+      const myM = msg.sender_id === uid ? msg.sender_mode : msg.receiver_mode
+      const theirM = msg.sender_id === uid ? msg.receiver_mode : msg.sender_mode
+      const pairKey = otherId + ':' + myM + ':' + theirM
+      if (seenPair.has(pairKey)) continue
+      seenPair.add(pairKey); seen.add(otherId)
+      if (!profileCache[otherId]) {
+        const { data: p } = await supabase.from('profiles').select('display_name, username, avatar_char, ghost_name').eq('id', otherId).single()
+        profileCache[otherId] = p
+      }
       const { count: unread } = await supabase.from('dm_messages')
-        .select('id', { count: 'exact', head: true }).eq('sender_id', otherId).eq('receiver_id', uid).is('read_at', null)
-      items.push({ otherId, profile: p, lastMsg: msg, unread: unread || 0, myMode: msg.sender_id === uid ? msg.sender_mode : msg.receiver_mode })
+        .select('id', { count: 'exact', head: true })
+        .eq('sender_id', otherId).eq('receiver_id', uid)
+        .eq('sender_mode', theirM).eq('receiver_mode', myM).is('read_at', null)
+      items.push({ pairKey, otherId, profile: profileCache[otherId], lastMsg: msg, unread: unread || 0, myMode: myM, theirMode: theirM })
     }
     const names: Record<string, string> = {}
     for (const d of items) { const cn = await getContactName(d.otherId); if (cn) names[d.otherId] = cn }
@@ -249,7 +261,7 @@ export default function ChatsScreen() {
           renderItem={({ item: p }) => {
             const dn = nameMap[p.id] || p.display_name || p.username || 'User'
             return (
-              <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: p.id, userName: dn, myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
+              <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: p.id, userName: dn, myMode: 'lit', theirMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
                 <View style={s.dmAvatar}><Text style={s.dmAvatarText}>{p.avatar_char || dn[0] || '?'}</Text></View>
                 <View style={s.rowInfo}><Text style={s.rowName} numberOfLines={1}>{dn}</Text><Text style={s.rowSub}>@{p.username || 'user'}</Text></View>
                 <Text style={s.msgBtnText}>💬 Message</Text>
@@ -282,7 +294,7 @@ export default function ChatsScreen() {
       )}
 
       {!searching && tab === 'dms' && (
-        <FlatList data={dms} keyExtractor={d => d.otherId}
+        <FlatList data={dms} keyExtractor={d => d.pairKey || d.otherId}
           contentContainerStyle={(dms.length === 0 && inviteContacts.length === 0) ? { flex: 1 } : {}}
           ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>💬</Text><Text style={s.emptyTitle}>No chats yet</Text><Text style={s.emptySub}>Find people on Explore</Text></View>}
           ListFooterComponent={inviteContacts.length > 0 ? (
@@ -303,19 +315,20 @@ export default function ChatsScreen() {
             </View>
           ) : null}
           renderItem={({ item: d }) => {
-            const displayName = contactNames[d.otherId] || d.profile?.display_name || d.profile?.username || 'User'
+            const theirGhost = d.theirMode === 'ghost'
+            const displayName = theirGhost
+              ? '👻 ' + (d.profile?.ghost_name || 'Anonymous')
+              : (contactNames[d.otherId] || d.profile?.display_name || d.profile?.username || 'User')
+            const modeBadge = (d.myMode === 'ghost' ? '👻' : '🔥') + '→' + (theirGhost ? '👻' : '🔥')
             return (
-              <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: d.otherId, userName: displayName, myMode: d.myMode || 'lit', myAvatar: '💬', isAgent: '0' } })}>
-                <View style={s.dmAvatar}><Text style={s.dmAvatarText}>{d.profile?.avatar_char || displayName[0] || '?'}</Text></View>
+              <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: d.otherId, userName: displayName, myMode: d.myMode || 'lit', theirMode: d.theirMode || 'lit', myAvatar: '💬', isAgent: '0' } })}>
+                <View style={s.dmAvatar}><Text style={s.dmAvatarText}>{theirGhost ? '👻' : (d.profile?.avatar_char || displayName[0] || '?')}</Text></View>
                 <View style={s.rowInfo}>
                   <View style={s.rowTop}>
                     <Text style={s.rowName} numberOfLines={1}>{displayName}</Text>
                     {d.lastMsg && <Text style={s.rowTime}>{fmt(d.lastMsg.created_at)}</Text>}
                   </View>
-                  {contactNames[d.otherId] && contactNames[d.otherId] !== d.profile?.display_name && (
-                    <Text style={s.rowAppName}>App: {d.profile?.display_name}</Text>
-                  )}
-                  <Text style={s.rowSub} numberOfLines={1}>{preview(d.lastMsg)}</Text>
+                  <Text style={s.rowSub} numberOfLines={1}>{modeBadge} · {preview(d.lastMsg)}</Text>
                 </View>
                 {d.unread > 0 && <View style={s.unread}><Text style={s.unreadText}>{d.unread}</Text></View>}
               </Pressable>
@@ -325,12 +338,21 @@ export default function ChatsScreen() {
 
       {!searching && tab === 'spaces' && (
         <FlatList data={spaces} keyExtractor={sp => sp.id}
-          contentContainerStyle={spaces.length === 0 ? { flex: 1 } : {}}
+          contentContainerStyle={spaces.length === 0 ? {} : {}}
+          ListHeaderComponent={
+            <Pressable style={[s.row, { backgroundColor: '#F5F4FF' }]} onPress={() => router.push('/(tabs)/agent')}>
+              <View style={[s.spaceAvatar, { backgroundColor: PRIMARY }]}><Text style={[s.spaceAvatarText, { color: '#fff' }]}>✦</Text></View>
+              <View style={s.rowInfo}>
+                <Text style={s.rowName} numberOfLines={1}>Teeby ✦</Text>
+                <Text style={s.rowSub} numberOfLines={1}>Ask anything · search the web · do things in the app</Text>
+              </View>
+            </Pressable>
+          }
           ListEmptyComponent={
-            <View style={s.empty}>
+            <View style={[s.empty, { paddingTop: 24 }]}>
               <Text style={s.emptyEmoji}>✦</Text>
-              <Text style={s.emptyTitle}>No Spaces yet</Text>
-              <Text style={s.emptySub}>Private topic-based chats with Teeby</Text>
+              <Text style={s.emptyTitle}>No topic Spaces yet</Text>
+              <Text style={s.emptySub}>Create a Space to chat with Teeby about one topic</Text>
               <TouchableOpacity style={s.emptyBtn} onPress={() => { setSpaceTitle(''); setSpaceEmoji('✦'); setShowSpaceModal(true) }}>
                 <Text style={s.emptyBtnText}>Create a Space</Text>
               </TouchableOpacity>

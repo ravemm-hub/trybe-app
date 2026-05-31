@@ -2,6 +2,7 @@
 import { supabase } from '../lib/supabase'
 import { getGroupUnread } from '../services/messages'
 import { getDMUnread } from '../services/dms'
+import { on, UNREAD_CHANGED } from '../lib/events'
 
 export function useUnread() {
   const [groupUnread, setGroupUnread] = useState(0)
@@ -25,7 +26,7 @@ export function useUnread() {
   // Coalesce bursts of realtime events into a single refresh.
   const scheduleRefresh = useCallback(() => {
     if (timer.current) clearTimeout(timer.current)
-    timer.current = setTimeout(() => { refresh() }, 800)
+    timer.current = setTimeout(() => { refresh() }, 300)
   }, [refresh])
 
   useEffect(() => {
@@ -37,7 +38,10 @@ export function useUnread() {
       // last_read_at changes when you open a chat -> recompute so the badge drops.
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'group_members' }, scheduleRefresh)
       .subscribe()
-    return () => { if (timer.current) clearTimeout(timer.current); supabase.removeChannel(channel) }
+    // Local event bus — fires the moment markGroupRead / markDMRead runs
+    // (no realtime round-trip, no debounce). Keeps the badge instant.
+    const off = on(UNREAD_CHANGED, () => { refresh() })
+    return () => { if (timer.current) clearTimeout(timer.current); supabase.removeChannel(channel); off() }
   }, [refresh, scheduleRefresh])
 
   return { groupUnread, dmUnread, total: groupUnread + dmUnread, refresh }

@@ -37,16 +37,18 @@ export default function RootLayout() {
 
   useEffect(() => {
     setupNotificationTap(router)
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    ;(async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { setSession(null); return }
+      // Verify the session still points to a real user — otherwise sign out (stale session).
+      const { data: { user }, error } = await supabase.auth.getUser()
+      if (error || !user) { try { await supabase.auth.signOut() } catch {} ; setSession(null); return }
       setSession(session)
-      if (session?.user) {
-        const uid = session.user.id
-        registerPushToken(uid)
-        loadContactNamesFromDB(uid)
-        loadAndMatchContacts(uid)
-        checkTeebyProactive(uid)
-      }
-    })
+      registerPushToken(user.id)
+      loadContactNamesFromDB(user.id)
+      loadAndMatchContacts(user.id)
+      checkTeebyProactive(user.id)
+    })()
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => setSession(s))
     return () => subscription.unsubscribe()
   }, [])

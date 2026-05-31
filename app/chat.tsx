@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Alert, Modal, Pressable, ActivityIndicator } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import { supabase } from '../src/lib/supabase'
 import { sendMessage, editMessage, deleteMessage, markGroupRead } from '../src/services/messages'
@@ -54,6 +54,8 @@ export default function ChatScreen() {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'group_id=eq.' + id }, async ({ new: msg }) => {
         const { data: full } = await supabase.from('messages').select('*, profile:profiles(id,display_name,username,avatar_char,ghost_name)').eq('id', msg.id).single()
         if (full) setMessages(prev => { if (prev.find(m => m.id === full.id)) return prev; return [...prev, full as Message] })
+        // New message arrived while the chat is open → mark read so badge stays 0.
+        if (userId && msg.user_id !== userId) markGroupRead(id, userId)
         setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
       })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'messages', filter: 'group_id=eq.' + id }, ({ new: msg }) => {
@@ -62,6 +64,12 @@ export default function ChatScreen() {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [id])
+
+  // Re-pull saved contact names + re-mark read whenever this screen regains focus.
+  useFocusEffect(useCallback(() => {
+    getContactNameMap().then(setContactNames)
+    if (userId) markGroupRead(id, userId)
+  }, [id, userId]))
 
   const loadMessages = useCallback(async () => {
     const { data } = await supabase.from('messages')

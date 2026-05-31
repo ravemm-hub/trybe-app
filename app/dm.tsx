@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Alert, Modal, ActivityIndicator } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { useLocalSearchParams, useRouter } from 'expo-router'
+import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import { supabase } from '../src/lib/supabase'
 import { sendDM, markDMRead, markDMDelivered, editDM, deleteDM, getReceiptStatus } from '../src/services/dms'
@@ -37,7 +37,10 @@ export default function DMScreen() {
   const [showMenu, setShowMenu] = useState(false)
   const [translations, setTranslations] = useState<Record<string, string>>({})
   const [myMode, setMyMode] = useState<'lit' | 'ghost'>(params?.myMode === 'ghost' ? 'ghost' : 'lit')
+  const [theirMode, setTheirMode] = useState<'lit' | 'ghost'>(params?.theirMode === 'ghost' ? 'ghost' : 'lit')
   const [otherGhostName, setOtherGhostName] = useState('')
+  const modesRef = useRef({ myMode, theirMode })
+  useEffect(() => { modesRef.current = { myMode, theirMode } }, [myMode, theirMode])
 
   const talkingToAgent = isAgentParam || (otherUserId && AGENT_IDS.includes(otherUserId))
   const agentInfo = AGENTS.find(a => a.id === otherUserId)
@@ -57,9 +60,12 @@ export default function DMScreen() {
 
       channel = supabase.channel('dm:' + uid + ':' + otherUserId)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dm_messages' }, async ({ new: msg }) => {
-          const isOurs = (msg.sender_id === uid && msg.receiver_id === otherUserId) || (msg.sender_id === otherUserId && msg.receiver_id === uid)
-          if (!isOurs) return
-          if (msg.sender_id === otherUserId) markDMRead(otherUserId, uid)
+          const { myMode: mm, theirMode: tm } = modesRef.current
+          // Each (myMode, theirMode) pair is its own thread — only show messages that match THIS pair.
+          const isOursMine = msg.sender_id === uid && msg.receiver_id === otherUserId && msg.sender_mode === mm && msg.receiver_mode === tm
+          const isOursTheirs = msg.sender_id === otherUserId && msg.receiver_id === uid && msg.sender_mode === tm && msg.receiver_mode === mm
+          if (!isOursMine && !isOursTheirs) return
+          if (isOursTheirs) markDMRead(otherUserId, uid)
           setMessages(prev => { if (prev.find(m => m.id === msg.id)) return prev; return [...prev, msg as DmMessage] })
           setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 100)
         })
@@ -73,8 +79,12 @@ export default function DMScreen() {
 
   const loadMessages = async (uid: string) => {
     try {
+      const mm = myMode, tm = theirMode
       const { data, error } = await supabase.from('dm_messages').select('*')
-        .or('and(sender_id.eq.' + uid + ',receiver_id.eq.' + otherUserId + '),and(sender_id.eq.' + otherUserId + ',receiver_id.eq.' + uid + ')')
+        .or(
+          'and(sender_id.eq.' + uid + ',receiver_id.eq.' + otherUserId + ',sender_mode.eq.' + mm + ',receiver_mode.eq.' + tm + '),' +
+          'and(sender_id.eq.' + otherUserId + ',receiver_id.eq.' + uid + ',sender_mode.eq.' + tm + ',receiver_mode.eq.' + mm + ')'
+        )
         .eq('deleted_for_all', false).order('created_at', { ascending: true }).limit(100)
       if (error) { console.error('DM load error:', error); return }
       if (data) {
@@ -84,6 +94,18 @@ export default function DMScreen() {
       }
     } catch (e) { console.error('DM loadMessages error:', e) }
   }
+
+  // Reload whenever the active conversation pair changes (toggle 🔥/👻).
+  useEffect(() => { if (myId) loadMessages(myId) }, [myMode, theirMode, myId])
+
+  // Re-resolve the contact name + re-mark read every time we focus this DM.
+  // Without this, returning from Contacts (where the user just saved a name)
+  // would still show the registered display_name until the screen remounts.
+  useFocusEffect(useCallback(() => {
+    if (!otherUserId) return
+    getContactName(otherUserId).then(cn => { if (cn) setDisplayName(cn) })
+    if (myId && !talkingToAgent) markDMRead(otherUserId, myId)
+  }, [otherUserId, myId, talkingToAgent]))
 
   const sendMessage = useCallback(async () => {
     if (!draft.trim() || !myId || !otherUserId) return
@@ -98,14 +120,14 @@ export default function DMScreen() {
     const mid = uuidv4()
     const curReply = replyTo
     const optimistic = {
-      id: mid, sender_id: myId, receiver_id: otherUserId, content, sender_mode: myMode, receiver_mode: 'lit',
+      id: mid, sender_id: myId, receiver_id: otherUserId, content, sender_mode: myMode, receiver_mode: theirMode,
       read_at: null, delivered_at: null, edited_at: null, deleted_for_all: false, is_forwarded: false,
       reply_to_id: curReply?.id || null, reply_preview: curReply?.content?.slice(0, 60) || null, created_at: new Date().toISOString(),
     } as unknown as DmMessage
     setMessages(prev => [...prev, optimistic])
     setReplyTo(null)
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
-    const { error: sendErr } = await sendDM({ id: mid, senderId: myId, receiverId: otherUserId, content, senderMode: myMode, replyToId: curReply?.id || null, replyPreview: curReply?.content?.slice(0, 60) || null })
+    const { error: sendErr } = await sendDM({ id: mid, senderId: myId, receiverId: otherUserId, content, senderMode: myMode, receiverMode: theirMode, replyToId: curReply?.id || null, replyPreview: curReply?.content?.slice(0, 60) || null })
     if (sendErr) setMessages(prev => prev.filter(m => m.id !== mid))
     if (talkingToAgent && agentInfo) {
       setAgentTyping(true)
@@ -120,19 +142,19 @@ export default function DMScreen() {
       } catch {}
       finally { setAgentTyping(false); clearTimeout(timeout) }
     }
-  }, [draft, myId, otherUserId, replyTo, translateTo, editingMsg, talkingToAgent, agentInfo, myMode])
+  }, [draft, myId, otherUserId, replyTo, translateTo, editingMsg, talkingToAgent, agentInfo, myMode, theirMode])
 
   const sendMediaDM = async (url: string, kind: MediaKind) => {
     if (!myId || !otherUserId) return
     const mid = uuidv4()
     const optimistic = {
-      id: mid, sender_id: myId, receiver_id: otherUserId, content: '', sender_mode: initMode || 'lit', receiver_mode: 'lit',
+      id: mid, sender_id: myId, receiver_id: otherUserId, content: '', sender_mode: myMode, receiver_mode: theirMode,
       read_at: null, delivered_at: null, edited_at: null, deleted_for_all: false, is_forwarded: false,
       reply_to_id: null, reply_preview: null, media_url: url, media_type: kind, created_at: new Date().toISOString(),
     } as unknown as DmMessage
     setMessages(prev => [...prev, optimistic])
     setTimeout(() => listRef.current?.scrollToEnd({ animated: true }), 50)
-    const { error: e } = await sendDM({ id: mid, senderId: myId, receiverId: otherUserId, content: '', senderMode: initMode || 'lit', mediaUrl: url, mediaType: kind })
+    const { error: e } = await sendDM({ id: mid, senderId: myId, receiverId: otherUserId, content: '', senderMode: myMode, receiverMode: theirMode, mediaUrl: url, mediaType: kind })
     if (e) setMessages(prev => prev.filter(m => m.id !== mid))
   }
   const att = useChatAttachments(sendMediaDM)
@@ -163,8 +185,7 @@ export default function DMScreen() {
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}><Text style={s.backText}>‹</Text></TouchableOpacity>
         {(() => {
-          const lastTheir = [...messages].reverse().find(m => m.sender_id === otherUserId)
-          const theirGhost = !talkingToAgent && lastTheir?.sender_mode === 'ghost'
+          const theirGhost = !talkingToAgent && theirMode === 'ghost'
           const headerName = talkingToAgent ? displayName : (theirGhost ? '👻 ' + (otherGhostName || 'Anonymous') : displayName)
           return (
             <>

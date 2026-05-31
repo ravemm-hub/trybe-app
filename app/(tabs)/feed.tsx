@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, Alert, Image, RefreshControl, ActivityIndicator, Modal, KeyboardAvoidingView, Platform } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
-import * as ImagePicker from 'expo-image-picker'
+import { pickImageAsset, uploadMedia } from '../../src/lib/upload'
 import { supabase } from '../../src/lib/supabase'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER } from '../../src/constants'
 
@@ -48,29 +48,18 @@ export default function FeedScreen() {
 
   const pickMedia = async () => {
     if (!userId) return
-    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync()
-    if (!granted) { Alert.alert('Permission needed', 'Allow photo access to attach an image.'); return }
-    const result = await ImagePicker.launchImageLibraryAsync({ quality: 0.7, mediaTypes: ImagePicker.MediaTypeOptions.Images })
-    if (result.canceled || !result.assets?.[0]) return
+    const asset = await pickImageAsset()
+    if (!asset) return
     setUploadingMedia(true)
-    try {
-      const asset = result.assets[0]
-      const ext = (asset.uri.split('.').pop() || 'jpg').toLowerCase()
-      const filename = 'post_' + userId + '_' + Date.now() + '.' + ext
-      const formData = new FormData()
-      formData.append('file', { uri: asset.uri, type: 'image/' + ext, name: filename } as any)
-      const { error } = await supabase.storage.from('chat-media').upload('posts/' + filename, formData, { upsert: true })
-      if (error) throw error
-      const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl('posts/' + filename)
-      setMediaUrl(publicUrl)
-    } catch (e: any) { Alert.alert('Upload failed', e?.message || 'Could not upload image') }
-    finally { setUploadingMedia(false) }
+    const url = await uploadMedia(asset.uri, 'image', asset.ext)
+    setUploadingMedia(false)
+    if (url) setMediaUrl(url); else Alert.alert('Upload failed', 'Could not upload the image.')
   }
 
   const createPost = async () => {
     if (!draft.trim() && !mediaUrl) return
     if (BANNED.some(w => draft.toLowerCase().includes(w))) { Alert.alert('Content Policy', 'Inappropriate content detected.'); return }
-    if (!userId) return
+    if (!userId) { Alert.alert('Sign in required', 'Your session expired — please sign in again.'); return }
     setPosting(true)
     const { error } = await supabase.from('posts').insert({ user_id: userId, content: draft.trim(), media_url: mediaUrl, is_anonymous: isAnon, likes: 0, dislikes: 0 })
     setPosting(false)
@@ -176,7 +165,7 @@ export default function FeedScreen() {
                   <Text style={s.postTime}>{fmt(p.created_at)}</Text>
                 </View>
                 {!isOwn && !p.is_anonymous && (
-                  <TouchableOpacity style={s.dmBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: p.user_id, userName: p.profile?.display_name || 'User', myMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
+                  <TouchableOpacity style={s.dmBtn} onPress={() => router.push({ pathname: '/dm', params: { userId: p.user_id, userName: p.profile?.display_name || 'User', myMode: 'lit', theirMode: 'lit', myAvatar: '💬', isAgent: '0' } })}>
                     <Text style={s.dmBtnText}>💬 DM</Text>
                   </TouchableOpacity>
                 )}

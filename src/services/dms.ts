@@ -1,4 +1,5 @@
 ﻿import { supabase } from '../lib/supabase'
+import { emit, UNREAD_CHANGED } from '../lib/events'
 
 export async function sendDM(params: { id?: string; senderId: string; receiverId: string; content: string; senderMode?: string; receiverMode?: string; replyToId?: string | null; replyPreview?: string | null; mediaUrl?: string | null; mediaType?: string }) {
   const row: any = {
@@ -12,13 +13,17 @@ export async function sendDM(params: { id?: string; senderId: string; receiverId
 }
 
 export async function markDMRead(senderId: string, receiverId: string) {
-  return supabase.from('dm_messages').update({ read_at: new Date().toISOString() })
+  const res = await supabase.from('dm_messages').update({ read_at: new Date().toISOString() })
     .eq('sender_id', senderId).eq('receiver_id', receiverId).is('read_at', null)
+  emit(UNREAD_CHANGED)
+  return res
 }
 
 export async function markDMDelivered(receiverId: string) {
-  return supabase.from('dm_messages').update({ delivered_at: new Date().toISOString() })
+  const res = await supabase.from('dm_messages').update({ delivered_at: new Date().toISOString() })
     .eq('receiver_id', receiverId).is('delivered_at', null)
+  emit(UNREAD_CHANGED)
+  return res
 }
 
 export async function editDM(messageId: string, userId: string, content: string) {

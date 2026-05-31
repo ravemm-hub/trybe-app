@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, StatusBar, Alert, ActivityIndicator, Image } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import * as ImagePicker from 'expo-image-picker'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../src/lib/supabase'
+import { pickImageAsset, uploadMedia } from '../../src/lib/upload'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
 
 const AVATARS = ['🦊','🐺','🦁','🐯','🐻','🦝','🐼','🦄','🐲','👾','🤖','👽','🎭','🔮','⚡','🌊','🔥','🌙','🎸','🎵']
@@ -50,23 +50,16 @@ export default function ProfileScreen() {
   }
 
   const pickAvatar = async () => {
-    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync()
-    if (!granted) return
-    const result = await ImagePicker.launchImageLibraryAsync({ quality: 0.7 })
-    if (result.canceled || !result.assets?.[0] || !userId) return
+    if (!userId) return
+    const asset = await pickImageAsset()
+    if (!asset) return
     setUploading(true)
-    try {
-      const asset = result.assets[0]
-      const ext = asset.uri.split('.').pop() || 'jpg'
-      const filename = 'avatar_' + userId + '.' + ext
-      const formData = new FormData()
-      formData.append('file', { uri: asset.uri, type: 'image/' + ext, name: filename } as any)
-      await supabase.storage.from('chat-media').upload('avatars/' + filename, formData, { upsert: true })
-      const { data: { publicUrl } } = supabase.storage.from('chat-media').getPublicUrl('avatars/' + filename)
-      setAvatarUrl(publicUrl)
-      await supabase.from('profiles').update({ avatar_url: publicUrl }).eq('id', userId)
-    } catch (e: any) { Alert.alert('Error', e.message) }
-    finally { setUploading(false) }
+    const url = await uploadMedia(asset.uri, 'image', asset.ext)
+    if (url) {
+      setAvatarUrl(url)
+      try { await supabase.from('profiles').update({ avatar_url: url }).eq('id', userId) } catch {}
+    } else { Alert.alert('Upload failed', 'Could not upload the photo.') }
+    setUploading(false)
   }
 
   const signOut = () => {

@@ -47,7 +47,7 @@ export default function TabsLayout() {
       <Tabs.Screen name='feed' options={{ title: 'Feed', tabBarIcon: ({ focused }) => <TabIcon emoji='🌐' focused={focused} /> }} />
       <Tabs.Screen name='marketplace' options={{ title: 'Market', tabBarIcon: ({ focused }) => <TabIcon emoji='🛍️' focused={focused} /> }} />
       <Tabs.Screen name='explore' options={{ title: 'Explore', tabBarIcon: ({ focused }) => <TabIcon emoji='📡' focused={focused} /> }} />
-      <Tabs.Screen name='agent' options={{ title: 'Teeby', tabBarIcon: ({ focused }) => <TabIcon emoji='✦' focused={focused} /> }} />
+      <Tabs.Screen name='agent' options={{ href: null }} />
       <Tabs.Screen name='profile' options={{ title: 'Me', tabBarIcon: ({ focused }) => <TabIcon emoji='👤' focused={focused} /> }} />
     </Tabs>
   )

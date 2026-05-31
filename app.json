@@ -54,6 +54,13 @@
         }
       ],
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Tryber to access your photos for posting and listings.",
+          "cameraPermission": "Allow Tryber to take photos for posts and listings."
+        }
+      ],
+      [
         "expo-calendar",
         {
           "calendarPermission": "Allow Tryber to add events to your calendar."

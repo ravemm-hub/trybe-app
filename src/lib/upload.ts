@@ -1,4 +1,29 @@
+import * as ImagePicker from 'expo-image-picker'
+import { Alert } from 'react-native'
 import { supabase } from './supabase'
+
+// Lets the user pick a photo from camera OR gallery via a quick menu.
+export async function pickImageAsset(): Promise<{ uri: string; ext: string } | null> {
+  return new Promise((resolve) => {
+    const pickFrom = async (source: 'camera' | 'gallery') => {
+      const perm = source === 'camera'
+        ? await ImagePicker.requestCameraPermissionsAsync()
+        : await ImagePicker.requestMediaLibraryPermissionsAsync()
+      if (!perm.granted) { Alert.alert('Permission needed', source === 'camera' ? 'Allow camera access.' : 'Allow photo access.'); resolve(null); return }
+      const r = source === 'camera'
+        ? await ImagePicker.launchCameraAsync({ quality: 0.7 })
+        : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, mediaTypes: ImagePicker.MediaTypeOptions.Images })
+      if (r.canceled || !r.assets?.[0]) { resolve(null); return }
+      const a = r.assets[0]
+      resolve({ uri: a.uri, ext: (a.uri.split('.').pop() || 'jpg').toLowerCase() })
+    }
+    Alert.alert('Add photo', undefined, [
+      { text: '📷 Camera', onPress: () => pickFrom('camera') },
+      { text: '🖼️ Gallery', onPress: () => pickFrom('gallery') },
+      { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+    ])
+  })
+}
 
 export type MediaKind = 'image' | 'audio' | 'file'
 

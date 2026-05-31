@@ -1,9 +1,8 @@
 import { useState, useRef, useCallback } from 'react'
 import { Alert } from 'react-native'
-import * as ImagePicker from 'expo-image-picker'
 import * as DocumentPicker from 'expo-document-picker'
 import { Audio } from 'expo-av'
-import { uploadMedia, MediaKind } from '../lib/upload'
+import { uploadMedia, MediaKind, pickImageAsset } from '../lib/upload'
 
 // Shared attachment logic for chat.tsx and dm.tsx.
 // Calls onMedia(publicUrl, kind) once a file is uploaded; the screen then sends the message.
@@ -13,12 +12,10 @@ export function useChatAttachments(onMedia: (url: string, kind: MediaKind) => vo
   const recRef = useRef<Audio.Recording | null>(null)
 
   const pickPhoto = useCallback(async () => {
-    const { granted } = await ImagePicker.requestMediaLibraryPermissionsAsync()
-    if (!granted) { Alert.alert('Permission needed', 'Allow photo access to attach an image.'); return }
-    const res = await ImagePicker.launchImageLibraryAsync({ quality: 0.7, mediaTypes: ImagePicker.MediaTypeOptions.Images })
-    if (res.canceled || !res.assets?.[0]) return
+    const asset = await pickImageAsset()
+    if (!asset) return
     setUploading(true)
-    const url = await uploadMedia(res.assets[0].uri, 'image', res.assets[0].uri.split('.').pop())
+    const url = await uploadMedia(asset.uri, 'image', asset.ext)
     setUploading(false)
     if (url) onMedia(url, 'image'); else Alert.alert('Upload failed', 'Could not upload the image.')
   }, [onMedia])
