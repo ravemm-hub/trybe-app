@@ -9,6 +9,7 @@ import { askClaude, translateText } from '../src/lib/claude'
 import { uuidv4 } from '../src/lib/uuid'
 import { useChatAttachments } from '../src/hooks/useChatAttachments'
 import { MediaBubble } from '../src/components/MediaBubble'
+import { RichMessage } from '../src/components/RichMessage'
 import { MediaKind } from '../src/lib/upload'
 import { getContactName, loadAndMatchContacts } from '../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS, AGENTS } from '../src/constants'
@@ -239,7 +240,11 @@ export default function DMScreen() {
                 )}
                 <View style={[s.bubble, isMe ? s.bubbleMe : s.bubbleThem]}>
                   {msg.media_url ? <MediaBubble url={msg.media_url} kind={msg.media_type || undefined} isMe={isMe} /> : null}
-                  {msg.content ? <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text> : null}
+                  {msg.content
+                    ? (talkingToAgent && !isMe
+                        ? <RichMessage content={msg.content} isMe={false} />
+                        : <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text>)
+                    : null}
                   {translations[msg.id] && (
                     <Text style={[s.translated, isMe && { color: 'rgba(255,255,255,0.85)', borderTopColor: 'rgba(255,255,255,0.3)' }]}>🌐 {translations[msg.id]}</Text>
                   )}

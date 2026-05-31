@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import { supabase } from '../../src/lib/supabase'
 import { askClaude } from '../../src/lib/claude'
+import { RichMessage } from '../../src/components/RichMessage'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
 
 // Adds an event to the device calendar (best-effort).
@@ -182,7 +183,7 @@ export default function AgentScreen() {
           <View style={[s.msgWrap, m.role === 'user' && s.msgWrapMe]}>
             {m.role === 'assistant' && <View style={s.smallAvatar}><Text style={{ fontSize: 12, color: PRIMARY, fontWeight: '700' }}>✦</Text></View>}
             <View style={[s.bubble, m.role === 'user' ? s.bubbleMe : s.bubbleBot]}>
-              <Text style={[s.bubbleText, m.role === 'user' && s.bubbleTextMe]}>{m.content}</Text>
+              <RichMessage content={m.content} isMe={m.role === 'user'} />
               <Text style={[s.bubbleTime, m.role === 'user' && s.bubbleTimeMe]}>{fmt(m.created_at)}</Text>
             </View>
           </View>

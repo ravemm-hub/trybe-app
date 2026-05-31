@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter } from 'expo-router'
 import { supabase } from '../src/lib/supabase'
 import { askClaude } from '../src/lib/claude'
+import { RichMessage } from '../src/components/RichMessage'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../src/constants'
 
 type Msg = { id: string; role: 'user' | 'assistant'; content: string; created_at: string }
@@ -102,7 +103,7 @@ export default function SpaceScreen() {
               <View style={[s.msgWrap, m.role === 'user' && s.msgWrapMe]}>
                 {m.role === 'assistant' && <View style={s.smallAvatar}><Text style={{ fontSize: 12, color: PRIMARY, fontWeight: '700' }}>✦</Text></View>}
                 <View style={[s.bubble, m.role === 'user' ? s.bubbleMe : s.bubbleBot]}>
-                  <Text style={[s.bubbleText, m.role === 'user' && s.bubbleTextMe]}>{m.content}</Text>
+                  <RichMessage content={m.content} isMe={m.role === 'user'} />
                   <Text style={[s.bubbleTime, m.role === 'user' && s.bubbleTimeMe]}>{fmt(m.created_at)}</Text>
                 </View>
               </View>
