@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, Modal, KeyboardAvoidingView, TextInput, ActivityIndicator, ScrollView, Alert, Platform } from 'react-native'
+import { useState, useEffect, useRef, useMemo } from 'react'
+import { View, Text, TouchableOpacity, StyleSheet, Modal, KeyboardAvoidingView, TextInput, ActivityIndicator, ScrollView, Alert, Platform, Animated, PanResponder, Dimensions } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { supabase } from '../lib/supabase'
@@ -14,16 +14,46 @@ const FAB_EVENT = 'teeby_fab_visibility'
 // re-enable it from Profile > Settings > "Show Teeby button".
 
 const FAB_PREF_KEY = 'teeby_fab_visible_v1'
+const FAB_POS_KEY = 'teeby_fab_pos_v1'        // { side: 'left'|'right', topPct: 0..1 }
+const FAB_SIZE = 56
+const EDGE_PAD = 10
+
+type FabPos = { side: 'left' | 'right'; topPct: number }
 
 export function TeebyFAB() {
+  const insets = useSafeAreaInsets()
   const [open, setOpen] = useState(false)
   const [visible, setVisible] = useState(true)
+  const screen = Dimensions.get('window')
+  // Vertical bounds: under the status bar, above the tab bar (which is ~64+insets.bottom).
+  const minY = insets.top + 8
+  const maxY = screen.height - 64 - insets.bottom - FAB_SIZE - 12
+
+  // Animated position. We track absolute x/y; release snaps x to the nearest
+  // edge and persists {side, topPct} so the button "remembers" where the user
+  // left it across screens AND across app launches.
+  const pan = useRef(new Animated.ValueXY({ x: screen.width - FAB_SIZE - EDGE_PAD, y: maxY - 20 })).current
+  const lastPos = useRef({ x: screen.width - FAB_SIZE - EDGE_PAD, y: maxY - 20 })
+  const dragged = useRef(false)
+
+  // Restore saved position on mount.
+  useEffect(() => {
+    AsyncStorage.getItem(FAB_POS_KEY).then(raw => {
+      if (!raw) return
+      try {
+        const p: FabPos = JSON.parse(raw)
+        const x = p.side === 'left' ? EDGE_PAD : (screen.width - FAB_SIZE - EDGE_PAD)
+        const y = Math.max(minY, Math.min(maxY, minY + (maxY - minY) * (p.topPct || 0.85)))
+        pan.setValue({ x, y })
+        lastPos.current = { x, y }
+      } catch {}
+    })
+  }, [])
 
   useEffect(() => {
     AsyncStorage.getItem(FAB_PREF_KEY).then(v => {
       if (v === '0') setVisible(false)
     })
-    // Listen for the Profile toggle → flip live without a remount.
     const off = on(FAB_EVENT, async () => {
       try { const v = await AsyncStorage.getItem(FAB_PREF_KEY); setVisible(v !== '0') } catch {}
     })
@@ -42,18 +72,59 @@ export function TeebyFAB() {
     )
   }
 
+  // PanResponder: only start tracking after a small movement so plain taps
+  // still open the sheet (we don't capture every touch).
+  const responder = useMemo(() => PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_evt, gs) => Math.abs(gs.dx) > 6 || Math.abs(gs.dy) > 6,
+    onPanResponderGrant: () => {
+      dragged.current = true
+      // Switch to absolute offset for free dragging.
+      pan.setOffset({ x: lastPos.current.x, y: lastPos.current.y })
+      pan.setValue({ x: 0, y: 0 })
+    },
+    onPanResponderMove: Animated.event(
+      [null, { dx: pan.x, dy: pan.y }],
+      { useNativeDriver: false },
+    ),
+    onPanResponderRelease: (_e, gs) => {
+      pan.flattenOffset()
+      let nx = lastPos.current.x + gs.dx
+      let ny = lastPos.current.y + gs.dy
+      // Clamp + snap to nearest horizontal edge.
+      ny = Math.max(minY, Math.min(maxY, ny))
+      const snapLeft = (nx + FAB_SIZE / 2) < screen.width / 2
+      const snappedX = snapLeft ? EDGE_PAD : (screen.width - FAB_SIZE - EDGE_PAD)
+      lastPos.current = { x: snappedX, y: ny }
+      Animated.spring(pan, {
+        toValue: { x: snappedX, y: ny },
+        useNativeDriver: false, friction: 7, tension: 80,
+      }).start()
+      // Persist as proportional values so it survives orientation changes.
+      const topPct = (ny - minY) / Math.max(1, maxY - minY)
+      AsyncStorage.setItem(FAB_POS_KEY, JSON.stringify({ side: snapLeft ? 'left' : 'right', topPct })).catch(() => {})
+      // Reset the dragged flag on next event loop so onPress is suppressed for this drag.
+      setTimeout(() => { dragged.current = false }, 50)
+    },
+  }), [minY, maxY, screen.width])
+
   if (!visible) return null
   return (
     <>
-      <TouchableOpacity
-        style={s.fab}
-        onPress={() => setOpen(true)}
-        onLongPress={askHide}
-        delayLongPress={400}
-        activeOpacity={0.8}
+      <Animated.View
+        style={[s.fabWrap, { transform: pan.getTranslateTransform() }]}
+        {...responder.panHandlers}
       >
-        <Text style={s.fabIcon}>✦</Text>
-      </TouchableOpacity>
+        <TouchableOpacity
+          style={s.fab}
+          onPress={() => { if (!dragged.current) setOpen(true) }}
+          onLongPress={askHide}
+          delayLongPress={400}
+          activeOpacity={0.8}
+        >
+          <Text style={s.fabIcon}>✦</Text>
+        </TouchableOpacity>
+      </Animated.View>
       <TeebyTaskSheet visible={open} onClose={() => setOpen(false)} />
     </>
   )
@@ -271,8 +342,10 @@ function TeebyTaskSheet({ visible, onClose }: { visible: boolean; onClose: () =>
 }
 
 const s = StyleSheet.create({
-  fab: { position: 'absolute', right: 14, bottom: 84, width: 52, height: 52, borderRadius: 26, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: PRIMARY, shadowOpacity: 0.4, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, zIndex: 100 },
-  fabIcon: { fontSize: 26, color: '#fff', fontWeight: '800' },
+  // Animated wrapper is absolutely-positioned; the transform handles x/y.
+  fabWrap: { position: 'absolute', top: 0, left: 0, zIndex: 100 },
+  fab: { width: FAB_SIZE, height: FAB_SIZE, borderRadius: FAB_SIZE / 2, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: PRIMARY, shadowOpacity: 0.4, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8 },
+  fabIcon: { fontSize: 28, color: '#fff', fontWeight: '800' },
   overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
   overlayTap: { flex: 1 },
   // Bottom-anchored, fixed height range so the sheet is always tall enough to
