@@ -1,24 +1,71 @@
 import { useState, useEffect } from 'react'
-import { View, Text, TouchableOpacity, StyleSheet, Modal, KeyboardAvoidingView, TextInput, ActivityIndicator, ScrollView, Alert } from 'react-native'
+import { View, Text, TouchableOpacity, StyleSheet, Modal, KeyboardAvoidingView, TextInput, ActivityIndicator, ScrollView, Alert, Platform } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { supabase } from '../lib/supabase'
+import { emit, on } from '../lib/events'
 import { planTask, executeFindAndDM, executeAskInGroups, findMembersMatching, TaskAction } from '../services/teebyTasks'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER } from '../constants'
 
-// Floating ✦ button visible on every tab. Tap opens a Teeby task sheet:
-// the user types what they want done, Teeby parses it into a structured
-// action, the user confirms — only then is anything actually sent.
+const FAB_EVENT = 'teeby_fab_visibility'
+
+// Floating ✦ button visible on every tab. Tap → opens the Teeby task sheet.
+// Long-press → choose to hide for this session or permanently. The user can
+// re-enable it from Profile > Settings > "Show Teeby button".
+
+const FAB_PREF_KEY = 'teeby_fab_visible_v1'
 
 export function TeebyFAB() {
   const [open, setOpen] = useState(false)
+  const [visible, setVisible] = useState(true)
+
+  useEffect(() => {
+    AsyncStorage.getItem(FAB_PREF_KEY).then(v => {
+      if (v === '0') setVisible(false)
+    })
+    // Listen for the Profile toggle → flip live without a remount.
+    const off = on(FAB_EVENT, async () => {
+      try { const v = await AsyncStorage.getItem(FAB_PREF_KEY); setVisible(v !== '0') } catch {}
+    })
+    return () => off()
+  }, [])
+
+  const askHide = () => {
+    Alert.alert(
+      'Hide Teeby button?',
+      'You can turn it back on later from your Profile.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Hide for now', onPress: () => setVisible(false) },
+        { text: 'Hide always', style: 'destructive', onPress: async () => { setVisible(false); try { await AsyncStorage.setItem(FAB_PREF_KEY, '0') } catch {} } },
+      ],
+    )
+  }
+
+  if (!visible) return null
   return (
     <>
-      <TouchableOpacity style={s.fab} onPress={() => setOpen(true)} activeOpacity={0.8}>
+      <TouchableOpacity
+        style={s.fab}
+        onPress={() => setOpen(true)}
+        onLongPress={askHide}
+        delayLongPress={400}
+        activeOpacity={0.8}
+      >
         <Text style={s.fabIcon}>✦</Text>
       </TouchableOpacity>
       <TeebyTaskSheet visible={open} onClose={() => setOpen(false)} />
     </>
   )
+}
+
+// Public helper so Profile can offer a "Show Teeby button" toggle.
+export async function setTeebyFabVisible(visible: boolean) {
+  try { await AsyncStorage.setItem(FAB_PREF_KEY, visible ? '1' : '0') } catch {}
+  emit(FAB_EVENT)   // tell mounted <TeebyFAB/> instances to re-read
+}
+export async function getTeebyFabVisible(): Promise<boolean> {
+  try { return (await AsyncStorage.getItem(FAB_PREF_KEY)) !== '0' } catch { return true }
 }
 
 function TeebyTaskSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
@@ -48,8 +95,6 @@ function TeebyTaskSheet({ visible, onClose }: { visible: boolean; onClose: () =>
     try {
       const a = await planTask(userId, userName, draft.trim(), '')
       setPlan(a)
-      // Eagerly preview matching members so the user sees who would get DMed BEFORE
-      // confirming. (find_only goes straight to a preview state with no DM stage.)
       if (a.kind === 'find_and_dm') {
         const m = await findMembersMatching(a.group_id, a.criteria, 5)
         setPreviewMembers(m.map(x => ({ id: x.id, name: x.name })))
@@ -73,7 +118,7 @@ function TeebyTaskSheet({ visible, onClose }: { visible: boolean; onClose: () =>
           : `Sent your message to ${r.sent} ${r.sent === 1 ? 'person' : 'people'} ✦`)
       } else if (plan.kind === 'ask_in_groups') {
         const r = await executeAskInGroups(userId, plan)
-        setDoneMsg(`Posted in ${r.posted} ${r.posted === 1 ? 'Trybe' : 'Trybes'} ✦ — I'll keep an eye on replies`)
+        setDoneMsg(`Posted in ${r.posted} ${r.posted === 1 ? 'Trybe' : 'Trybes'} ✦`)
       }
     } catch (e: any) {
       Alert.alert('Error', e?.message || 'Could not complete the task')
@@ -82,116 +127,128 @@ function TeebyTaskSheet({ visible, onClose }: { visible: boolean; onClose: () =>
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={s.overlay}>
-        <TouchableOpacity style={{ flex: 1 }} onPress={onClose} activeOpacity={1} />
-        <KeyboardAvoidingView behavior="padding" style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 14) }]}>
+      <KeyboardAvoidingView
+        style={s.overlay}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <TouchableOpacity style={s.overlayTap} onPress={onClose} activeOpacity={1} />
+        <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 14) }]}>
           <View style={s.handle} />
+
+          {/* Header */}
           <View style={s.header}>
             <View style={s.headerAvatar}><Text style={s.headerAvatarText}>✦</Text></View>
             <View style={{ flex: 1 }}>
               <Text style={s.title}>Ask Teeby</Text>
               <Text style={s.sub}>Give me a task — I'll plan it and ask before doing anything.</Text>
             </View>
-            <TouchableOpacity onPress={onClose}><Text style={s.close}>✕</Text></TouchableOpacity>
+            <TouchableOpacity onPress={onClose} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={s.close}>✕</Text>
+            </TouchableOpacity>
           </View>
 
-          {/* Example chips when the sheet first opens */}
-          {!plan && !busy && !doneMsg && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingHorizontal: 4, paddingBottom: 8 }}>
-              {[
-                'Find someone in BBQ Friday who likes vegan and ask them about Friday',
-                'Ask in all my groups if anyone has a good GPU laptop',
-                'Find someone who plays tennis nearby',
-                'Post in my coffee group: who wants to grab a coffee tomorrow?',
-              ].map(ex => (
-                <TouchableOpacity key={ex} style={s.exampleChip} onPress={() => setDraft(ex)}>
-                  <Text style={s.exampleChipText} numberOfLines={1}>{ex}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          )}
+          {/* Scrollable body so long plan cards never overflow */}
+          <ScrollView
+            style={s.body}
+            contentContainerStyle={{ paddingBottom: 8 }}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {!plan && !busy && !doneMsg && (
+              <View style={s.examplesWrap}>
+                <Text style={s.examplesLabel}>EXAMPLES</Text>
+                {[
+                  '🍻 Find someone in BBQ Friday who likes vegan and ask them about Friday',
+                  '💻 Ask in all my groups if anyone has a good GPU laptop',
+                  '🎾 Find someone who plays tennis nearby',
+                  '☕ Post in my coffee group: who wants to grab a coffee tomorrow?',
+                ].map(ex => (
+                  <TouchableOpacity key={ex} style={s.exampleRow} onPress={() => setDraft(ex.replace(/^[^\s]+\s/, ''))}>
+                    <Text style={s.exampleRowText}>{ex}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
 
-          {/* PLAN PREVIEW — confirmation card */}
-          {plan && (plan.kind === 'find_and_dm' || plan.kind === 'ask_in_groups') && !doneMsg && (
-            <View style={s.planCard}>
-              <Text style={s.planTitle}>Here's my plan ✦</Text>
-              {plan.kind === 'find_and_dm' && (
-                <>
-                  <Text style={s.planLine}>1. Find members of <Text style={s.bold}>"{plan.group_name}"</Text></Text>
-                  <Text style={s.planLine}>2. Who match: <Text style={s.bold}>{plan.criteria}</Text></Text>
-                  {previewMembers.length > 0 && (
+            {plan && (plan.kind === 'find_and_dm' || plan.kind === 'ask_in_groups') && !doneMsg && (
+              <View style={s.planCard}>
+                <Text style={s.planTitle}>Here's my plan ✦</Text>
+                {plan.kind === 'find_and_dm' && (
+                  <>
+                    <Text style={s.planLine}>1. Find members of <Text style={s.bold}>"{plan.group_name}"</Text></Text>
+                    <Text style={s.planLine}>2. Who match: <Text style={s.bold}>{plan.criteria}</Text></Text>
+                    {previewMembers.length > 0 && (
+                      <View style={s.previewBox}>
+                        <Text style={s.previewLabel}>WHO I'D DM ({previewMembers.length}):</Text>
+                        {previewMembers.map(m => (
+                          <Text key={m.id} style={s.previewName}>• {m.name}</Text>
+                        ))}
+                      </View>
+                    )}
+                    <Text style={s.planLine}>3. DM them:</Text>
+                    <View style={s.messageBox}><Text style={s.messageText}>{plan.message}</Text></View>
+                  </>
+                )}
+                {plan.kind === 'ask_in_groups' && (
+                  <>
+                    <Text style={s.planLine}>Post in <Text style={s.bold}>{plan.group_names.length}</Text> {plan.group_names.length === 1 ? 'Trybe' : 'Trybes'}:</Text>
                     <View style={s.previewBox}>
-                      <Text style={s.previewLabel}>WHO I'D DM ({previewMembers.length}):</Text>
-                      {previewMembers.map(m => (
-                        <Text key={m.id} style={s.previewName}>• {m.name}</Text>
-                      ))}
+                      {plan.group_names.map(n => <Text key={n} style={s.previewName}>• {n}</Text>)}
                     </View>
-                  )}
-                  <Text style={s.planLine}>3. DM them:</Text>
-                  <View style={s.messageBox}><Text style={s.messageText}>{plan.message}</Text></View>
-                </>
-              )}
-              {plan.kind === 'ask_in_groups' && (
-                <>
-                  <Text style={s.planLine}>Post in <Text style={s.bold}>{plan.group_names.length}</Text> {plan.group_names.length === 1 ? 'Trybe' : 'Trybes'}:</Text>
-                  <View style={s.previewBox}>
-                    {plan.group_names.map(n => <Text key={n} style={s.previewName}>• {n}</Text>)}
-                  </View>
-                  <View style={s.messageBox}><Text style={s.messageText}>{plan.message}</Text></View>
-                </>
-              )}
-              <View style={s.planBtns}>
-                <TouchableOpacity style={s.cancelBtn} onPress={() => { setPlan(null); setPreviewMembers([]) }}>
-                  <Text style={s.cancelBtnText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={s.confirmBtn} onPress={confirm} disabled={busy}>
-                  {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.confirmBtnText}>Yes — do it ✦</Text>}
-                </TouchableOpacity>
+                    <View style={s.messageBox}><Text style={s.messageText}>{plan.message}</Text></View>
+                  </>
+                )}
+                <View style={s.planBtns}>
+                  <TouchableOpacity style={s.cancelBtn} onPress={() => { setPlan(null); setPreviewMembers([]) }}>
+                    <Text style={s.cancelBtnText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.confirmBtn} onPress={confirm} disabled={busy}>
+                    {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.confirmBtnText}>Yes — do it ✦</Text>}
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
-          )}
+            )}
 
-          {/* FIND ONLY — just a results list, nothing actioned */}
-          {plan && plan.kind === 'find_only' && !doneMsg && (
-            <View style={s.planCard}>
-              <Text style={s.planTitle}>Here's who I found ✦</Text>
-              {previewMembers.length === 0
-                ? <Text style={s.planLine}>No one matching "{plan.criteria}" yet.</Text>
-                : previewMembers.map(m => (
-                    <Text key={m.id} style={s.previewName}>• {m.name}</Text>
-                  ))}
-              <View style={s.planBtns}>
-                <TouchableOpacity style={[s.confirmBtn, { flex: 1 }]} onPress={() => { setPlan(null); setPreviewMembers([]) }}>
-                  <Text style={s.confirmBtnText}>OK</Text>
-                </TouchableOpacity>
+            {plan && plan.kind === 'find_only' && !doneMsg && (
+              <View style={s.planCard}>
+                <Text style={s.planTitle}>Here's who I found ✦</Text>
+                {previewMembers.length === 0
+                  ? <Text style={s.planLine}>No one matching "{plan.criteria}" yet.</Text>
+                  : previewMembers.map(m => (
+                      <Text key={m.id} style={s.previewName}>• {m.name}</Text>
+                    ))}
+                <View style={s.planBtns}>
+                  <TouchableOpacity style={[s.confirmBtn, { flex: 1 }]} onPress={() => { setPlan(null); setPreviewMembers([]) }}>
+                    <Text style={s.confirmBtnText}>OK</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
-          )}
+            )}
 
-          {/* REPLY — Teeby just wanted to talk back */}
-          {plan && plan.kind === 'reply' && !doneMsg && (
-            <View style={s.planCard}>
-              <Text style={s.planLine}>{plan.text}</Text>
-              <View style={s.planBtns}>
-                <TouchableOpacity style={[s.confirmBtn, { flex: 1 }]} onPress={() => setPlan(null)}>
-                  <Text style={s.confirmBtnText}>OK</Text>
-                </TouchableOpacity>
+            {plan && plan.kind === 'reply' && !doneMsg && (
+              <View style={s.planCard}>
+                <Text style={s.planLine}>{plan.text}</Text>
+                <View style={s.planBtns}>
+                  <TouchableOpacity style={[s.confirmBtn, { flex: 1 }]} onPress={() => setPlan(null)}>
+                    <Text style={s.confirmBtnText}>OK</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
-          )}
+            )}
 
-          {/* DONE state */}
-          {doneMsg && (
-            <View style={s.planCard}>
-              <Text style={s.planLine}>{doneMsg}</Text>
-              <View style={s.planBtns}>
-                <TouchableOpacity style={[s.confirmBtn, { flex: 1 }]} onPress={onClose}>
-                  <Text style={s.confirmBtnText}>Close</Text>
-                </TouchableOpacity>
+            {doneMsg && (
+              <View style={s.planCard}>
+                <Text style={s.planLine}>{doneMsg}</Text>
+                <View style={s.planBtns}>
+                  <TouchableOpacity style={[s.confirmBtn, { flex: 1 }]} onPress={onClose}>
+                    <Text style={s.confirmBtnText}>Close</Text>
+                  </TouchableOpacity>
+                </View>
               </View>
-            </View>
-          )}
+            )}
+          </ScrollView>
 
+          {/* Sticky input row at the bottom — only when no plan / done state */}
           {!plan && !doneMsg && (
             <View style={s.inputRow}>
               <TextInput
@@ -207,17 +264,20 @@ function TeebyTaskSheet({ visible, onClose }: { visible: boolean; onClose: () =>
               </TouchableOpacity>
             </View>
           )}
-        </KeyboardAvoidingView>
-      </View>
+        </View>
+      </KeyboardAvoidingView>
     </Modal>
   )
 }
 
 const s = StyleSheet.create({
-  fab: { position: 'absolute', right: 16, bottom: 78, width: 56, height: 56, borderRadius: 28, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: PRIMARY, shadowOpacity: 0.4, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, zIndex: 100 },
-  fabIcon: { fontSize: 28, color: '#fff', fontWeight: '800' },
-  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' },
-  sheet: { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 8, paddingHorizontal: 14, maxHeight: '85%' },
+  fab: { position: 'absolute', right: 14, bottom: 84, width: 52, height: 52, borderRadius: 26, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center', elevation: 6, shadowColor: PRIMARY, shadowOpacity: 0.4, shadowOffset: { width: 0, height: 4 }, shadowRadius: 8, zIndex: 100 },
+  fabIcon: { fontSize: 26, color: '#fff', fontWeight: '800' },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  overlayTap: { flex: 1 },
+  // Bottom-anchored, fixed height range so the sheet is always tall enough to
+  // see the title + body + input row at once — fixes the "opens cramped" bug.
+  sheet: { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingTop: 6, paddingHorizontal: 14, minHeight: '55%', maxHeight: '88%' },
   handle: { width: 40, height: 4, borderRadius: 2, backgroundColor: BORDER, alignSelf: 'center', marginVertical: 6 },
   header: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, paddingHorizontal: 4 },
   headerAvatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: PRIMARY },
@@ -225,9 +285,12 @@ const s = StyleSheet.create({
   title: { fontSize: 16, fontWeight: '800', color: TEXT },
   sub: { fontSize: 12, color: GRAY, marginTop: 1 },
   close: { fontSize: 18, color: GRAY, paddingHorizontal: 6 },
-  exampleChip: { backgroundColor: BG, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, borderWidth: 1, borderColor: BORDER, maxWidth: 260 },
-  exampleChipText: { fontSize: 12, color: TEXT },
-  inputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end', paddingTop: 10, paddingBottom: 8 },
+  body: { flex: 1 },
+  examplesWrap: { paddingTop: 4 },
+  examplesLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, paddingHorizontal: 4, marginBottom: 8 },
+  exampleRow: { paddingHorizontal: 12, paddingVertical: 12, borderRadius: 12, backgroundColor: BG, marginBottom: 8, borderWidth: 1, borderColor: BORDER },
+  exampleRowText: { fontSize: 13, color: TEXT, lineHeight: 18 },
+  inputRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-end', paddingTop: 8, paddingBottom: 4, borderTopWidth: 0.5, borderColor: BORDER },
   input: { flex: 1, backgroundColor: BG, borderRadius: 18, paddingHorizontal: 14, paddingVertical: 10, fontSize: 15, color: TEXT, maxHeight: 110, borderWidth: 1, borderColor: BORDER },
   sendBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
   sendBtnText: { color: '#fff', fontSize: 22, fontWeight: '700' },

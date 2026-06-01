@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router'
 import { supabase } from '../../src/lib/supabase'
 import { pickImageAsset, uploadMedia } from '../../src/lib/upload'
 import { toE164 } from '../../src/lib/contacts'
+import { getTeebyFabVisible, setTeebyFabVisible } from '../../src/components/TeebyFAB'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
 
 const AVATARS = ['🦊','🐺','🦁','🐯','🐻','🦝','🐼','🦄','🐲','👾','🤖','👽','🎭','🔮','⚡','🌊','🔥','🌙','🎸','🎵']
@@ -31,6 +32,9 @@ export default function ProfileScreen() {
   const [location, setLocation] = useState('')
   const [photos, setPhotos] = useState<{ id: string; url: string; position: number }[]>([])
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [fabOn, setFabOn] = useState(true)
+  useEffect(() => { getTeebyFabVisible().then(setFabOn) }, [])
+  const toggleFab = async (v: boolean) => { setFabOn(v); await setTeebyFabVisible(v) }
 
   useEffect(() => { load() }, [])
 
@@ -246,6 +250,20 @@ export default function ProfileScreen() {
           <Text style={s.zoneBtnText}>✦ Tryber Zone</Text>
         </TouchableOpacity>
 
+        {/* Show / hide the floating ✦ Ask Teeby button across the app. */}
+        <View style={s.toggleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={s.toggleLabel}>Floating Ask Teeby button</Text>
+            <Text style={s.toggleSub}>The ✦ button on every tab — turn off if it gets in the way.</Text>
+          </View>
+          <TouchableOpacity
+            style={[s.toggleBtn, fabOn && s.toggleBtnOn]}
+            onPress={() => toggleFab(!fabOn)}
+          >
+            <View style={[s.toggleKnob, fabOn && s.toggleKnobOn]} />
+          </TouchableOpacity>
+        </View>
+
         <View style={s.creditsCard}>
           <Text style={s.creditsTitle}>✦ Teeby Credits</Text>
           <Text style={s.creditsDesc}>{credits}/20 daily credits remaining</Text>
@@ -297,6 +315,13 @@ const s = StyleSheet.create({
   sectionLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginBottom: 8, marginTop: 20 },
   input: { backgroundColor: CARD, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: BORDER },
   saveBtn: { backgroundColor: LIVE, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
+  toggleRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 14, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: CARD, borderWidth: 1, borderColor: BORDER },
+  toggleLabel: { fontSize: 14, fontWeight: '600', color: TEXT },
+  toggleSub: { fontSize: 11, color: GRAY, marginTop: 2 },
+  toggleBtn: { width: 44, height: 26, borderRadius: 13, backgroundColor: '#D9D7E8', justifyContent: 'center', paddingHorizontal: 3 },
+  toggleBtnOn: { backgroundColor: PRIMARY },
+  toggleKnob: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: 'flex-start' },
+  toggleKnobOn: { alignSelf: 'flex-end' },
   subLabel: { fontSize: 11, color: GRAY, marginBottom: 6, marginTop: -2 },
   genderRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   genderChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: BG, borderWidth: 1, borderColor: BORDER },

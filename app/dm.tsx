@@ -142,15 +142,29 @@ export default function DMScreen() {
     if (sendErr) setMessages(prev => prev.filter(m => m.id !== mid))
     if (talkingToAgent && agentInfo) {
       setAgentTyping(true)
-      const timeout = setTimeout(() => setAgentTyping(false), 15000)
+      // 12s hard cap so the dots never stick if something hangs.
+      const timeout = setTimeout(() => setAgentTyping(false), 12000)
       try {
-        await new Promise(r => setTimeout(r, 1000 + Math.random() * 1500))
+        await new Promise(r => setTimeout(r, 700 + Math.random() * 800))
         const lang = agentInfo.lang === 'he' ? 'Hebrew' : 'English'
-        const reply = await askClaude('You are ' + agentInfo.name + ', ' + agentInfo.personality + '. Someone wrote: "' + content + '". Reply in ' + lang + ', 1-2 sentences, casual. You can look things up online if useful.', undefined, 150, true)
-        // Agent replies are written via a SECURITY DEFINER RPC: RLS only lets you insert
-        // dm_messages where sender_id = auth.uid(), and the sender here is the agent.
-        if (reply) await supabase.rpc('send_agent_dm', { p_agent: otherUserId, p_receiver: myId, p_content: reply })
-      } catch {}
+        // Agents chat — they don't need to web-search. Disabling web saves the
+        // ~3-5s extra latency (and the rate-limit risk) of the search tool.
+        let reply = await askClaude(
+          'You are ' + agentInfo.name + ', ' + agentInfo.personality + '. Someone wrote: "' + content + '". Reply in ' + lang + ', 1-2 sentences, casual.',
+          undefined, 150, false,
+        )
+        // Fallback so the user always sees a response (silent failure was the
+        // "dots forever" bug). Light and on-brand.
+        if (!reply || !reply.trim()) {
+          reply = lang === 'Hebrew'
+            ? 'אהבתי 😊 רוצה לספר לי עוד?'
+            : "Love that 😊 Tell me more?"
+        }
+        const { error: rpcErr } = await supabase.rpc('send_agent_dm', { p_agent: otherUserId, p_receiver: myId, p_content: reply })
+        if (rpcErr) console.warn('send_agent_dm:', rpcErr.message)
+      } catch (e: any) {
+        console.warn('agent reply failed:', e?.message)
+      }
       finally { setAgentTyping(false); clearTimeout(timeout) }
     }
   }, [draft, myId, otherUserId, replyTo, translateTo, editingMsg, talkingToAgent, agentInfo, myMode, theirMode])

@@ -16,6 +16,12 @@ export type Venue = {
 
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter'
 
+// 5-minute in-memory cache keyed by ~50m grid (~4 decimal places) so reopening
+// the create screen near the same spot is instant.
+const CACHE_TTL_MS = 5 * 60 * 1000
+const venueCache: Map<string, { at: number; data: DetectedVenue[] }> = new Map()
+const cacheKey = (lat: number, lon: number, r: number) => lat.toFixed(4) + ':' + lon.toFixed(4) + ':' + r
+
 // Categories the user actually wants offered when creating a Trybe.
 // `amenity` covers pubs/bars/restaurants/cafes; `leisure` covers
 // stadiums/parks/sports-centres; `tourism` covers attractions.
@@ -58,13 +64,24 @@ function categoryOf(el: any): string {
 
 export async function detectNearbyVenues(lat: number, lon: number, radiusM = 200): Promise<DetectedVenue[]> {
   try {
-    const q = `[out:json][timeout:8];(${QUERY_TYPES.replace(/%LAT%/g, String(lat)).replace(/%LON%/g, String(lon)).replace(/%R%/g, String(radiusM))});out tags center 30;`
+    // 1. Cache hit? (avoid hammering Overpass when the user reopens /create).
+    const k = cacheKey(lat, lon, radiusM)
+    const hit = venueCache.get(k)
+    if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data
+
+    // 2. Race the Overpass request against a 4s client-side timeout so the
+    //    create screen never feels stuck even if Overpass is slow today.
+    const controller = new AbortController()
+    const cancel = setTimeout(() => controller.abort(), 4000)
+    const q = `[out:json][timeout:4];(${QUERY_TYPES.replace(/%LAT%/g, String(lat)).replace(/%LON%/g, String(lon)).replace(/%R%/g, String(radiusM))});out tags center 20;`
     const res = await fetch(OVERPASS_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: 'data=' + encodeURIComponent(q),
-    })
-    if (!res.ok) return []
+      signal: controller.signal,
+    }).catch(() => null as any)
+    clearTimeout(cancel)
+    if (!res || !res.ok) return []
     const data = await res.json()
     const out: DetectedVenue[] = []
     for (const el of data.elements || []) {
@@ -84,7 +101,9 @@ export async function detectNearbyVenues(lat: number, lon: number, radiusM = 200
       })
     }
     out.sort((a, b) => a.distance_m - b.distance_m)
-    return out.slice(0, 12)
+    const trimmed = out.slice(0, 12)
+    venueCache.set(cacheKey(lat, lon, radiusM), { at: Date.now(), data: trimmed })
+    return trimmed
   } catch { return [] }
 }
 
