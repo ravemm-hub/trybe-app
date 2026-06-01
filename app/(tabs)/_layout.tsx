@@ -2,6 +2,7 @@
 import { View, Text, StyleSheet } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useUnread } from '../../src/hooks/useUnread'
+import { TeebyFAB } from '../../src/components/TeebyFAB'
 import { PRIMARY, GRAY, BG, BORDER } from '../../src/constants'
 
 function TabIcon({ emoji, count, focused }: { emoji: string; count?: number; focused: boolean }) {
@@ -24,6 +25,7 @@ export default function TabsLayout() {
   const { total } = useUnread()
 
   return (
+    <View style={{ flex: 1, backgroundColor: BG }}>
     <Tabs screenOptions={{
       headerShown: false,
       tabBarStyle: {
@@ -50,6 +52,9 @@ export default function TabsLayout() {
       <Tabs.Screen name='agent' options={{ href: null }} />
       <Tabs.Screen name='profile' options={{ title: 'Me', tabBarIcon: ({ focused }) => <TabIcon emoji='👤' focused={focused} /> }} />
     </Tabs>
+    {/* Floating "Ask Teeby" — sits above the tab bar on every tab. */}
+    <TeebyFAB />
+    </View>
   )
 }
 
