@@ -84,6 +84,7 @@ export default function RootLayout() {
           <Stack.Screen name='shared-list' options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name='profile-view' options={{ animation: 'slide_from_right' }} />
           <Stack.Screen name='notifications' options={{ animation: 'slide_from_right' }} />
+          <Stack.Screen name='tryber-zone' options={{ animation: 'slide_from_bottom' }} />
         </Stack>
       </SafeAreaProvider>
     </GestureHandlerRootView>

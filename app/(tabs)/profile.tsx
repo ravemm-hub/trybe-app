@@ -129,6 +129,12 @@ export default function ProfileScreen() {
           {saving ? <ActivityIndicator color="#fff" /> : <Text style={s.saveBtnText}>Save Profile</Text>}
         </TouchableOpacity>
 
+        {/* Tryber Zone entry — discreet, no badge or status hint here.
+            Inside the Zone the user manages alias, photos, matches, PIN. */}
+        <TouchableOpacity style={s.zoneBtn} onPress={() => router.push('/tryber-zone')}>
+          <Text style={s.zoneBtnText}>✦ Tryber Zone</Text>
+        </TouchableOpacity>
+
         <View style={s.creditsCard}>
           <Text style={s.creditsTitle}>✦ Teeby Credits</Text>
           <Text style={s.creditsDesc}>{credits}/20 daily credits remaining</Text>
@@ -180,6 +186,8 @@ const s = StyleSheet.create({
   sectionLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginBottom: 8, marginTop: 20 },
   input: { backgroundColor: CARD, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: BORDER },
   saveBtn: { backgroundColor: LIVE, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
+  zoneBtn: { backgroundColor: CARD, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 10, borderWidth: 1, borderColor: BORDER },
+  zoneBtnText: { color: PRIMARY, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
   saveBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   creditsCard: { backgroundColor: '#EEF0FF', borderRadius: 16, padding: 16, marginTop: 20 },
   creditsTitle: { fontSize: 16, fontWeight: '700', color: PRIMARY, marginBottom: 4 },

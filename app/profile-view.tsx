@@ -5,6 +5,8 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router'
 import { supabase } from '../src/lib/supabase'
 import { followUser, unfollowUser, isFollowing, getProfileCounts, SocialCounts } from '../src/services/social'
 import { getContactNameMap } from '../src/lib/contacts'
+import { getMyZoneStatus, isTargetOpenInZone, isSessionActive } from '../src/services/tryberZone'
+import { ZoneSignalSheet } from '../src/components/ZoneSignalSheet'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, AGENT_IDS } from '../src/constants'
 
 export default function ProfileViewScreen() {
@@ -20,6 +22,9 @@ export default function ProfileViewScreen() {
   const [loading, setLoading] = useState(true)
   const [followBusy, setFollowBusy] = useState(false)
   const [contactName, setContactName] = useState<string | null>(null)
+  const [zoneVisible, setZoneVisible] = useState(false)   // show the ✦ button?
+  const [zoneSheetOpen, setZoneSheetOpen] = useState(false)
+  const [targetAlias, setTargetAlias] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!targetId) { router.back(); return }
@@ -28,15 +33,31 @@ export default function ProfileViewScreen() {
     setMyId(user.id)
     const cmap = await getContactNameMap()
     setContactName(cmap[targetId] || null)
-    const [{ data: p }, c, fol, { data: ps }] = await Promise.all([
-      supabase.from('profiles').select('id, display_name, username, avatar_char, bio, ghost_name').eq('id', targetId).single(),
+    const [{ data: p }, c, fol, { data: ps }, myZ, theirOpen, sessionUnlocked] = await Promise.all([
+      supabase.from('profiles').select('id, display_name, username, avatar_char, bio, ghost_name, tryber_zone_alias').eq('id', targetId).single(),
       getProfileCounts(targetId),
       isFollowing(user.id, targetId),
       supabase.from('posts').select('id, content, media_url, created_at, likes, dislikes, comment_count, is_anonymous')
         .eq('user_id', targetId).is('group_id', null)
         .order('created_at', { ascending: false }).limit(30),
+      getMyZoneStatus(user.id),
+      isTargetOpenInZone(targetId),
+      isSessionActive(),
     ])
     setProfile(p); setCounts(c); setFollowing(fol); setPosts(ps || [])
+    // The ✦ button is visible ONLY if: not yourself, not an agent, you have
+    // Zone activated, you've unlocked it in this session, AND the target is
+    // active+available in Zone. Otherwise the button isn't even rendered —
+    // people who aren't in the Zone don't know it exists.
+    setZoneVisible(
+      user.id !== targetId &&
+      !AGENT_IDS.includes(targetId) &&
+      myZ.active &&
+      myZ.available &&
+      sessionUnlocked &&
+      theirOpen
+    )
+    setTargetAlias((p as any)?.tryber_zone_alias || null)
     setLoading(false)
   }, [targetId, router])
 
@@ -83,8 +104,23 @@ export default function ProfileViewScreen() {
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}><Text style={s.backText}>‹</Text></TouchableOpacity>
         <Text style={s.headerTitle} numberOfLines={1}>{displayName}</Text>
-        <View style={{ width: 32 }} />
+        {/* The ✦ button only renders when both users are Zone-active. Other
+            users literally don't know this button exists. */}
+        {zoneVisible
+          ? <TouchableOpacity onPress={() => setZoneSheetOpen(true)} style={s.zoneStar}>
+              <Text style={s.zoneStarText}>✦</Text>
+            </TouchableOpacity>
+          : <View style={{ width: 32 }} />}
       </View>
+      {myId && zoneVisible && (
+        <ZoneSignalSheet
+          visible={zoneSheetOpen}
+          onClose={() => setZoneSheetOpen(false)}
+          myId={myId}
+          targetId={targetId}
+          targetAlias={targetAlias}
+        />
+      )}
 
       <FlatList
         data={posts}
@@ -151,6 +187,8 @@ const s = StyleSheet.create({
   backBtn: { padding: 4, width: 36 },
   backText: { fontSize: 32, color: PRIMARY, lineHeight: 32, marginTop: -4 },
   headerTitle: { flex: 1, fontSize: 16, fontWeight: '700', color: TEXT },
+  zoneStar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF0FF' },
+  zoneStarText: { fontSize: 18, color: PRIMARY, fontWeight: '700' },
   profileCard: { backgroundColor: CARD, paddingHorizontal: 20, paddingVertical: 20, alignItems: 'center', borderBottomWidth: 0.5, borderColor: BORDER },
   avatar: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: BORDER, marginBottom: 12 },
   avatarAgent: { borderColor: PRIMARY, borderWidth: 3 },
