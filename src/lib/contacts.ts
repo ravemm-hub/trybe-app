@@ -4,15 +4,35 @@ import { supabase } from './supabase'
 const NAMES_KEY = 'contact_names_v2'      // legacy: userId -> name (kept for backward compat)
 const PHONES_KEY = 'contact_phones_v1'    // primary:   normalizedPhone -> contactName (survives user-id changes)
 
+// Strip everything that isn't a digit or leading +. Catches Unicode RTL marks, NBSPs, etc.
+function digits(p: string): string {
+  return (p || '').replace(/[^\d+]/g, '')
+}
+
+// Israeli "local" form (leading zero) — used for friendly display.
 export function normalizePhone(p: string): string {
   if (!p) return ''
-  // Strip everything that isn't a digit or leading +. Catches Unicode RTL marks, NBSPs, etc.
-  p = p.replace(/[^\d+]/g, '')
-  if (p.startsWith('00972')) return '0' + p.slice(5)
-  if (p.startsWith('+972')) return '0' + p.slice(4)
-  if (p.startsWith('972') && p.length >= 12) return '0' + p.slice(3)
-  if (p.startsWith('+')) return p.slice(1) // unknown country, keep digits
-  return p
+  let d = digits(p)
+  if (d.startsWith('00972')) return '0' + d.slice(5)
+  if (d.startsWith('+972')) return '0' + d.slice(4)
+  if (d.startsWith('972') && d.length >= 12) return '0' + d.slice(3)
+  if (d.startsWith('+')) return d.slice(1)
+  return d
+}
+
+// Canonical E.164 form (+<country><number>) — the form profiles.phone uses
+// in the DB now that we have a UNIQUE index on it. Use this for any lookup
+// or write against profiles.phone so a number typed three different ways
+// still hits the same row.
+export function toE164(p: string): string | null {
+  if (!p) return null
+  const d = digits(p)
+  if (!d) return null
+  if (d.startsWith('+')) return d.length >= 8 ? d : null
+  if (d.startsWith('0') && d.length >= 9 && d.length <= 11) return '+972' + d.slice(1)
+  if (d.startsWith('972') && d.length >= 11 && d.length <= 13) return '+' + d
+  if (d.length >= 10 && d.length <= 15) return '+' + d
+  return null
 }
 
 async function getPhoneMap(): Promise<Record<string, string>> {
@@ -110,24 +130,20 @@ export async function getEnrichedContacts(): Promise<EnrichedContact[]> {
       list.push({ id: c.id || phone, name: c.name, phone, initials: c.name.split(' ').map((n: string) => n[0]).slice(0, 2).join('').toUpperCase(), onTryber: false })
     }
     if (!list.length) return []
-    // Build a wide variant set so we match whatever format the DB stored.
-    const variants = new Set<string>()
+    // profiles.phone is canonical E.164 (DB-enforced unique). One round-trip,
+    // exact match — no more ambiguity from "0544..." vs "+972544..." vs "972544...".
+    const e164ByContact = new Map<string, string>()
+    const e164Set = new Set<string>()
     for (const c of list) {
-      const n = normalizePhone(c.phone)
-      variants.add(c.phone); variants.add(n)
-      if (n.startsWith('0')) { variants.add('+972' + n.slice(1)); variants.add('972' + n.slice(1)) }
+      const e = toE164(c.phone)
+      if (e) { e164ByContact.set(c.id, e); e164Set.add(e) }
     }
-    const { data: users } = await supabase.from('profiles').select('id, phone').in('phone', [...variants])
-    const map = new Map<string, any>()
-    for (const u of users || []) {
-      if (!u.phone) continue
-      const n = normalizePhone(u.phone)
-      map.set(n, u); map.set(u.phone, u)
-      if (n.startsWith('0')) { map.set('+972' + n.slice(1), u); map.set('972' + n.slice(1), u) }
-    }
+    if (!e164Set.size) return list.map(c => ({ ...c, onTryber: false }))
+    const { data: users } = await supabase.from('profiles').select('id, phone').in('phone', [...e164Set])
+    const userByE164 = new Map<string, any>()
+    for (const u of users || []) if (u.phone) userByE164.set(u.phone, u)
     return list.map(c => {
-      const n = normalizePhone(c.phone)
-      const u = map.get(n) || map.get(c.phone) || (n.startsWith('0') ? (map.get('+972' + n.slice(1)) || map.get('972' + n.slice(1))) : undefined)
+      const u = userByE164.get(e164ByContact.get(c.id) || '')
       return { ...c, onTryber: !!u, tryberUserId: u?.id }
     }).sort((a, b) => (b.onTryber ? 1 : 0) - (a.onTryber ? 1 : 0) || a.name.localeCompare(b.name))
   } catch { return [] }
@@ -150,31 +166,27 @@ export async function loadAndMatchContacts(userId: string) {
     if (!list.length) return
 
     // ALWAYS persist the phone-keyed map first — this is the source of truth that
-    // survives user-id changes from duplicate-account merges.
+    // survives user-id changes from duplicate-account merges. Stored under E.164
+    // so the same number typed differently never produces two entries.
     const phoneMap: Record<string, string> = await getPhoneMap()
     for (const c of list) {
-      const n = normalizePhone(c.phone)
-      if (n) phoneMap[n] = c.name
+      const e = toE164(c.phone)
+      if (e) phoneMap[e] = c.name
     }
     await AsyncStorage.setItem(PHONES_KEY, JSON.stringify(phoneMap))
     _phoneCache = phoneMap
 
-    // Build variants and look up in profiles.
-    const variants = new Set<string>()
-    for (const c of list) {
-      const n = normalizePhone(c.phone)
-      variants.add(c.phone); variants.add(n)
-      if (n.startsWith('0')) { variants.add('+972' + n.slice(1)); variants.add('972' + n.slice(1)) }
-    }
-    const { data: users } = await supabase.from('profiles').select('id, phone').in('phone', [...variants])
+    // Exact match on E.164 since profiles.phone is now canonical.
+    const e164Set = new Set<string>()
+    for (const c of list) { const e = toE164(c.phone); if (e) e164Set.add(e) }
+    if (!e164Set.size) return
+    const { data: users } = await supabase.from('profiles').select('id, phone').in('phone', [...e164Set])
     const userMap = await getUserMap()
     for (const u of users || []) {
       if (!u.phone) continue
-      const uNorm = normalizePhone(u.phone)
-      const matchName = phoneMap[uNorm]
+      const matchName = phoneMap[u.phone]
       if (matchName) {
         userMap[u.id] = matchName
-        // Best-effort persist to DB (per-account sync of "saved names").
         try { supabase.from('user_contact_names').upsert({ user_id: userId, contact_user_id: u.id, custom_name: matchName }, { onConflict: 'user_id,contact_user_id' }) } catch {}
       }
     }

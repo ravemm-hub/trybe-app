@@ -6,6 +6,8 @@ import * as Clipboard from 'expo-clipboard'
 import { supabase } from '../src/lib/supabase'
 import { sendDM, markDMRead, markDMDelivered, editDM, deleteDM, getReceiptStatus } from '../src/services/dms'
 import { askClaude, translateText } from '../src/lib/claude'
+import { getPreferredLang, setPreferredLang, pickTargetLang, TranslateLang } from '../src/lib/translatePref'
+import { TranslatePickerSheet } from '../src/components/TranslatePickerSheet'
 import { uuidv4 } from '../src/lib/uuid'
 import { useChatAttachments } from '../src/hooks/useChatAttachments'
 import { MediaBubble } from '../src/components/MediaBubble'
@@ -37,6 +39,10 @@ export default function DMScreen() {
   const [selectedMsg, setSelectedMsg] = useState<DmMessage | null>(null)
   const [showMenu, setShowMenu] = useState(false)
   const [translations, setTranslations] = useState<Record<string, string>>({})
+  const [prefLang, setPrefLang] = useState<TranslateLang | null>(null)
+  const [showLangPicker, setShowLangPicker] = useState(false)
+  const [pendingTranslateMsg, setPendingTranslateMsg] = useState<DmMessage | null>(null)
+  useEffect(() => { getPreferredLang().then(setPrefLang) }, [])
   const [myMode, setMyMode] = useState<'lit' | 'ghost'>(params?.myMode === 'ghost' ? 'ghost' : 'lit')
   const [theirMode, setTheirMode] = useState<'lit' | 'ghost'>(params?.theirMode === 'ghost' ? 'ghost' : 'lit')
   const [otherGhostName, setOtherGhostName] = useState('')
@@ -170,11 +176,28 @@ export default function DMScreen() {
     try { await Clipboard.setStringAsync(msg.content) } catch {}
   }
 
-  const translateMessage = async (msg: DmMessage) => {
-    if (translations[msg.id]) { setTranslations(prev => { const n = { ...prev }; delete n[msg.id]; return n }); return }
-    const target = /[֐-׿]/.test(msg.content) ? 'English' : 'Hebrew'
+  // Mirror of chat.tsx — incoming-message translate. Tap "Translate" once for
+  // preferred-or-auto target; tap "Translate to…" for a language picker that
+  // also saves the choice as the new default.
+  const translateMessage = async (msg: DmMessage, forceLang?: TranslateLang | null) => {
+    if (translations[msg.id] && forceLang === undefined) {
+      setTranslations(prev => { const n = { ...prev }; delete n[msg.id]; return n })
+      return
+    }
+    const target = pickTargetLang(msg.content, forceLang !== undefined ? forceLang : prefLang)
     const t = await translateText(msg.content, target)
     if (t) setTranslations(prev => ({ ...prev, [msg.id]: t }))
+  }
+
+  const openLangPicker = (msg: DmMessage) => { setPendingTranslateMsg(msg); setShowLangPicker(true) }
+  const onPickLang = async (lang: TranslateLang | null) => {
+    await setPreferredLang(lang); setPrefLang(lang)
+    if (pendingTranslateMsg) {
+      const m = pendingTranslateMsg
+      setPendingTranslateMsg(null)
+      setTranslations(prev => { const n = { ...prev }; delete n[m.id]; return n })
+      translateMessage(m, lang)
+    }
   }
 
   const receiptIcon = (msg: DmMessage) => {
@@ -298,6 +321,8 @@ export default function DMScreen() {
         )}
       </KeyboardAvoidingView>
 
+      <TranslatePickerSheet visible={showLangPicker} onClose={() => { setShowLangPicker(false); setPendingTranslateMsg(null) }} selected={prefLang} onPick={onPickLang} />
+
       <Modal visible={showTranslate} transparent animationType="slide" onRequestClose={() => setShowTranslate(false)}>
         <TouchableOpacity style={s.modalOverlay} onPress={() => setShowTranslate(false)} activeOpacity={1}>
           <View style={s.translateSheet}>
@@ -321,6 +346,7 @@ export default function DMScreen() {
               { icon: '↩️', label: 'Reply', onPress: () => { setReplyTo(selectedMsg!); setShowMenu(false) } },
               { icon: '📋', label: 'Copy', onPress: () => { copyMessage(selectedMsg!); setShowMenu(false) } },
               { icon: '🌐', label: translations[selectedMsg?.id || ''] ? 'Original' : 'Translate', onPress: () => { const m = selectedMsg!; setShowMenu(false); translateMessage(m) } },
+              { icon: '🗣️', label: 'Translate to…', onPress: () => { const m = selectedMsg!; setShowMenu(false); openLangPicker(m) } },
               ...(selectedMsg?.sender_id === myId ? [
                 { icon: '✏️', label: 'Edit', onPress: () => { setEditingMsg(selectedMsg!); setDraft(selectedMsg!.content); setShowMenu(false) } },
                 { icon: '🗑️', label: 'Delete', onPress: () => { setShowMenu(false); Alert.alert('Delete', 'Delete for everyone?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => deleteDM(selectedMsg!.id, myId!) }]) } },

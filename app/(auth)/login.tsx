@@ -34,7 +34,9 @@ export default function LoginScreen() {
     if (error) { setLoading(false); Alert.alert('Wrong or expired code', error.message); return }
     const uid = data.user?.id
     if (uid) {
-      const updates: any = { phone: normalized }
+      // Always store E.164 — profiles.phone has a UNIQUE index on the canonical
+      // form. Saving any other shape would collide or duplicate the same human.
+      const updates: any = { phone: e164 }
       if (name.trim()) updates.display_name = name.trim()
       try { await supabase.from('profiles').update(updates).eq('id', uid) } catch {}
       try { await AsyncStorage.setItem('onboarding_done', '1') } catch {}

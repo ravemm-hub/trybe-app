@@ -111,7 +111,8 @@ export default function OnboardingScreen() {
     if (error) { await typeMsg('That code didn\'t work 😅 — type the 6-digit code again (or wait for a new SMS).'); return }
     const uid = data.user?.id
     if (uid) {
-      try { await supabase.from('profiles').update({ display_name: name, phone }).eq('id', uid) } catch {}
+      // Save E.164 canonical phone (profiles.phone is UNIQUE-indexed on it).
+      try { await supabase.from('profiles').update({ display_name: name, phone: e164 }).eq('id', uid) } catch {}
       try { await AsyncStorage.setItem('onboarding_done', '1') } catch {}
     }
     setStep('done')

@@ -6,6 +6,8 @@ import * as Clipboard from 'expo-clipboard'
 import { supabase } from '../src/lib/supabase'
 import { sendMessage, editMessage, deleteMessage, markGroupRead } from '../src/services/messages'
 import { translateText } from '../src/lib/claude'
+import { getPreferredLang, setPreferredLang, pickTargetLang, TranslateLang } from '../src/lib/translatePref'
+import { TranslatePickerSheet } from '../src/components/TranslatePickerSheet'
 import { uuidv4 } from '../src/lib/uuid'
 import { useChatAttachments } from '../src/hooks/useChatAttachments'
 import { MediaBubble } from '../src/components/MediaBubble'
@@ -37,6 +39,12 @@ export default function ChatScreen() {
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null)
   const [forwardGroups, setForwardGroups] = useState<any[]>([])
   const [forwarding, setForwarding] = useState(false)
+  const [prefLang, setPrefLang] = useState<TranslateLang | null>(null)
+  const [showLangPicker, setShowLangPicker] = useState(false)
+  const [pendingTranslateMsg, setPendingTranslateMsg] = useState<Message | null>(null)
+
+  // Load the user's saved preferred translate language on mount.
+  useEffect(() => { getPreferredLang().then(setPrefLang) }, [])
 
   useEffect(() => {
     getContactNameMap().then(setContactNames)
@@ -131,11 +139,29 @@ export default function ChatScreen() {
     try { await Clipboard.setStringAsync(msg.content) } catch {}
   }
 
-  const translateMessage = async (msg: Message) => {
-    if (translations[msg.id]) { setTranslations(prev => { const n = { ...prev }; delete n[msg.id]; return n }); return }
-    const target = /[֐-׿]/.test(msg.content) ? 'English' : 'Hebrew'
+  // Tap Translate once → translate to preferred lang (or auto). Tap again →
+  // show original. "Translate to…" in the menu lets the user pick a specific
+  // language (and remembers it as the new preference).
+  const translateMessage = async (msg: Message, forceLang?: TranslateLang | null) => {
+    if (translations[msg.id] && forceLang === undefined) {
+      setTranslations(prev => { const n = { ...prev }; delete n[msg.id]; return n })
+      return
+    }
+    const target = pickTargetLang(msg.content, forceLang !== undefined ? forceLang : prefLang)
     const t = await translateText(msg.content, target)
     if (t) setTranslations(prev => ({ ...prev, [msg.id]: t }))
+  }
+
+  const openLangPicker = (msg: Message) => { setPendingTranslateMsg(msg); setShowLangPicker(true) }
+  const onPickLang = async (lang: TranslateLang | null) => {
+    await setPreferredLang(lang); setPrefLang(lang)
+    if (pendingTranslateMsg) {
+      const m = pendingTranslateMsg
+      setPendingTranslateMsg(null)
+      // Drop any cached translation so a fresh one is generated in the new lang.
+      setTranslations(prev => { const n = { ...prev }; delete n[m.id]; return n })
+      translateMessage(m, lang)
+    }
   }
 
   const reportMessage = async (msg: Message) => {
@@ -270,6 +296,7 @@ export default function ChatScreen() {
               { icon: '📋', label: 'Copy', onPress: () => { copyMessage(selectedMsg!); setShowMenu(false) } },
               { icon: '📤', label: 'Forward', onPress: () => { const m = selectedMsg!; setShowMenu(false); openForward(m) } },
               { icon: '🌐', label: translations[selectedMsg?.id || ''] ? 'Original' : 'Translate', onPress: () => { const m = selectedMsg!; setShowMenu(false); translateMessage(m) } },
+              { icon: '🗣️', label: 'Translate to…', onPress: () => { const m = selectedMsg!; setShowMenu(false); openLangPicker(m) } },
               ...(selectedMsg?.user_id === userId ? [
                 ...(isWithin15Min(selectedMsg?.created_at || '') ? [{ icon: '✏️', label: 'Edit', onPress: () => { setEditingMsg(selectedMsg!); setDraft(selectedMsg!.content); setShowMenu(false) } }] : []),
                 { icon: '🗑️', label: 'Delete', onPress: () => { setShowMenu(false); Alert.alert('Delete', 'Delete for everyone?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => deleteMessage(selectedMsg!.id, userId!) }]) } },
@@ -316,6 +343,8 @@ export default function ChatScreen() {
           <TouchableOpacity onPress={() => setReplyTo(null)}><Text style={{ fontSize: 18, color: GRAY }}>✕</Text></TouchableOpacity>
         </View>
       )}
+
+      <TranslatePickerSheet visible={showLangPicker} onClose={() => { setShowLangPicker(false); setPendingTranslateMsg(null) }} selected={prefLang} onPick={onPickLang} />
 
       <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={0}>
         {att.isRecording ? (

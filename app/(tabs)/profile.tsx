@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter } from 'expo-router'
 import { supabase } from '../../src/lib/supabase'
 import { pickImageAsset, uploadMedia } from '../../src/lib/upload'
+import { toE164 } from '../../src/lib/contacts'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
 
 const AVATARS = ['🦊','🐺','🦁','🐯','🐻','🦝','🐼','🦄','🐲','👾','🤖','👽','🎭','🔮','⚡','🌊','🔥','🌙','🎸','🎵']
@@ -44,8 +45,30 @@ export default function ProfileScreen() {
   const save = async () => {
     if (!userId) return
     setSaving(true)
-    await supabase.from('profiles').update({ display_name: displayName.trim(), bio: bio.trim() || null, avatar_char: avatarChar, phone: phone.trim() || null, ghost_name: ghostName.trim() || null }).eq('id', userId)
+    // Canonicalize phone to E.164 so two different typings of the same number
+    // never produce two profile rows — the DB enforces uniqueness on this form.
+    const phoneCanon = phone.trim() ? toE164(phone.trim()) : null
+    if (phone.trim() && !phoneCanon) {
+      setSaving(false)
+      Alert.alert('Invalid phone', 'Please enter a valid phone number (e.g. 0501234567).')
+      return
+    }
+    const { error } = await supabase.from('profiles').update({
+      display_name: displayName.trim(),
+      bio: bio.trim() || null,
+      avatar_char: avatarChar,
+      phone: phoneCanon,
+      ghost_name: ghostName.trim() || null,
+    }).eq('id', userId)
     setSaving(false)
+    if (error) {
+      // 23505 = unique_violation — someone else already owns this number.
+      const msg = error.code === '23505'
+        ? 'This phone number is already used by another Tryber account.'
+        : error.message
+      Alert.alert('Could not save', msg)
+      return
+    }
     Alert.alert('✓ Saved', 'Profile updated!')
   }
 
