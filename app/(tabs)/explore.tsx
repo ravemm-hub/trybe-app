@@ -5,7 +5,8 @@ import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import { supabase } from '../../src/lib/supabase'
 import { getContactNameMap } from '../../src/lib/contacts'
-import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../../src/constants'
+import { NearbyMap, MapUser } from '../../src/components/NearbyMap'
+import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, AGENT_IDS } from '../../src/constants'
 
 type Tab = 'groups' | 'radar'
 
@@ -28,6 +29,8 @@ export default function ExploreScreen() {
   const [codeGroupId, setCodeGroupId] = useState<string | null>(null)
   const [codeLoading, setCodeLoading] = useState(false)
   const [contactNames, setContactNames] = useState<Record<string, string>>({})
+  const [radarView, setRadarView] = useState<'list' | 'map'>('list')
+  const [center, setCenter] = useState<{ lat: number; lon: number } | null>(null)
 
   // Keep the contact-name map fresh so Radar shows people by the name saved
   // in the user's device contacts, not by their app-handle.
@@ -106,6 +109,7 @@ export default function ExploreScreen() {
       if (status !== 'granted') { Alert.alert('Location needed', 'Radar needs your location'); setRadarOn(false); return }
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
       const { latitude, longitude } = loc.coords
+      setCenter({ lat: latitude, lon: longitude })
       await supabase.from('user_locations').upsert({ user_id: userId, location: 'POINT(' + longitude + ' ' + latitude + ')', radar_on: true, identity_mode: myMode, updated_at: new Date().toISOString() })
       // Seed nearby AI agents around the user so the radar isn't empty.
       await supabase.rpc('place_agents_near_user', { user_id_input: userId })
@@ -190,34 +194,86 @@ export default function ExploreScreen() {
               <Switch value={radarOn} onValueChange={toggleRadar} trackColor={{ true: LIVE, false: '#E0DED8' }} thumbColor="#fff" />
             </View>
             {radarOn && (
-              <View style={s.modeRow}>
-                {(['lit', 'ghost'] as const).map(m => (
-                  <TouchableOpacity key={m} style={[s.modeBtn, myMode === m && s.modeBtnActive]} onPress={() => setMyMode(m)}>
-                    <Text style={s.modeBtnText}>{m === 'lit' ? '🔥 Lit' : '👻 Ghost'}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              <>
+                <View style={s.modeRow}>
+                  {(['lit', 'ghost'] as const).map(m => (
+                    <TouchableOpacity key={m} style={[s.modeBtn, myMode === m && s.modeBtnActive]} onPress={() => setMyMode(m)}>
+                      <Text style={s.modeBtnText}>{m === 'lit' ? '🔥 Lit' : '👻 Ghost'}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <View style={s.viewToggleRow}>
+                  {(['list', 'map'] as const).map(v => (
+                    <TouchableOpacity key={v} style={[s.viewToggleBtn, radarView === v && s.viewToggleBtnActive]} onPress={() => setRadarView(v)}>
+                      <Text style={[s.viewToggleText, radarView === v && s.viewToggleTextActive]}>
+                        {v === 'list' ? '📋 List' : '🗺️ Map'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
             )}
           </View>
           {!radarOn
             ? <View style={s.empty}><Text style={s.emptyEmoji}>📡</Text><Text style={s.emptyTitle}>Radar is off</Text><Text style={s.emptySub}>Turn on to see people nearby</Text><TouchableOpacity style={s.emptyBtn} onPress={() => toggleRadar(true)}><Text style={s.emptyBtnText}>Activate Radar</Text></TouchableOpacity></View>
             : radarLoading ? <ActivityIndicator color={PRIMARY} style={{ marginTop: 40 }} />
-            : <FlatList data={nearby} keyExtractor={u => u.id}
+            : radarView === 'map' && center && nearby.length > 0
+              ? <View style={{ flex: 1 }}>
+                  <NearbyMap
+                    center={center}
+                    radiusM={5000}
+                    users={nearby
+                      .filter((u: any) => u.lat && u.lon)
+                      .map((u: any): MapUser => ({
+                        id: u.id,
+                        name: u.identity_mode === 'ghost' ? '👻 Ghost' : (contactNames[u.id] || u.display_name || u.username || 'User'),
+                        lat: u.lat,
+                        lon: u.lon,
+                        avatar: u.identity_mode === 'ghost' ? '👻' : (u.avatar_char || null),
+                      }))}
+                    onTapUser={(id) => {
+                      if (AGENT_IDS.includes(id)) {
+                        // Agent pin → open DM with the agent directly.
+                        const u = nearby.find((x: any) => x.id === id)
+                        const name = u?.display_name || u?.username || 'Agent'
+                        router.push({ pathname: '/dm', params: { userId: id, userName: name, myMode, theirMode: 'lit', myAvatar: '📡', isAgent: '1' } })
+                      } else {
+                        // Human pin → open their profile. From there the user can Message/Follow.
+                        router.push({ pathname: '/profile-view', params: { userId: id } })
+                      }
+                    }}
+                  />
+                </View>
+              : <FlatList data={nearby} keyExtractor={u => u.id}
                 contentContainerStyle={{ padding: 12, gap: 10 }}
                 ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>🔍</Text><Text style={s.emptyTitle}>No one nearby yet</Text></View>}
-                ListHeaderComponent={nearby.length > 0 ? <Text style={s.nearbyCount}>{nearby.length} people nearby</Text> : null}
+                ListHeaderComponent={nearby.length > 0 ? <Text style={s.nearbyCount}>{nearby.length} people nearby · tap a card to view profile</Text> : null}
                 renderItem={({ item: u }) => {
+                  const isAgent = AGENT_IDS.includes(u.id)
                   const dn = u.identity_mode === 'ghost'
                     ? 'Ghost'
                     : (contactNames[u.id] || u.display_name || u.username || 'User')
                   return (
-                    <TouchableOpacity style={s.userCard} onPress={() => router.push({ pathname: '/dm', params: { userId: u.id, userName: u.identity_mode === 'ghost' ? '👻 Ghost' : dn, myMode, theirMode: u.identity_mode === 'ghost' ? 'ghost' : 'lit', myAvatar: '📡', isAgent: '0' } })}>
-                      <View style={s.userAvatar}><Text style={s.userAvatarText}>{u.identity_mode === 'ghost' ? '👻' : (dn[0] || '?')}</Text></View>
+                    <TouchableOpacity
+                      style={s.userCard}
+                      onPress={() => {
+                        // Tap card → view profile (or agent DM, since agents don't have profiles).
+                        if (isAgent) router.push({ pathname: '/dm', params: { userId: u.id, userName: dn, myMode, theirMode: 'lit', myAvatar: '📡', isAgent: '1' } })
+                        else router.push({ pathname: '/profile-view', params: { userId: u.id } })
+                      }}>
+                      <View style={s.userAvatar}><Text style={s.userAvatarText}>{u.identity_mode === 'ghost' ? '👻' : (u.avatar_char || dn[0] || '?')}</Text></View>
                       <View style={s.userInfo}>
                         <Text style={s.userName}>{dn}</Text>
                         <Text style={s.userDist}>{u.distance_m < 1000 ? Math.round(u.distance_m) + 'm' : (u.distance_m / 1000).toFixed(1) + 'km'} away</Text>
                       </View>
-                      <Text style={{ fontSize: 22 }}>💬</Text>
+                      <TouchableOpacity
+                        style={s.quickDm}
+                        onPress={(e) => {
+                          e.stopPropagation()
+                          router.push({ pathname: '/dm', params: { userId: u.id, userName: u.identity_mode === 'ghost' ? '👻 Ghost' : dn, myMode, theirMode: u.identity_mode === 'ghost' ? 'ghost' : 'lit', myAvatar: '📡', isAgent: isAgent ? '1' : '0' } })
+                        }}>
+                        <Text style={{ fontSize: 18 }}>💬</Text>
+                      </TouchableOpacity>
                     </TouchableOpacity>
                   )
                 }}
@@ -274,6 +330,12 @@ const s = StyleSheet.create({
   radarLabel: { fontSize: 16, fontWeight: '700', color: TEXT },
   modeRow: { flexDirection: 'row', gap: 8 },
   modeBtn: { flex: 1, paddingVertical: 10, borderRadius: 12, backgroundColor: BG, alignItems: 'center' },
+  viewToggleRow: { flexDirection: 'row', gap: 6, marginTop: 8 },
+  viewToggleBtn: { flex: 1, paddingVertical: 8, borderRadius: 12, backgroundColor: BG, alignItems: 'center', borderWidth: 1, borderColor: BORDER },
+  viewToggleBtnActive: { backgroundColor: PRIMARY, borderColor: PRIMARY },
+  viewToggleText: { fontSize: 13, color: GRAY, fontWeight: '600' },
+  viewToggleTextActive: { color: '#fff' },
+  quickDm: { width: 38, height: 38, borderRadius: 19, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: BORDER },
   modeBtnActive: { backgroundColor: '#EEF0FF', borderWidth: 1.5, borderColor: PRIMARY },
   modeBtnText: { fontSize: 14, fontWeight: '600', color: TEXT },
   nearbyCount: { fontSize: 12, color: GRAY, fontWeight: '600', marginBottom: 8 },

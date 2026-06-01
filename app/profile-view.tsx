@@ -33,18 +33,22 @@ export default function ProfileViewScreen() {
     setMyId(user.id)
     const cmap = await getContactNameMap()
     setContactName(cmap[targetId] || null)
-    const [{ data: p }, c, fol, { data: ps }, myZ, theirOpen, sessionUnlocked] = await Promise.all([
-      supabase.from('profiles').select('id, display_name, username, avatar_char, bio, ghost_name, tryber_zone_alias').eq('id', targetId).single(),
+    const [{ data: p }, c, fol, { data: ps }, { data: photos }, myZ, theirOpen, sessionUnlocked] = await Promise.all([
+      supabase.from('profiles')
+        .select('id, display_name, username, avatar_char, avatar_url, bio, ghost_name, tryber_zone_alias, birth_date, gender, location')
+        .eq('id', targetId).single(),
       getProfileCounts(targetId),
       isFollowing(user.id, targetId),
       supabase.from('posts').select('id, content, media_url, created_at, likes, dislikes, comment_count, is_anonymous')
         .eq('user_id', targetId).is('group_id', null)
         .order('created_at', { ascending: false }).limit(30),
+      supabase.from('profile_photos').select('id, url, position').eq('user_id', targetId).order('position', { ascending: true }),
       getMyZoneStatus(user.id),
       isTargetOpenInZone(targetId),
       isSessionActive(),
     ])
-    setProfile(p); setCounts(c); setFollowing(fol); setPosts(ps || [])
+    setProfile(p ? { ...p, photos: photos || [] } : null)
+    setCounts(c); setFollowing(fol); setPosts(ps || [])
     // The ✦ button is visible ONLY if: not yourself, not an agent, you have
     // Zone activated, you've unlocked it in this session, AND the target is
     // active+available in Zone. Otherwise the button isn't even rendered —
@@ -127,10 +131,32 @@ export default function ProfileViewScreen() {
         keyExtractor={p => p.id}
         ListHeaderComponent={(
           <View style={s.profileCard}>
-            <View style={[s.avatar, isAgent && s.avatarAgent]}><Text style={s.avatarText}>{profile.avatar_char || displayName[0] || '?'}</Text></View>
+            <View style={[s.avatar, isAgent && s.avatarAgent]}>
+              {profile.avatar_url
+                ? <Image source={{ uri: profile.avatar_url }} style={{ width: '100%', height: '100%' }} />
+                : <Text style={s.avatarText}>{profile.avatar_char || displayName[0] || '?'}</Text>}
+            </View>
             <Text style={s.name}>{displayName}{isAgent ? ' ✦' : ''}</Text>
             {profile.username ? <Text style={s.username}>@{profile.username}</Text> : null}
+            {(() => {
+              const bits: string[] = []
+              if (profile.birth_date) {
+                const yrs = Math.floor((Date.now() - new Date(profile.birth_date).getTime()) / (365.25 * 24 * 3600 * 1000))
+                if (yrs > 0 && yrs < 120) bits.push(yrs + ' yrs')
+              }
+              if (profile.gender && profile.gender !== 'prefer_not') bits.push(profile.gender)
+              if (profile.location) bits.push('📍 ' + profile.location)
+              return bits.length ? <Text style={s.metaLine}>{bits.join(' · ')}</Text> : null
+            })()}
             {profile.bio ? <Text style={s.bio}>{profile.bio}</Text> : null}
+            {profile.photos?.length > 0 && (
+              <FlatList horizontal data={profile.photos} keyExtractor={(p: any) => p.id}
+                showsHorizontalScrollIndicator={false}
+                style={{ marginTop: 12, alignSelf: 'stretch' }}
+                contentContainerStyle={{ gap: 8, paddingHorizontal: 4 }}
+                renderItem={({ item }) => <Image source={{ uri: item.url }} style={s.galleryImg} resizeMode="cover" />}
+              />
+            )}
 
             <View style={s.statsRow}>
               <View style={s.statBox}>
@@ -190,12 +216,14 @@ const s = StyleSheet.create({
   zoneStar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF0FF' },
   zoneStarText: { fontSize: 18, color: PRIMARY, fontWeight: '700' },
   profileCard: { backgroundColor: CARD, paddingHorizontal: 20, paddingVertical: 20, alignItems: 'center', borderBottomWidth: 0.5, borderColor: BORDER },
-  avatar: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: BORDER, marginBottom: 12 },
+  avatar: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: BORDER, marginBottom: 12, overflow: 'hidden' },
   avatarAgent: { borderColor: PRIMARY, borderWidth: 3 },
   avatarText: { fontSize: 40 },
   name: { fontSize: 22, fontWeight: '800', color: TEXT },
   username: { fontSize: 14, color: GRAY, marginTop: 2 },
   bio: { fontSize: 14, color: TEXT, marginTop: 10, textAlign: 'center', lineHeight: 19 },
+  metaLine: { fontSize: 13, color: GRAY, marginTop: 6, fontWeight: '500' },
+  galleryImg: { width: 180, height: 220, borderRadius: 14, backgroundColor: '#EEE' },
   statsRow: { flexDirection: 'row', gap: 24, marginTop: 18, marginBottom: 12 },
   statBox: { alignItems: 'center' },
   statN: { fontSize: 18, fontWeight: '800', color: TEXT },

@@ -26,6 +26,11 @@ export default function ProfileScreen() {
   const [myGroups, setMyGroups] = useState<any[]>([])
   const [stats, setStats] = useState({ groups: 0, posts: 0, messages: 0 })
   const [credits, setCredits] = useState(20)
+  const [birthDate, setBirthDate] = useState('')           // YYYY-MM-DD
+  const [gender, setGender] = useState<string>('')
+  const [location, setLocation] = useState('')
+  const [photos, setPhotos] = useState<{ id: string; url: string; position: number }[]>([])
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -34,7 +39,16 @@ export default function ProfileScreen() {
     if (!user) return
     setUserId(user.id)
     const { data: p } = await supabase.from('profiles').select('*').eq('id', user.id).single()
-    if (p) { setDisplayName(p.display_name || ''); setUsername(p.username || ''); setBio(p.bio || ''); setPhone(p.phone || ''); setGhostName(p.ghost_name || ''); setAvatarChar(p.avatar_char || '🦊'); setAvatarUrl(p.avatar_url || null); setCredits(p.teeby_credits ?? 20) }
+    if (p) {
+      setDisplayName(p.display_name || ''); setUsername(p.username || ''); setBio(p.bio || '')
+      setPhone(p.phone || ''); setGhostName(p.ghost_name || ''); setAvatarChar(p.avatar_char || '🦊')
+      setAvatarUrl(p.avatar_url || null); setCredits(p.teeby_credits ?? 20)
+      setBirthDate(p.birth_date || ''); setGender(p.gender || ''); setLocation(p.location || '')
+    }
+    // Load public photos (separate from chat-media — visible to anyone viewing this profile).
+    const { data: ph } = await supabase.from('profile_photos')
+      .select('id, url, position').eq('user_id', user.id).order('position', { ascending: true })
+    setPhotos((ph || []) as any)
     const { data: groups } = await supabase.from('group_members').select('group_id, groups(name, status)').eq('user_id', user.id).limit(10)
     if (groups) setMyGroups(groups)
     const { count: msgCount } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('user_id', user.id)
@@ -53,12 +67,25 @@ export default function ProfileScreen() {
       Alert.alert('Invalid phone', 'Please enter a valid phone number (e.g. 0501234567).')
       return
     }
+    // Validate birth_date roughly: YYYY-MM-DD and 18+ (or empty).
+    let bd: string | null = null
+    if (birthDate.trim()) {
+      const m = birthDate.trim().match(/^(\d{4})-(\d{2})-(\d{2})$/)
+      if (!m) { setSaving(false); Alert.alert('Invalid date', 'Use YYYY-MM-DD, e.g. 1995-08-14.'); return }
+      const d = new Date(birthDate.trim())
+      const yrs = (Date.now() - d.getTime()) / (365.25 * 24 * 3600 * 1000)
+      if (yrs < 13 || yrs > 110) { setSaving(false); Alert.alert('Invalid age', 'Please enter a realistic birth date.'); return }
+      bd = birthDate.trim()
+    }
     const { error } = await supabase.from('profiles').update({
       display_name: displayName.trim(),
       bio: bio.trim() || null,
       avatar_char: avatarChar,
       phone: phoneCanon,
       ghost_name: ghostName.trim() || null,
+      birth_date: bd,
+      gender: gender || null,
+      location: location.trim() || null,
     }).eq('id', userId)
     setSaving(false)
     if (error) {
@@ -83,6 +110,28 @@ export default function ProfileScreen() {
       try { await supabase.from('profiles').update({ avatar_url: url }).eq('id', userId) } catch {}
     } else { Alert.alert('Upload failed', 'Could not upload the photo.') }
     setUploading(false)
+  }
+
+  // Add a public profile photo (stored separately from the avatar).
+  const addProfilePhoto = async () => {
+    if (!userId) return
+    if (photos.length >= 6) { Alert.alert('Max reached', 'Up to 6 public photos.'); return }
+    const asset = await pickImageAsset()
+    if (!asset) return
+    setUploadingPhoto(true)
+    const url = await uploadMedia(asset.uri, 'image', asset.ext)
+    if (url) {
+      const { data } = await supabase.from('profile_photos')
+        .insert({ user_id: userId, url, position: photos.length })
+        .select('id, url, position').single()
+      if (data) setPhotos(prev => [...prev, data as any])
+    } else { Alert.alert('Upload failed', 'Could not upload the photo.') }
+    setUploadingPhoto(false)
+  }
+
+  const removeProfilePhoto = async (id: string) => {
+    await supabase.from('profile_photos').delete().eq('id', id)
+    setPhotos(prev => prev.filter(p => p.id !== id))
   }
 
   const signOut = () => {
@@ -144,6 +193,45 @@ export default function ProfileScreen() {
 
         <Text style={s.sectionLabel}>👻 ANONYMOUS NAME (GHOST MODE)</Text>
         <TextInput style={s.input} value={ghostName} onChangeText={setGhostName} placeholder="e.g. Mystery Fox — shown when you're in ghost mode" placeholderTextColor={GRAY} maxLength={30} />
+
+        <Text style={s.sectionLabel}>BIRTH DATE (YYYY-MM-DD)</Text>
+        <TextInput style={s.input} value={birthDate} onChangeText={setBirthDate} placeholder="1995-08-14" placeholderTextColor={GRAY} maxLength={10} autoCapitalize="none" />
+
+        <Text style={s.sectionLabel}>GENDER</Text>
+        <View style={s.genderRow}>
+          {[
+            { val: 'male', label: '👨 Male' },
+            { val: 'female', label: '👩 Female' },
+            { val: 'nonbinary', label: '🧑 Non-binary' },
+            { val: 'other', label: '✨ Other' },
+            { val: 'prefer_not', label: '· Skip' },
+          ].map(g => (
+            <TouchableOpacity key={g.val} style={[s.genderChip, gender === g.val && s.genderChipActive]} onPress={() => setGender(gender === g.val ? '' : g.val)}>
+              <Text style={[s.genderChipText, gender === g.val && { color: '#fff' }]}>{g.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <Text style={s.sectionLabel}>LOCATION (CITY)</Text>
+        <TextInput style={s.input} value={location} onChangeText={setLocation} placeholder="Tel Aviv, Israel" placeholderTextColor={GRAY} maxLength={60} />
+
+        <Text style={s.sectionLabel}>PUBLIC PHOTOS ({photos.length}/6)</Text>
+        <Text style={s.subLabel}>Shown on your profile — visible to anyone who views you.</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10, paddingVertical: 4 }}>
+          {photos.map(p => (
+            <View key={p.id} style={s.photoCell}>
+              <Image source={{ uri: p.url }} style={s.photoCellImg} resizeMode="cover" />
+              <TouchableOpacity style={s.photoCellRemove} onPress={() => removeProfilePhoto(p.id)}>
+                <Text style={s.photoCellRemoveText}>✕</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
+          {photos.length < 6 && (
+            <TouchableOpacity style={[s.photoCell, s.photoCellAdd]} onPress={addProfilePhoto} disabled={uploadingPhoto}>
+              {uploadingPhoto ? <ActivityIndicator color={PRIMARY} /> : <Text style={{ fontSize: 32, color: PRIMARY }}>＋</Text>}
+            </TouchableOpacity>
+          )}
+        </ScrollView>
 
         <Text style={s.sectionLabel}>BIO</Text>
         <TextInput style={[s.input, { minHeight: 80, textAlignVertical: 'top' }]} value={bio} onChangeText={setBio} placeholder="Tell people about yourself..." placeholderTextColor={GRAY} multiline maxLength={150} />
@@ -209,6 +297,16 @@ const s = StyleSheet.create({
   sectionLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginBottom: 8, marginTop: 20 },
   input: { backgroundColor: CARD, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, color: TEXT, borderWidth: 1, borderColor: BORDER },
   saveBtn: { backgroundColor: LIVE, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 20 },
+  subLabel: { fontSize: 11, color: GRAY, marginBottom: 6, marginTop: -2 },
+  genderRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  genderChip: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16, backgroundColor: BG, borderWidth: 1, borderColor: BORDER },
+  genderChipActive: { backgroundColor: PRIMARY, borderColor: PRIMARY },
+  genderChipText: { fontSize: 13, color: TEXT, fontWeight: '500' },
+  photoCell: { width: 110, height: 110, borderRadius: 12, overflow: 'hidden', position: 'relative', backgroundColor: CARD, borderWidth: 1, borderColor: BORDER },
+  photoCellImg: { width: '100%', height: '100%' },
+  photoCellAdd: { alignItems: 'center', justifyContent: 'center', borderStyle: 'dashed' as any },
+  photoCellRemove: { position: 'absolute', top: 4, right: 4, width: 22, height: 22, borderRadius: 11, backgroundColor: 'rgba(0,0,0,0.7)', alignItems: 'center', justifyContent: 'center' },
+  photoCellRemoveText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   zoneBtn: { backgroundColor: CARD, borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 10, borderWidth: 1, borderColor: BORDER },
   zoneBtnText: { color: PRIMARY, fontSize: 14, fontWeight: '700', letterSpacing: 0.5 },
   saveBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
