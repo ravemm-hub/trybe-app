@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER } from '../constants'
 
@@ -15,13 +15,9 @@ const KEYS = ['1','2','3','4','5','6','7','8','9','','0','⌫']
 export function PinPad({ onComplete, reset }: Props) {
   const [pin, setPin] = useState('')
 
-  // Clear when parent bumps `reset`.
-  // We intentionally watch reset directly inside the handler closure so
-  // changing it forces a fresh render with the cleared state.
-  if (reset !== undefined && pin && (PinPad as any)._lastReset !== reset) {
-    (PinPad as any)._lastReset = reset
-    setPin('')
-  }
+  // Clear when the parent bumps `reset`. Done in useEffect so we never call
+  // setState during render (which would break React reconciliation).
+  useEffect(() => { setPin('') }, [reset])
 
   const press = (k: string) => {
     if (k === '⌫') { setPin(p => p.slice(0, -1)); return }
