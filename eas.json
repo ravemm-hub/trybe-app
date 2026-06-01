@@ -12,11 +12,25 @@
       "android": {
         "buildType": "apk",
         "image": "ubuntu-24.04-jdk-17-ndk-r27b-sdk-55"
+      },
+      "ios": {
+        "simulator": false,
+        "resourceClass": "m-medium"
+      }
+    },
+    "preview-simulator": {
+      "distribution": "internal",
+      "ios": {
+        "simulator": true,
+        "resourceClass": "m-medium"
       }
     },
     "production": {
       "android": {
         "image": "ubuntu-24.04-jdk-17-ndk-r27b-sdk-55"
+      },
+      "ios": {
+        "resourceClass": "m-medium"
       }
     }
   },
