@@ -52,8 +52,8 @@ export function ZoneSignalSheet({ visible, onClose, myId, targetId, targetAlias 
         <TouchableOpacity style={{ flex: 1 }} onPress={onClose} activeOpacity={1} />
         <View style={s.sheet}>
           <View style={s.handle} />
-          <Text style={s.title}>How do you feel about <Text style={s.alias}>{targetAlias || 'this person'}</Text>?</Text>
-          <Text style={s.subtitle}>Discreet. They never see your choice — only a match notifies them.</Text>
+          <Text style={s.title}>What's the vibe?</Text>
+          <Text style={s.subtitle}>Discreet. They never see this. Only if they signal you back, Teeby tells you both 👀</Text>
           {busy ? <ActivityIndicator color={PRIMARY} style={{ paddingVertical: 12 }} /> : null}
           <View style={s.list}>
             {LEVELS.map(l => {
@@ -70,7 +70,7 @@ export function ZoneSignalSheet({ visible, onClose, myId, targetId, targetAlias 
             })}
           </View>
           <Text style={s.footer}>
-            ✦ All Zone activity is private. Phone numbers are never shared. Mutual “yes” unlocks a Reveal step before identities are exchanged.
+            ✦ Your signal stays private. If they signal you back, Teeby will let you both know — that's it. You can chat from there.
           </Text>
         </View>
       </View>

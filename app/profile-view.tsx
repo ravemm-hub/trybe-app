@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router'
 import { supabase } from '../src/lib/supabase'
 import { followUser, unfollowUser, isFollowing, getProfileCounts, SocialCounts } from '../src/services/social'
 import { getContactNameMap } from '../src/lib/contacts'
-import { getMyZoneStatus, isTargetOpenInZone, isSessionActive } from '../src/services/tryberZone'
+import { isTargetOpenInZone } from '../src/services/tryberZone'
 import { ZoneSignalSheet } from '../src/components/ZoneSignalSheet'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, AGENT_IDS } from '../src/constants'
 
@@ -33,7 +33,7 @@ export default function ProfileViewScreen() {
     setMyId(user.id)
     const cmap = await getContactNameMap()
     setContactName(cmap[targetId] || null)
-    const [{ data: p }, c, fol, { data: ps }, { data: photos }, myZ, theirOpen, sessionUnlocked] = await Promise.all([
+    const [{ data: p }, c, fol, { data: ps }, { data: photos }, theirOpen] = await Promise.all([
       supabase.from('profiles')
         .select('id, display_name, username, avatar_char, avatar_url, bio, ghost_name, tryber_zone_alias, birth_date, gender, location')
         .eq('id', targetId).single(),
@@ -43,22 +43,19 @@ export default function ProfileViewScreen() {
         .eq('user_id', targetId).is('group_id', null)
         .order('created_at', { ascending: false }).limit(30),
       supabase.from('profile_photos').select('id, url, position').eq('user_id', targetId).order('position', { ascending: true }),
-      getMyZoneStatus(user.id),
       isTargetOpenInZone(targetId),
-      isSessionActive(),
     ])
     setProfile(p ? { ...p, photos: photos || [] } : null)
     setCounts(c); setFollowing(fol); setPosts(ps || [])
-    // The ✦ button is visible ONLY if: not yourself, not an agent, you have
-    // Zone activated, you've unlocked it in this session, AND the target is
-    // active+available in Zone. Otherwise the button isn't even rendered —
-    // people who aren't in the Zone don't know it exists.
+    // The ✦ "spark" button is available to ANY user on ANY other user's
+    // profile — no activation, no PIN, no opt-in needed. Your signal stays
+    // private; only when the OTHER side also signals positively does Teeby
+    // DM both of you ("mutual spark — want to chat?").  The button is only
+    // hidden when (a) it's your own profile, (b) the target is an AI agent,
+    // or (c) the target explicitly opted out via Tryber Zone settings.
     setZoneVisible(
       user.id !== targetId &&
       !AGENT_IDS.includes(targetId) &&
-      myZ.active &&
-      myZ.available &&
-      sessionUnlocked &&
       theirOpen
     )
     setTargetAlias((p as any)?.tryber_zone_alias || null)
@@ -213,7 +210,7 @@ const s = StyleSheet.create({
   backBtn: { padding: 4, width: 36 },
   backText: { fontSize: 32, color: PRIMARY, lineHeight: 32, marginTop: -4 },
   headerTitle: { flex: 1, fontSize: 16, fontWeight: '700', color: TEXT },
-  zoneStar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF0FF' },
+  zoneStar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF0FF', borderWidth: 1, borderColor: PRIMARY },
   zoneStarText: { fontSize: 18, color: PRIMARY, fontWeight: '700' },
   profileCard: { backgroundColor: CARD, paddingHorizontal: 20, paddingVertical: 20, alignItems: 'center', borderBottomWidth: 0.5, borderColor: BORDER },
   avatar: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: BORDER, marginBottom: 12, overflow: 'hidden' },

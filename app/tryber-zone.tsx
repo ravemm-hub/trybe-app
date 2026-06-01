@@ -41,22 +41,30 @@ export default function TryberZoneScreen() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) { router.back(); return }
     setUserId(user.id)
-    const st = await getMyZoneStatus(user.id)
+    // Sparks is free + zero-friction. We auto-activate on first visit so the
+    // matches inbox is always available; if the user has set an optional PIN
+    // we still gate behind it. Alias is also optional.
+    let st = await getMyZoneStatus(user.id)
+    if (!st.active) {
+      try { await activateZone(user.id) } catch {}
+      st = await getMyZoneStatus(user.id)
+    }
     setStatus(st)
-    if (!st.active) { setStage('paywall'); return }
     const pinExists = await hasPinSet()
-    if (!pinExists) { setStage('setPin'); return }
-    if (!st.alias) { setStage('aliasSetup'); setAliasSuggestions(suggestAliases()); return }
-    const session = await isSessionActive()
-    if (session) { setStage('home'); await loadHome(user.id) }
-    else setStage('lock')
+    if (pinExists) {
+      const session = await isSessionActive()
+      if (session) { setStage('home'); await loadHome(user.id) }
+      else setStage('lock')
+    } else {
+      setStage('home')
+      await loadHome(user.id)
+    }
   }, [router])
 
   useEffect(() => { bootstrap() }, [bootstrap])
-  // Re-prompt PIN whenever we leave + come back, so the user is never showing
-  // the Zone without the lock screen having fired since the last unlock.
+  // End PIN session on blur — only relevant if the user actually set a PIN.
   useFocusEffect(useCallback(() => {
-    return () => { endSession() }   // end session on blur
+    return () => { hasPinSet().then(has => { if (has) endSession() }) }
   }, []))
 
   const loadHome = async (uid: string) => {
