@@ -14,6 +14,7 @@ import { MediaBubble } from '../src/components/MediaBubble'
 import { RichMessage } from '../src/components/RichMessage'
 import { MediaKind } from '../src/lib/upload'
 import { getContactNameMap, loadAndMatchContacts } from '../src/lib/contacts'
+import { getGroupVenue, getLiveMembers, categoryEmoji, Venue, LiveMember } from '../src/services/venues'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS } from '../src/constants'
 import { Message } from '../src/types'
 
@@ -42,6 +43,13 @@ export default function ChatScreen() {
   const [prefLang, setPrefLang] = useState<TranslateLang | null>(null)
   const [showLangPicker, setShowLangPicker] = useState(false)
   const [pendingTranslateMsg, setPendingTranslateMsg] = useState<Message | null>(null)
+  const [venue, setVenue] = useState<Venue | null>(null)
+  const [showLive, setShowLive] = useState(false)
+  const [liveMembers, setLiveMembers] = useState<LiveMember[]>([])
+  const [liveRadius, setLiveRadius] = useState(100)
+  const [liveTab, setLiveTab] = useState<'live' | 'all'>('live')
+  const [allMembers, setAllMembers] = useState<any[]>([])
+  const [loadingLive, setLoadingLive] = useState(false)
 
   // Load the user's saved preferred translate language on mount.
   useEffect(() => { getPreferredLang().then(setPrefLang) }, [])
@@ -53,8 +61,16 @@ export default function ChatScreen() {
       setUserId(user.id)
       const { data: member } = await supabase.from('group_members').select('role').eq('group_id', id).eq('user_id', user.id).single()
       if (member?.role === 'admin') setIsAdmin(true)
-      const { data: g } = await supabase.from('groups').select('description, member_count').eq('id', id).single()
-      if (g) { setGroupDesc(g.description || ''); if (g.member_count != null) setMemberCount(g.member_count) }
+      const { data: g } = await supabase.from('groups').select('description, member_count, venue_id, default_radius_m').eq('id', id).single()
+      if (g) {
+        setGroupDesc(g.description || '')
+        if (g.member_count != null) setMemberCount(g.member_count)
+        if (g.default_radius_m) setLiveRadius(g.default_radius_m)
+      }
+      // Resolve venue (if this Trybe is anchored to one) — drives the venue
+      // badge + Live members view.
+      const v = await getGroupVenue(id)
+      if (v) setVenue(v)
       loadMessages()
       markGroupRead(id, user.id)
     })
@@ -152,6 +168,25 @@ export default function ChatScreen() {
     if (t) setTranslations(prev => ({ ...prev, [msg.id]: t }))
   }
 
+  // Open the live-presence modal: fetches members currently within radius of
+  // the venue + all members (for the "All time" tab).
+  const openLive = async () => {
+    setShowLive(true); setLoadingLive(true)
+    try {
+      const [live, { data: all }] = await Promise.all([
+        getLiveMembers(id, liveRadius),
+        supabase.from('group_members').select('user_id, profiles:user_id(display_name, username, avatar_char)').eq('group_id', id),
+      ])
+      setLiveMembers(live)
+      setAllMembers((all || []).map((m: any) => ({ user_id: m.user_id, ...m.profiles })))
+    } catch {} finally { setLoadingLive(false) }
+  }
+  // When the user changes the radius, refresh just the Live list.
+  const refreshLive = async (radius: number) => {
+    setLiveRadius(radius); setLoadingLive(true)
+    try { setLiveMembers(await getLiveMembers(id, radius)) } catch {} finally { setLoadingLive(false) }
+  }
+
   const openLangPicker = (msg: Message) => { setPendingTranslateMsg(msg); setShowLangPicker(true) }
   const onPickLang = async (lang: TranslateLang | null) => {
     await setPreferredLang(lang); setPrefLang(lang)
@@ -221,8 +256,18 @@ export default function ChatScreen() {
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}><Text style={s.backText}>‹</Text></TouchableOpacity>
         <TouchableOpacity style={s.hInfo} activeOpacity={0.6} onPress={() => router.push({ pathname: '/group-settings', params: { id, name } })}>
           <Text style={s.hName} numberOfLines={1}>{name}</Text>
-          <Text style={s.hSub} numberOfLines={1}>{memberCount} members{groupDesc ? ' · ' + groupDesc : ' · ⚙️ settings'}</Text>
+          <Text style={s.hSub} numberOfLines={1}>
+            {venue
+              ? categoryEmoji(venue.category) + ' ' + venue.name + ' · ' + memberCount + ' members'
+              : memberCount + ' members' + (groupDesc ? ' · ' + groupDesc : ' · ⚙️ settings')}
+          </Text>
         </TouchableOpacity>
+        {venue && (
+          <TouchableOpacity style={s.liveBadge} onPress={openLive}>
+            <View style={s.livePulse} />
+            <Text style={s.liveBadgeText}>Live</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={s.modeBtn} onPress={() => router.push({ pathname: '/group-settings', params: { id, name } })}>
           <Text style={s.modeBtnText}>⚙️</Text>
         </TouchableOpacity>
@@ -346,6 +391,66 @@ export default function ChatScreen() {
 
       <TranslatePickerSheet visible={showLangPicker} onClose={() => { setShowLangPicker(false); setPendingTranslateMsg(null) }} selected={prefLang} onPick={onPickLang} />
 
+      {/* Live members of a venue-anchored Trybe — Live now / All time. */}
+      <Modal visible={showLive} transparent animationType="slide" onRequestClose={() => setShowLive(false)}>
+        <View style={s.liveOverlay}>
+          <TouchableOpacity style={{ flex: 1 }} onPress={() => setShowLive(false)} activeOpacity={1} />
+          <View style={[s.liveSheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            <View style={s.liveHandle} />
+            <Text style={s.liveTitle}>{venue ? categoryEmoji(venue.category) + ' ' + venue.name : 'Members'}</Text>
+            <View style={s.liveTabs}>
+              {(['live', 'all'] as const).map(t => (
+                <TouchableOpacity key={t} style={[s.liveTabBtn, liveTab === t && s.liveTabBtnActive]} onPress={() => setLiveTab(t)}>
+                  <Text style={[s.liveTabText, liveTab === t && s.liveTabTextActive]}>
+                    {t === 'live'
+                      ? '📡 Live now (' + liveMembers.length + ')'
+                      : '👥 All time (' + allMembers.length + ')'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            {liveTab === 'live' && (
+              <View style={{ paddingVertical: 8 }}>
+                <Text style={s.radiusLabel}>RADIUS: {liveRadius < 1000 ? liveRadius + 'm' : (liveRadius / 1000) + 'km'}</Text>
+                <View style={s.radiusRow}>
+                  {[50, 100, 250, 500, 1000, 2500].map(r => (
+                    <TouchableOpacity key={r} style={[s.radiusChip, liveRadius === r && s.radiusChipActive]} onPress={() => refreshLive(r)}>
+                      <Text style={[s.radiusChipText, liveRadius === r && { color: '#fff' }]}>{r < 1000 ? r + 'm' : (r / 1000) + 'k'}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            )}
+            {loadingLive
+              ? <ActivityIndicator color={PRIMARY} style={{ paddingVertical: 24 }} />
+              : <FlatList
+                  data={liveTab === 'live' ? liveMembers : allMembers}
+                  keyExtractor={(m: any) => m.user_id}
+                  style={{ maxHeight: 380 }}
+                  ListEmptyComponent={<Text style={s.liveEmpty}>{liveTab === 'live' ? 'No one is here right now.' : 'No members yet.'}</Text>}
+                  renderItem={({ item: m }: any) => {
+                    const dn = contactNames[m.user_id] || m.display_name || m.username || 'User'
+                    return (
+                      <TouchableOpacity style={s.liveRow} onPress={() => { setShowLive(false); router.push({ pathname: '/profile-view', params: { userId: m.user_id } }) }}>
+                        <View style={s.liveAvatar}><Text style={{ fontSize: 18 }}>{m.avatar_char || dn[0] || '?'}</Text></View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.liveName}>{dn}</Text>
+                          {liveTab === 'live' && m.distance_m != null && (
+                            <Text style={s.liveDist}>{Math.round(m.distance_m)}m from venue</Text>
+                          )}
+                        </View>
+                        <TouchableOpacity style={s.liveDm} onPress={(e) => { e.stopPropagation(); setShowLive(false); router.push({ pathname: '/dm', params: { userId: m.user_id, userName: dn, myMode: 'lit', theirMode: 'lit', myAvatar: '💬', isAgent: '0' } }) }}>
+                          <Text style={{ fontSize: 18 }}>💬</Text>
+                        </TouchableOpacity>
+                      </TouchableOpacity>
+                    )
+                  }}
+                />
+            }
+          </View>
+        </View>
+      </Modal>
+
       <KeyboardAvoidingView behavior="padding" keyboardVerticalOffset={0}>
         {att.isRecording ? (
           <View style={[s.inputRow, { paddingBottom: Math.max(insets.bottom, 8) }]}>
@@ -380,6 +485,29 @@ const s = StyleSheet.create({
   hName: { fontSize: 16, fontWeight: '700', color: TEXT },
   hSub: { fontSize: 11, color: GRAY },
   modeBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
+  liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14, backgroundColor: '#E8F5E9', borderWidth: 1, borderColor: LIVE },
+  livePulse: { width: 8, height: 8, borderRadius: 4, backgroundColor: LIVE },
+  liveBadgeText: { fontSize: 12, color: LIVE, fontWeight: '700' },
+  liveOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
+  liveSheet: { backgroundColor: CARD, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingHorizontal: 16, paddingTop: 8 },
+  liveHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: BORDER, alignSelf: 'center', marginBottom: 8 },
+  liveTitle: { fontSize: 17, fontWeight: '800', color: TEXT, marginBottom: 10 },
+  liveTabs: { flexDirection: 'row', gap: 6, marginBottom: 4 },
+  liveTabBtn: { flex: 1, paddingVertical: 9, borderRadius: 12, backgroundColor: BG, alignItems: 'center', borderWidth: 1, borderColor: BORDER },
+  liveTabBtnActive: { backgroundColor: PRIMARY, borderColor: PRIMARY },
+  liveTabText: { fontSize: 13, color: GRAY, fontWeight: '600' },
+  liveTabTextActive: { color: '#fff' },
+  radiusLabel: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.6, marginBottom: 6 },
+  radiusRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  radiusChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, backgroundColor: BG, borderWidth: 1, borderColor: BORDER },
+  radiusChipActive: { backgroundColor: PRIMARY, borderColor: PRIMARY },
+  radiusChipText: { fontSize: 12, color: TEXT, fontWeight: '600' },
+  liveRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 0.5, borderColor: BORDER },
+  liveAvatar: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center' },
+  liveName: { fontSize: 15, fontWeight: '600', color: TEXT },
+  liveDist: { fontSize: 12, color: LIVE, marginTop: 2, fontWeight: '500' },
+  liveDm: { width: 36, height: 36, borderRadius: 18, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: BORDER },
+  liveEmpty: { fontSize: 14, color: GRAY, textAlign: 'center', paddingVertical: 24 },
   modeBtnGhost: { backgroundColor: '#F0F0F0' },
   modeBtnText: { fontSize: 18 },
   systemMsg: { alignItems: 'center', paddingVertical: 8 },

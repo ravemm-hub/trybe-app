@@ -5,6 +5,10 @@ import { useRouter } from 'expo-router'
 import * as Location from 'expo-location'
 import { supabase } from '../src/lib/supabase'
 import { askClaude } from '../src/lib/claude'
+import {
+  detectNearbyVenues, upsertVenue, findNearbyVenueGroups,
+  categoryEmoji, DetectedVenue, NearbyGroup,
+} from '../src/services/venues'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE } from '../src/constants'
 
 type GroupType = 'open' | 'private' | 'secret'
@@ -30,6 +34,11 @@ export default function CreateScreen() {
   const [coords, setCoords] = useState<{ lat: number; lon: number } | null>(null)
   const [creating, setCreating] = useState(false)
   const [generatingName, setGeneratingName] = useState(false)
+  const [venues, setVenues] = useState<DetectedVenue[]>([])
+  const [nearbyGroups, setNearbyGroups] = useState<NearbyGroup[]>([])
+  const [selectedVenue, setSelectedVenue] = useState<DetectedVenue | null>(null)
+  const [eventDate, setEventDate] = useState('')        // YYYY-MM-DD HH:MM
+  const [detectingVenues, setDetectingVenues] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => { if (user) setUserId(user.id) })
@@ -44,8 +53,24 @@ export default function CreateScreen() {
       setCoords({ lat: loc.coords.latitude, lon: loc.coords.longitude })
       const [place] = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude })
       if (place) setLocationName([place.city, place.country].filter(Boolean).join(', '))
-    } catch {}
+      // Detect named POIs within ~200m + existing Trybes anchored to nearby venues.
+      setDetectingVenues(true)
+      const [vs, gs] = await Promise.all([
+        detectNearbyVenues(loc.coords.latitude, loc.coords.longitude, 200),
+        findNearbyVenueGroups(loc.coords.latitude, loc.coords.longitude, 300),
+      ])
+      setVenues(vs)
+      setNearbyGroups(gs)
+      setDetectingVenues(false)
+    } catch { setDetectingVenues(false) }
   }
+
+  // Tapping a venue suggestion → fill name + capture the venue selection.
+  const pickVenue = (v: DetectedVenue) => {
+    setSelectedVenue(v)
+    if (!name.trim()) setName(v.name)
+  }
+  const clearVenue = () => setSelectedVenue(null)
 
   const generateName = async () => {
     setGeneratingName(true)
@@ -82,6 +107,20 @@ export default function CreateScreen() {
       }
       if (coords) groupData.location = 'POINT(' + coords.lon + ' ' + coords.lat + ')'
 
+      // Anchor to a venue if the user picked one.
+      if (selectedVenue) {
+        const v = await upsertVenue(selectedVenue, userId)
+        if (v) {
+          groupData.venue_id = v.id
+          // Use the venue's location as the group's authoritative geo-pin too.
+          groupData.location = 'POINT(' + v.lon + ' ' + v.lat + ')'
+        }
+      }
+      if (eventDate.trim()) {
+        const d = new Date(eventDate.trim().replace(' ', 'T'))
+        if (!isNaN(d.getTime())) groupData.event_at = d.toISOString()
+      }
+
       const { data: group, error } = await supabase.from('groups').insert(groupData).select().single()
       if (error || !group) throw error || new Error('Failed to create group')
 
@@ -114,6 +153,62 @@ export default function CreateScreen() {
       </View>
 
       <ScrollView contentContainerStyle={s.content} showsVerticalScrollIndicator={false}>
+
+        {/* Existing Trybes at nearby venues — let the user join instead of duplicating. */}
+        {nearbyGroups.length > 0 && (
+          <>
+            <Text style={s.label}>✨ TRYBES AT THIS LOCATION</Text>
+            <Text style={s.helper}>Already happening near you — tap to join.</Text>
+            {nearbyGroups.slice(0, 4).map(g => (
+              <TouchableOpacity key={g.group_id} style={s.venueGroupCard} onPress={() => router.push({ pathname: '/chat', params: { id: g.group_id, name: g.group_name, members: String(g.member_count || 0) } })}>
+                <Text style={s.venueGroupEmoji}>{categoryEmoji(g.venue_category)}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.venueGroupName} numberOfLines={1}>{g.group_name}</Text>
+                  <Text style={s.venueGroupMeta}>📍 {g.venue_name} · {g.member_count} members · {Math.round(g.distance_m)}m</Text>
+                </View>
+                <Text style={s.venueGroupJoin}>Join ›</Text>
+              </TouchableOpacity>
+            ))}
+          </>
+        )}
+
+        {/* Detected POIs around the user — tap to anchor the NEW Trybe to that venue. */}
+        {(detectingVenues || venues.length > 0) && (
+          <>
+            <Text style={s.label}>📍 START HERE</Text>
+            {detectingVenues
+              ? <View style={{ paddingVertical: 14, alignItems: 'center' }}><ActivityIndicator color={PRIMARY} size="small" /></View>
+              : <Text style={s.helper}>Teeby sees these places around you — tap one to start a Trybe there.</Text>}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4, paddingHorizontal: 2 }}>
+              {venues.map(v => {
+                const sel = selectedVenue?.osm_id === v.osm_id
+                return (
+                  <TouchableOpacity key={v.osm_id} style={[s.venueChip, sel && s.venueChipSel]} onPress={() => sel ? clearVenue() : pickVenue(v)}>
+                    <Text style={s.venueChipEmoji}>{categoryEmoji(v.category)}</Text>
+                    <View>
+                      <Text style={[s.venueChipName, sel && { color: '#fff' }]} numberOfLines={1}>{v.name}</Text>
+                      <Text style={[s.venueChipDist, sel && { color: 'rgba(255,255,255,0.85)' }]}>{v.distance_m}m · {v.category}</Text>
+                    </View>
+                  </TouchableOpacity>
+                )
+              })}
+            </ScrollView>
+            {selectedVenue && (
+              <View style={s.venuePicked}>
+                <Text style={s.venuePickedText}>Anchored to {categoryEmoji(selectedVenue.category)} {selectedVenue.name}</Text>
+                <TouchableOpacity onPress={clearVenue}><Text style={s.venuePickedClear}>✕</Text></TouchableOpacity>
+              </View>
+            )}
+            {selectedVenue && (
+              <>
+                <Text style={s.label}>DATE & TIME (OPTIONAL)</Text>
+                <Text style={s.helper}>Make it about a specific moment — leave empty for an always-on Trybe.</Text>
+                <TextInput style={s.input} value={eventDate} onChangeText={setEventDate}
+                  placeholder="2026-06-15 21:00" placeholderTextColor={GRAY} autoCapitalize="none" maxLength={16} />
+              </>
+            )}
+          </>
+        )}
 
         <Text style={s.label}>TYPE</Text>
         {GROUP_TYPES.map(gt => (
@@ -178,6 +273,20 @@ const s = StyleSheet.create({
   title: { fontSize: 17, fontWeight: '700', color: TEXT },
   content: { padding: 20 },
   label: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.8, marginBottom: 8, marginTop: 20 },
+  helper: { fontSize: 12, color: GRAY, marginTop: -4, marginBottom: 8 },
+  venueGroupCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: '#F5F4FF', borderRadius: 14, paddingVertical: 12, paddingHorizontal: 14, borderWidth: 1, borderColor: PRIMARY, marginBottom: 8 },
+  venueGroupEmoji: { fontSize: 26 },
+  venueGroupName: { fontSize: 15, fontWeight: '700', color: TEXT },
+  venueGroupMeta: { fontSize: 11, color: GRAY, marginTop: 2 },
+  venueGroupJoin: { fontSize: 13, color: PRIMARY, fontWeight: '700' },
+  venueChip: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 14, backgroundColor: CARD, borderWidth: 1, borderColor: BORDER, maxWidth: 220 },
+  venueChipSel: { backgroundColor: PRIMARY, borderColor: PRIMARY },
+  venueChipEmoji: { fontSize: 20 },
+  venueChipName: { fontSize: 13, fontWeight: '700', color: TEXT },
+  venueChipDist: { fontSize: 10, color: GRAY, marginTop: 1 },
+  venuePicked: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#EEF0FF', borderRadius: 10 },
+  venuePickedText: { flex: 1, fontSize: 13, color: PRIMARY, fontWeight: '600' },
+  venuePickedClear: { fontSize: 16, color: PRIMARY, paddingHorizontal: 4 },
   typeCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: CARD, borderRadius: 14, padding: 14, marginBottom: 8, borderWidth: 1.5, borderColor: BORDER },
   typeCardActive: { borderColor: PRIMARY, backgroundColor: '#F5F4FF' },
   typeCardLeft: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, flex: 1 },
