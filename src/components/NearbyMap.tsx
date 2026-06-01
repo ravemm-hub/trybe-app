@@ -1,4 +1,5 @@
-import { useRef, useEffect, useMemo } from 'react'
+import { useRef, useEffect, useMemo, useState } from 'react'
+import { View, Text, ActivityIndicator, StyleSheet } from 'react-native'
 import { WebView } from 'react-native-webview'
 
 export type MapUser = { id: string; name: string; lat: number; lon: number; avatar?: string | null }
@@ -64,6 +65,7 @@ export function NearbyMap({ center, users, radiusM, onSelection, onTapUser, hide
   hideSelectionUI?: boolean
 }) {
   const ref = useRef<WebView>(null)
+  const [loading, setLoading] = useState(true)
   const usersKey = JSON.stringify(users)
   const mode = onTapUser ? 'tap' : 'select'
   const showSel = (mode === 'select' && !hideSelectionUI) ? 'block' : 'none'
@@ -76,18 +78,32 @@ export function NearbyMap({ center, users, radiusM, onSelection, onTapUser, hide
   )
   useEffect(() => { ref.current?.injectJavaScript(`setRadius(${radiusM}); true;`) }, [radiusM])
   return (
-    <WebView
-      ref={ref}
-      originWhitelist={['*']}
-      source={{ html }}
-      onMessage={(e) => {
-        try {
-          const d = JSON.parse(e.nativeEvent.data)
-          if (d.type === 'selection' && onSelection) onSelection(d.ids || [])
-          else if (d.type === 'tap' && onTapUser && d.id) onTapUser(d.id)
-        } catch {}
-      }}
-      style={{ flex: 1 }}
-    />
+    <View style={{ flex: 1 }}>
+      <WebView
+        ref={ref}
+        originWhitelist={['*']}
+        source={{ html }}
+        onLoadEnd={() => setLoading(false)}
+        onMessage={(e) => {
+          try {
+            const d = JSON.parse(e.nativeEvent.data)
+            if (d.type === 'selection' && onSelection) onSelection(d.ids || [])
+            else if (d.type === 'tap' && onTapUser && d.id) onTapUser(d.id)
+          } catch {}
+        }}
+        style={{ flex: 1 }}
+      />
+      {loading && (
+        <View style={mapStyles.overlay} pointerEvents="none">
+          <ActivityIndicator color="#6C63FF" size="large" />
+          <Text style={mapStyles.text}>Loading map…</Text>
+        </View>
+      )}
+    </View>
   )
 }
+
+const mapStyles = StyleSheet.create({
+  overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(248,247,255,0.96)', alignItems: 'center', justifyContent: 'center' },
+  text: { marginTop: 10, fontSize: 13, color: '#6C63FF', fontWeight: '600' },
+})

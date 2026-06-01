@@ -132,7 +132,10 @@ export default function ChatsScreen() {
     const profileCache: Record<string, any> = {}
     for (const msg of data) {
       const otherId = msg.sender_id === uid ? msg.receiver_id : msg.sender_id
-      if (AGENT_IDS.includes(otherId)) continue
+      // Agent DMs are surfaced too — anyone the user has chatted with belongs
+      // in their Chats list. The row carries an isAgent flag so navigation
+      // pushes /dm with isAgent='1' and the agent-reply path runs.
+      const isAgentRow = AGENT_IDS.includes(otherId)
       const myM = msg.sender_id === uid ? msg.sender_mode : msg.receiver_mode
       const theirM = msg.sender_id === uid ? msg.receiver_mode : msg.sender_mode
       const pairKey = otherId + ':' + myM + ':' + theirM
@@ -146,7 +149,7 @@ export default function ChatsScreen() {
         .select('id', { count: 'exact', head: true })
         .eq('sender_id', otherId).eq('receiver_id', uid)
         .eq('sender_mode', theirM).eq('receiver_mode', myM).is('read_at', null)
-      items.push({ pairKey, otherId, profile: profileCache[otherId], lastMsg: msg, unread: unread || 0, myMode: myM, theirMode: theirM })
+      items.push({ pairKey, otherId, profile: profileCache[otherId], lastMsg: msg, unread: unread || 0, myMode: myM, theirMode: theirM, isAgent: isAgentRow })
     }
     const names: Record<string, string> = {}
     for (const d of items) { const cn = await getContactName(d.otherId); if (cn) names[d.otherId] = cn }
@@ -362,7 +365,7 @@ export default function ChatsScreen() {
               : (contactNames[d.otherId] || d.profile?.display_name || d.profile?.username || 'User')
             const modeBadge = (d.myMode === 'ghost' ? '👻' : '🔥') + '→' + (theirGhost ? '👻' : '🔥')
             return (
-              <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: d.otherId, userName: displayName, myMode: d.myMode || 'lit', theirMode: d.theirMode || 'lit', myAvatar: '💬', isAgent: '0' } })}>
+              <Pressable style={s.row} onPress={() => router.push({ pathname: '/dm', params: { userId: d.otherId, userName: displayName, myMode: d.myMode || 'lit', theirMode: d.theirMode || 'lit', myAvatar: '💬', isAgent: d.isAgent ? '1' : '0' } })}>
                 <View style={s.dmAvatar}><Text style={s.dmAvatarText}>{theirGhost ? '👻' : (d.profile?.avatar_char || displayName[0] || '?')}</Text></View>
                 <View style={s.rowInfo}>
                   <View style={s.rowTop}>

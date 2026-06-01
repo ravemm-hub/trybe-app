@@ -142,23 +142,29 @@ export default function DMScreen() {
     if (sendErr) setMessages(prev => prev.filter(m => m.id !== mid))
     if (talkingToAgent && agentInfo) {
       setAgentTyping(true)
-      // 12s hard cap so the dots never stick if something hangs.
       const timeout = setTimeout(() => setAgentTyping(false), 12000)
       try {
         await new Promise(r => setTimeout(r, 700 + Math.random() * 800))
-        const lang = agentInfo.lang === 'he' ? 'Hebrew' : 'English'
-        // Agents chat — they don't need to web-search. Disabling web saves the
-        // ~3-5s extra latency (and the rate-limit risk) of the search tool.
-        let reply = await askClaude(
-          'You are ' + agentInfo.name + ', ' + agentInfo.personality + '. Someone wrote: "' + content + '". Reply in ' + lang + ', 1-2 sentences, casual.',
-          undefined, 150, false,
-        )
+        // Detect Hebrew/Arabic etc. from the user's text so the agent matches.
+        // Agents now also know how to drop a Google Maps link when asked about
+        // a place ("where can we eat tonight?" → name + 1-line description +
+        // tappable URL — RichMessage renders URLs as taps automatically).
+        const system =
+`You are ${agentInfo.name}, a friendly Tryber social-app character. Personality: ${agentInfo.personality}.
+Style: warm, witty, a bit playful and flirtatious when it fits — never crude. Light teasing is welcome.
+Language: reply in the SAME language the user wrote in (Hebrew, English, Arabic, Russian, French, whatever).
+Length: 1-3 short sentences max.
+If the user asks about a place (restaurant, bar, café, attraction, park…) drop a Google Maps link of the form:
+https://www.google.com/maps/search/?api=1&query=<URL-encoded place name + city>
+Put it on its own line at the end of your reply, with a tiny 1-line description above it.
+Never claim to be an AI — you're a Tryber character.`
+        let reply = await askClaude(content, system, 220, false)
         // Fallback so the user always sees a response (silent failure was the
-        // "dots forever" bug). Light and on-brand.
+        // "dots forever" bug). Detect Hebrew from the user's message so the
+        // fallback matches their language.
         if (!reply || !reply.trim()) {
-          reply = lang === 'Hebrew'
-            ? 'אהבתי 😊 רוצה לספר לי עוד?'
-            : "Love that 😊 Tell me more?"
+          const isHe = /[֐-׿]/.test(content)
+          reply = isHe ? 'אהבתי 😊 רוצה לספר לי עוד?' : 'Love that 😊 Tell me more?'
         }
         const { error: rpcErr } = await supabase.rpc('send_agent_dm', { p_agent: otherUserId, p_receiver: myId, p_content: reply })
         if (rpcErr) console.warn('send_agent_dm:', rpcErr.message)

@@ -156,9 +156,16 @@ async function maybeGroupAgentReply(groupId: string) {
         weekday: 'long', hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
       }).format(new Date())
     } catch { nowStr2 = new Date().toUTCString() }
-    const system = 'Current date and time: ' + nowStr2 + '. Timezone: Asia/Jerusalem. ' +
-      'Always answer date/time questions confidently using this — never say you do not know the date. ' +
-      instructions + ' Reply in the SAME language as the group. Keep it to 1-2 short sentences. Be natural — do not greet every time.'
+    const system =
+`Current date and time: ${nowStr2}. Timezone: Asia/Jerusalem.
+Always answer date/time questions confidently using this — never say you do not know the date.
+${instructions}
+Style: friendly, witty, a bit playful and flirtatious when it fits — never crude.
+Language: reply in the SAME language as the group (Hebrew, English, Arabic, …).
+Length: 1-2 short sentences. Don't greet every time.
+If someone asks about a place (restaurant, bar, café, museum, beach…), drop a Google Maps link of the form:
+https://www.google.com/maps/search/?api=1&query=<URL-encoded place + city>
+Put a tiny 1-line description above it and the link on its own line. The client will auto-render the URL as tappable.`
     const reply = await anthropic({ model: DEFAULT_MODEL, max_tokens: 200, system, messages: [{ role: 'user', content: history }] })
     if (!reply) return
 
