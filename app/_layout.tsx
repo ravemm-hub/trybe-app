@@ -15,9 +15,52 @@ async function checkTeebyProactive(userId: string) {
       .order('created_at', { ascending: false }).limit(1)
     if (last?.[0] && Date.now() - new Date(last[0].created_at).getTime() < 3600000) return
     const { data: p } = await supabase.from('profiles').select('display_name').eq('id', userId).single()
+    const name = p?.display_name || ''
+
+    // FIRST PRIORITY: are there active Trybes near the user's current location
+    // that they're NOT in? If yes, Teeby surfaces them — that's the most
+    // valuable nudge ("you're at a venue with a live Trybe — join?").
+    let coords: { lat: number; lon: number } | null = null
+    try {
+      const Location = await import('expo-location')
+      const { status } = await Location.getForegroundPermissionsAsync()
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+        coords = { lat: loc.coords.latitude, lon: loc.coords.longitude }
+      }
+    } catch {}
+
+    if (coords) {
+      try {
+        const { data: near } = await supabase.rpc('unjoined_groups_near', {
+          p_user: userId, p_lat: coords.lat, p_lon: coords.lon, p_radius_m: 1500,
+        })
+        if (Array.isArray(near) && near.length > 0) {
+          // Filter to ones we haven't already nudged them about.
+          const ids = near.map((g: any) => g.id)
+          const { data: alreadySent } = await supabase.from('proactive_nudges_sent')
+            .select('group_id').eq('user_id', userId).in('group_id', ids)
+          const sentIds = new Set((alreadySent || []).map((r: any) => r.group_id))
+          const fresh = near.filter((g: any) => !sentIds.has(g.id))
+          if (fresh.length > 0) {
+            const top = fresh[0]
+            const dist = top.distance_m < 1000
+              ? Math.round(top.distance_m) + 'm'
+              : (top.distance_m / 1000).toFixed(1) + 'km'
+            const venueLine = top.venue_name ? '\n📍 ' + top.venue_name : ''
+            const descLine = top.description ? '\n"' + top.description.slice(0, 100) + '"' : ''
+            const text = 'Hey' + (name ? ' ' + name : '') + '! 👀\n\nThere\'s an active Trybe just ' + dist + ' from you:\n\n⚡ ' + top.name + venueLine + descLine + '\n\n' + top.member_count + ' members. Want to join?'
+            await supabase.from('agent_messages').insert({ user_id: userId, role: 'assistant', content: text })
+            await supabase.from('proactive_nudges_sent').insert({ user_id: userId, group_id: top.id })
+            return
+          }
+        }
+      } catch {}
+    }
+
+    // FALLBACK: generic "what's active right now" message (the old behavior).
     const { data: groups } = await supabase.from('groups').select('name, member_count')
       .eq('status', 'open').order('member_count', { ascending: false }).limit(3)
-    const name = p?.display_name || ''
     let text = 'Hey' + (name ? ' ' + name : '') + '! 👋 '
     if (groups?.length) {
       text += 'There are ' + groups.length + ' active groups now:\n'

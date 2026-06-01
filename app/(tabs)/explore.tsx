@@ -31,23 +31,42 @@ export default function ExploreScreen() {
   const [contactNames, setContactNames] = useState<Record<string, string>>({})
   const [radarView, setRadarView] = useState<'list' | 'map'>('list')
   const [center, setCenter] = useState<{ lat: number; lon: number } | null>(null)
+  const [myCoords, setMyCoords] = useState<{ lat: number; lon: number } | null>(null)
 
   // Keep the contact-name map fresh so Radar shows people by the name saved
   // in the user's device contacts, not by their app-handle.
   useEffect(() => { getContactNameMap().then(setContactNames) }, [tab])
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
       setUserId(user.id)
-      loadGroups(user.id)
-    })
+      // Best-effort location lookup so the Explore list can be ordered by
+      // distance. If permission is denied, fall back to no-coord ordering
+      // (the RPC handles NULL lat/lon gracefully).
+      let coords: { lat: number; lon: number } | null = null
+      try {
+        const { status } = await Location.getForegroundPermissionsAsync()
+        if (status === 'granted') {
+          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced })
+          coords = { lat: loc.coords.latitude, lon: loc.coords.longitude }
+          setMyCoords(coords)
+        }
+      } catch {}
+      loadGroups(user.id, coords)
+    })()
   }, [])
 
-  const loadGroups = async (uid: string) => {
-    const { data: allGroups } = await supabase.from('groups')
-      .select('id, name, description, status, is_private, is_secret, member_count, location_name')
-      .eq('status', 'open').order('member_count', { ascending: false }).limit(50)
+  const loadGroups = async (uid: string, coords: { lat: number; lon: number } | null) => {
+    // Server-side ordered: nearby Trybes first (within 50km), then by recent
+    // activity, then by member count. Trybes with no location land at the bottom.
+    const { data: allGroups, error } = await supabase.rpc('explore_groups_for_user', {
+      p_user: uid,
+      p_lat: coords?.lat ?? null,
+      p_lon: coords?.lon ?? null,
+    })
+    if (error) console.warn('explore_groups_for_user:', error.message)
     const { data: memberships } = await supabase.from('group_members').select('group_id').eq('user_id', uid)
     setMyGroups(new Set((memberships || []).map((m: any) => m.group_id)))
     const { data: reqs } = await supabase.from('join_requests').select('group_id').eq('user_id', uid).eq('status', 'pending')
@@ -156,7 +175,7 @@ export default function ExploreScreen() {
 
       {tab === 'groups' && (
         <FlatList data={groups} keyExtractor={g => g.id}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); if (userId) loadGroups(userId) }} tintColor={PRIMARY} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); if (userId) loadGroups(userId, myCoords) }} tintColor={PRIMARY} />}
           contentContainerStyle={{ padding: 12, gap: 10 }}
           ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>⚡</Text><Text style={s.emptyTitle}>No Trybes yet</Text><TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}><Text style={s.emptyBtnText}>Create one</Text></TouchableOpacity></View>}
           renderItem={({ item: g }) => {
@@ -169,9 +188,18 @@ export default function ExploreScreen() {
                     <View style={[s.liveDot, { backgroundColor: LIVE }]} />
                   </View>
                   <View style={s.groupInfo}>
-                    <Text style={s.groupName} numberOfLines={1}>{g.name}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={s.groupName} numberOfLines={1}>{g.name}</Text>
+                      {g.distance_m != null && (
+                        <View style={[s.distChip, g.distance_m < 500 && s.distChipClose]}>
+                          <Text style={[s.distChipText, g.distance_m < 500 && { color: '#fff' }]}>
+                            {g.distance_m < 1000 ? Math.round(g.distance_m) + 'm' : (g.distance_m / 1000).toFixed(1) + 'km'}
+                          </Text>
+                        </View>
+                      )}
+                    </View>
                     <Text style={s.groupMeta}>
-                      {g.member_count || 0} members{g.location_name ? ' · 📍' + g.location_name : ''}
+                      {g.member_count || 0} members{g.venue_name ? ' · 📍 ' + g.venue_name : (g.location_name ? ' · 📍 ' + g.location_name : '')}
                     </Text>
                     {!g.is_secret && g.description ? <Text style={s.groupDesc} numberOfLines={1}>{g.description}</Text> : null}
                     {g.is_secret && <Text style={s.secretNote}>🕵️ Invite code required</Text>}
@@ -323,6 +351,9 @@ const s = StyleSheet.create({
   groupMeta: { fontSize: 12, color: GRAY },
   groupDesc: { fontSize: 12, color: GRAY, marginTop: 2 },
   secretNote: { fontSize: 11, color: '#9B59B6', marginTop: 2, fontWeight: '500' },
+  distChip: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, backgroundColor: BG, borderWidth: 1, borderColor: BORDER },
+  distChipClose: { backgroundColor: LIVE, borderColor: LIVE },
+  distChipText: { fontSize: 10, color: GRAY, fontWeight: '700' },
   actionBtn: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 16, borderWidth: 1.5 },
   actionBtnText: { fontSize: 12, fontWeight: '700' },
   radarControls: { backgroundColor: CARD, padding: 16, borderBottomWidth: 0.5, borderColor: BORDER },
