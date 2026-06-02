@@ -25,6 +25,30 @@ export async function askClaude(prompt: string, system?: string, maxTokens = 200
   } catch { return '' }
 }
 
+// Teeby DM variant — list-aware. Passes user_id + user's recent lists so Teeby
+// can create/continue shared lists. Returns { text, listId? } where listId is
+// set when Teeby detects a list-creation intent and creates the DB record.
+export async function askClaudeTeeby(
+  userId: string,
+  prompt: string,
+  system: string,
+  maxTokens = 350,
+): Promise<{ text: string; listId?: string }> {
+  try {
+    const res = await fetch(EDGE_URL, {
+      method: 'POST',
+      headers: { Authorization: EDGE_AUTH, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt, system, max_tokens: maxTokens, model: CLAUDE_MODEL,
+        teeby_dm: true, user_id: userId,
+        tz: deviceTz(), client_now: new Date().toISOString(),
+      }),
+    })
+    const data = await res.json()
+    return { text: data.text?.trim() || '', listId: data.list_id || undefined }
+  } catch { return { text: '' } }
+}
+
 // Parses `IMAGE_URL: https://...` lines the agent emits when asked for an image.
 // Returns { text, imageUrls } so the UI can render the image(s) underneath the text.
 export function parseImageHints(reply: string): { text: string; imageUrls: string[] } {

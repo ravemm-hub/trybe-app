@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Alert, Image, ScrollView, Switch, TextInput, Modal } from 'react-native'
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Alert, Image, ScrollView, Switch, TextInput } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useRouter, useFocusEffect } from 'expo-router'
 import { supabase } from '../src/lib/supabase'
 import { PinPad } from '../src/components/PinPad'
 import { pickImageAsset, uploadMedia } from '../src/lib/upload'
+import { getContactNameMap } from '../src/lib/contacts'
 import {
   getMyZoneStatus, activateZone, setAlias, setAvailability,
   hasPinSet, setPin, verifyPin, clearPin, markSessionUnlocked, isSessionActive, endSession,
@@ -14,7 +15,21 @@ import {
   listDiscoverable, DiscoverablePerson,
 } from '../src/services/tryberZone'
 import { ZoneSignalSheet } from '../src/components/ZoneSignalSheet'
-import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER } from '../src/constants'
+import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENTS } from '../src/constants'
+
+// Zone-relevant AI companions the user can chat with for advice / ice-breaking.
+// Lior = matchmaker, Maya = warm local, Teeby = guide.
+const ZONE_AGENT_IDS = [
+  'a1000001-0000-0000-0000-000000000026', // Lior
+  'a1000001-0000-0000-0000-000000000002', // Maya
+  'a1000001-0000-0000-0000-000000000001', // Teeby
+]
+const ZONE_AGENTS_META: Record<string, { emoji: string; tagline: string }> = {
+  'a1000001-0000-0000-0000-000000000026': { emoji: '💘', tagline: 'Matchmaker · Ice-breaker' },
+  'a1000001-0000-0000-0000-000000000002': { emoji: '🌹', tagline: 'Local vibes · Flirty tips' },
+  'a1000001-0000-0000-0000-000000000001': { emoji: '✦',  tagline: 'Zone guide · Ask me anything' },
+}
+const ZONE_AGENTS = AGENTS.filter(a => ZONE_AGENT_IDS.includes(a.id))
 
 type Stage = 'loading' | 'paywall' | 'setPin' | 'confirmPin' | 'aliasSetup' | 'lock' | 'home'
 
@@ -73,19 +88,28 @@ export default function TryberZoneScreen() {
   }, []))
 
   const loadHome = async (uid: string) => {
-    const [m, ph, pe] = await Promise.all([
+    const [m, ph, pe, contactMap] = await Promise.all([
       listMatches(),
       listPrivatePhotos(uid),
       listDiscoverable(uid),
+      getContactNameMap(),
     ])
-    setMatches(m); setPhotos(ph); setPeople(pe)
+    // Prefer the saved contact name so the user sees the person by how they
+    // know them (same as everywhere else in the app), falling back to the
+    // in-app display_name / username.
+    const enriched = pe.map(p => ({
+      ...p,
+      display_name: contactMap[p.id] || p.display_name,
+    }))
+    setMatches(m); setPhotos(ph); setPeople(enriched)
   }
 
   // Re-load discoverable people after a successful signal so the chip
-  // toggles to "Signaled ✓" without a full screen refresh.
+  // toggles to "Sparked ✓" without a full screen refresh.
   const refreshPeople = async () => {
     if (!userId) return
-    setPeople(await listDiscoverable(userId))
+    const [pe, contactMap] = await Promise.all([listDiscoverable(userId), getContactNameMap()])
+    setPeople(pe.map(p => ({ ...p, display_name: contactMap[p.id] || p.display_name })))
   }
 
   // ── Paywall ──
@@ -136,7 +160,7 @@ export default function TryberZoneScreen() {
     if (userId) loadHome(userId)
   }
   const onPass = async (m: MatchRow) => {
-    Alert.alert('Pass on this connection?', 'They will never know it was you.',
+    Alert.alert('Pass on this spark?', 'They will never know it was you.',
       [{ text: 'Cancel', style: 'cancel' }, { text: 'Pass', style: 'destructive', onPress: async () => {
         await passMatch(m.match_id)
         if (userId) loadHome(userId)
@@ -177,12 +201,15 @@ export default function TryberZoneScreen() {
 
   // ────────────────────────────────────────────────────────────────────────
 
-  const Header = ({ title, leftLabel = '‹' }: { title: string; leftLabel?: string }) => (
+  const Header = ({ title, leftLabel = '‹', subtitle }: { title: string; leftLabel?: string; subtitle?: string }) => (
     <View style={s.header}>
       <TouchableOpacity style={s.backBtn} onPress={() => router.back()}>
         <Text style={s.backText}>{leftLabel}</Text>
       </TouchableOpacity>
-      <Text style={s.title}>{title}</Text>
+      <View style={{ flex: 1, alignItems: 'center' }}>
+        <Text style={s.title}>{title}</Text>
+        {subtitle ? <Text style={s.subtitle}>{subtitle}</Text> : null}
+      </View>
       <View style={{ width: 36 }} />
     </View>
   )
@@ -195,18 +222,18 @@ export default function TryberZoneScreen() {
   if (stage === 'paywall') return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
-      <Header title="Tryber Zone ✦" />
+      <Header title="Love Zone 💘" subtitle="Dating · 100% Discreet" />
       <ScrollView contentContainerStyle={s.paywall}>
-        <Text style={s.paywallEmoji}>✦</Text>
-        <Text style={s.paywallTitle}>Welcome to the Zone</Text>
-        <Text style={s.paywallSub}>A private space for discreet, mutual-interest connections inside Tryber.</Text>
+        <Text style={s.paywallEmoji}>💘</Text>
+        <Text style={s.paywallTitle}>Your private dating space</Text>
+        <Text style={s.paywallSub}>See who around you is feeling it — without anyone else knowing. Mutual sparks only.</Text>
         {[
-          ['🪶', 'Tap a tiny ✦ on any profile to signal interest — they never see it unless they signal back.'],
-          ['🎭', 'Both signal positive → identities stay hidden until a final Reveal step. Either side can pass anonymously.'],
-          ['🔒', 'PIN-locked from the rest of the app. Phone numbers are never shared. All chat stays in-app.'],
+          ['🪶', "Tap 💘 on any profile to send a private spark. They'll never see it unless they spark you back."],
+          ['🎭', 'Both spark → your identities stay hidden until you both choose to Reveal. Either side can pass anonymously.'],
+          ['🔒', 'PIN-locked from the rest of the app. No phone numbers shared. All chat stays in-app.'],
           ['🖼️', 'Up to 4 private photos that only unlock to fully revealed matches.'],
         ].map(([emoji, text]) => (
-          <View key={text} style={s.bulletRow}>
+          <View key={text as string} style={s.bulletRow}>
             <Text style={s.bulletEmoji}>{emoji}</Text>
             <Text style={s.bulletText}>{text}</Text>
           </View>
@@ -216,7 +243,7 @@ export default function TryberZoneScreen() {
           <Text style={s.priceSub}>Cancel anytime. Renews monthly.</Text>
         </View>
         <TouchableOpacity style={s.cta} onPress={onActivate} disabled={activating}>
-          {activating ? <ActivityIndicator color="#fff" /> : <Text style={s.ctaText}>Activate Tryber Zone</Text>}
+          {activating ? <ActivityIndicator color="#fff" /> : <Text style={s.ctaText}>Enter Love Zone 💘</Text>}
         </TouchableOpacity>
         <Text style={s.legal}>Payments by Apple / Google App Store launch with v2 — until then activation is free for early users.</Text>
       </ScrollView>
@@ -226,7 +253,7 @@ export default function TryberZoneScreen() {
   // ── Set PIN ──
   if (stage === 'setPin') return (
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <Header title="Set your Zone PIN" />
+      <Header title="Love Zone 💘" subtitle="Dating · 100% Discreet" />
       <View style={s.pinScreen}>
         <Text style={s.pinTitle}>Choose a 4-digit PIN</Text>
         <Text style={s.pinSub}>This locks the Zone whenever you leave it. Stored only on this device.</Text>
@@ -287,7 +314,7 @@ export default function TryberZoneScreen() {
   // ── Lock ──
   if (stage === 'lock') return (
     <View style={[s.container, { paddingTop: insets.top }]}>
-      <Header title="Tryber Zone ✦" />
+      <Header title="Love Zone 💘" subtitle="Dating · 100% Discreet" />
       <View style={s.pinScreen}>
         <Text style={s.pinEmoji}>🔒</Text>
         <Text style={s.pinTitle}>Enter your PIN</Text>
@@ -309,34 +336,42 @@ export default function TryberZoneScreen() {
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
-      <Header title="Tryber Zone ✦" />
+      <Header title="Love Zone 💘" subtitle="Dating · 100% Discreet" />
       <View style={s.tabs}>
         {(['people', 'matches', 'settings'] as const).map(t => (
           <TouchableOpacity key={t} style={[s.tabBtn, tab === t && s.tabBtnActive]} onPress={() => setTab(t)}>
             <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]}>
               {t === 'people'
-                ? `People${people.length > 0 ? ` (${people.length})` : ''}`
+                ? `💘 Discover`
                 : t === 'matches'
-                  ? `Matches${matches.length > 0 ? ` (${matches.length})` : ''}`
-                  : 'Settings'}
+                  ? `✨ Sparks${matches.length > 0 ? ` (${matches.length})` : ''}`
+                  : '⚙️ Settings'}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
 
-      {/* PEOPLE — contacts on Tryber + members from my Trybes. Tap a row to
-          open the signal sheet. Discreet "Signaled ✓" badge for rows you've
-          already rated. */}
+      {/* PEOPLE — contacts on Tryber + members from my Trybes. Names resolved
+          from device contacts first. Tap a row to open the signal sheet. A
+          "Sparked ✓" badge shows for rows you've already rated positively.
+          At the bottom, dating-guide agents appear for advice / ice-breaking. */}
       {tab === 'people' && (
         <FlatList
           data={people}
           keyExtractor={p => p.id}
-          contentContainerStyle={people.length === 0 ? { flex: 1 } : { padding: 12, gap: 8 }}
+          contentContainerStyle={{ padding: 12, gap: 8 }}
+          ListHeaderComponent={(
+            <View style={s.introBanner}>
+              <Text style={s.introBannerText}>
+                💘 Send a private spark to someone you like. If they feel the same — it's a match. Nobody else ever finds out.
+              </Text>
+            </View>
+          )}
           ListEmptyComponent={(
             <View style={s.empty}>
-              <Text style={s.emptyEmoji}>👥</Text>
-              <Text style={s.emptyTitle}>No people to discover yet</Text>
-              <Text style={s.emptySub}>Join a Trybe or save people from your contacts. We'll surface them here so you can rate the vibe.</Text>
+              <Text style={s.emptyEmoji}>💘</Text>
+              <Text style={s.emptyTitle}>Nobody to discover yet</Text>
+              <Text style={s.emptySub}>Join Trybes or save device contacts. People you share a Trybe with will appear here so you can send them a private spark.</Text>
             </View>
           )}
           renderItem={({ item: p }) => {
@@ -356,17 +391,45 @@ export default function TryberZoneScreen() {
                 </View>
                 <View style={[s.personChip, p.has_signal && s.personChipDone]}>
                   <Text style={[s.personChipText, p.has_signal && s.personChipTextDone]}>
-                    {p.has_signal ? '✓ Signaled' : '✦ Rate'}
+                    {p.has_signal ? '✓ Sparked' : '💘 Spark'}
                   </Text>
                 </View>
               </TouchableOpacity>
             )
           }}
+          ListFooterComponent={ZONE_AGENTS.length > 0 ? (
+            <View style={{ marginTop: 20 }}>
+              <Text style={s.agentSectionTitle}>💬 Dating guides — ask for advice</Text>
+              {ZONE_AGENTS.map(a => {
+                const meta = ZONE_AGENTS_META[a.id]
+                return (
+                  <TouchableOpacity
+                    key={a.id}
+                    style={[s.personRow, s.agentRow]}
+                    onPress={() => router.push({
+                      pathname: '/dm',
+                      params: { userId: a.id, userName: a.name, myMode: 'lit', theirMode: 'lit', myAvatar: '💘', isAgent: '1' },
+                    })}>
+                    <View style={[s.personAvatar, s.agentAvatar]}>
+                      <Text style={{ fontSize: 22 }}>{meta?.emoji || '🤖'}</Text>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={s.personName}>{a.name}</Text>
+                      <Text style={s.personSrc}>{meta?.tagline || 'AI · Zone companion'}</Text>
+                    </View>
+                    <View style={[s.personChip, s.agentChip]}>
+                      <Text style={[s.personChipText, s.agentChipText]}>💬 Chat</Text>
+                    </View>
+                  </TouchableOpacity>
+                )
+              })}
+            </View>
+          ) : null}
         />
       )}
 
       {/* Signal sheet — opened from a People row. After closing, refresh so
-          the "Signaled ✓" badge appears on the row. */}
+          the "Sparked ✓" badge appears on the row. */}
       {userId && signalTarget && (
         <ZoneSignalSheet
           visible={!!signalTarget}
@@ -383,9 +446,9 @@ export default function TryberZoneScreen() {
           contentContainerStyle={matches.length === 0 ? { flex: 1 } : { padding: 12, gap: 10 }}
           ListEmptyComponent={(
             <View style={s.empty}>
-              <Text style={s.emptyEmoji}>✦</Text>
-              <Text style={s.emptyTitle}>No matches yet</Text>
-              <Text style={s.emptySub}>Tap the ✦ on someone's profile to send a discreet signal. If they signal you back, you'll see a match here.</Text>
+              <Text style={s.emptyEmoji}>✨</Text>
+              <Text style={s.emptyTitle}>No sparks yet</Text>
+              <Text style={s.emptySub}>Go to Discover and send a private 💘 to someone you like. If they feel the same, you'll see a match here — completely anonymous until you both reveal.</Text>
             </View>
           )}
           renderItem={({ item: m }) => {
@@ -394,13 +457,13 @@ export default function TryberZoneScreen() {
             return (
               <View style={s.matchCard}>
                 <View style={[s.matchAvatar, revealed && s.matchAvatarRevealed]}>
-                  <Text style={s.matchAvatarText}>{revealed ? (m.partner_avatar || '✦') : '✦'}</Text>
+                  <Text style={s.matchAvatarText}>{revealed ? (m.partner_avatar || '💘') : '💘'}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={s.matchName}>{revealed ? (m.partner_display_name || m.partner_alias) : m.partner_alias || 'Someone'}</Text>
                   <Text style={s.matchSub}>
-                    {revealed ? '✨ Both revealed — you can chat!' :
-                     iAmPending ? '✦ Mutual signal — reveal to continue' :
+                    {revealed ? '✨ Both revealed — start chatting!' :
+                     iAmPending ? '💘 Mutual spark — reveal to continue' :
                      'Waiting for them to reveal…'}
                   </Text>
                 </View>
@@ -414,7 +477,7 @@ export default function TryberZoneScreen() {
                       <Text style={s.matchPassText}>Pass</Text>
                     </TouchableOpacity>
                     <TouchableOpacity style={s.matchReveal} onPress={() => onReveal(m)}>
-                      <Text style={s.matchRevealText}>Reveal</Text>
+                      <Text style={s.matchRevealText}>Reveal 💫</Text>
                     </TouchableOpacity>
                   </View>
                 ) : null}
@@ -427,11 +490,11 @@ export default function TryberZoneScreen() {
         <ScrollView contentContainerStyle={{ padding: 16 }}>
           <View style={s.settingsRow}>
             <View style={{ flex: 1 }}>
-              <Text style={s.settingsLabel}>Available in Zone</Text>
-              <Text style={s.settingsSub}>Off = you don't appear to others & can't be signaled.</Text>
+              <Text style={s.settingsLabel}>Visible in Love Zone</Text>
+              <Text style={s.settingsSub}>Off = you don't appear to others and can't receive sparks.</Text>
             </View>
             <Switch value={status?.available !== false} onValueChange={onToggleAvailable}
-              trackColor={{ true: LIVE, false: '#E0DED8' }} thumbColor="#fff" />
+              trackColor={{ true: '#FF6B8A', false: '#E0DED8' }} thumbColor="#fff" />
           </View>
 
           <Text style={s.settingsLabel}>Your alias</Text>
@@ -478,25 +541,31 @@ export default function TryberZoneScreen() {
   )
 }
 
+const SPARK = '#FF6B8A'  // romantic pink accent for Love Zone
+
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: BG },
-  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingVertical: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
+  header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingVertical: 8, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
   backBtn: { padding: 4, width: 36 },
   backText: { fontSize: 32, color: PRIMARY, lineHeight: 32, marginTop: -4 },
-  title: { flex: 1, fontSize: 18, fontWeight: '800', color: TEXT, textAlign: 'center' },
+  title: { fontSize: 17, fontWeight: '800', color: TEXT, textAlign: 'center' },
+  subtitle: { fontSize: 11, color: SPARK, fontWeight: '600', textAlign: 'center', marginTop: 1, letterSpacing: 0.4 },
+
+  introBanner: { backgroundColor: '#FFF0F4', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: '#FFD6E0', marginBottom: 4 },
+  introBannerText: { fontSize: 13, color: '#C2185B', lineHeight: 18, textAlign: 'center', fontWeight: '500' },
 
   paywall: { padding: 24, alignItems: 'center' },
-  paywallEmoji: { fontSize: 56, color: PRIMARY, marginBottom: 8 },
+  paywallEmoji: { fontSize: 56, marginBottom: 8 },
   paywallTitle: { fontSize: 26, fontWeight: '800', color: TEXT, marginBottom: 6 },
   paywallSub: { fontSize: 14, color: GRAY, textAlign: 'center', marginBottom: 26, lineHeight: 20, paddingHorizontal: 12 },
   bulletRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start', marginBottom: 14, paddingHorizontal: 4 },
   bulletEmoji: { fontSize: 20, marginTop: 2 },
   bulletText: { flex: 1, fontSize: 14, color: TEXT, lineHeight: 20 },
-  priceCard: { backgroundColor: CARD, borderRadius: 18, padding: 20, alignItems: 'center', marginTop: 18, marginBottom: 18, width: '100%', borderWidth: 1.5, borderColor: PRIMARY },
-  price: { fontSize: 36, fontWeight: '800', color: PRIMARY },
+  priceCard: { backgroundColor: CARD, borderRadius: 18, padding: 20, alignItems: 'center', marginTop: 18, marginBottom: 18, width: '100%', borderWidth: 1.5, borderColor: SPARK },
+  price: { fontSize: 36, fontWeight: '800', color: SPARK },
   priceUnit: { fontSize: 16, color: GRAY, fontWeight: '600' },
   priceSub: { fontSize: 12, color: GRAY, marginTop: 4 },
-  cta: { backgroundColor: PRIMARY, paddingVertical: 16, paddingHorizontal: 40, borderRadius: 16, width: '100%', alignItems: 'center', marginBottom: 14 },
+  cta: { backgroundColor: SPARK, paddingVertical: 16, paddingHorizontal: 40, borderRadius: 16, width: '100%', alignItems: 'center', marginBottom: 14 },
   ctaText: { color: '#fff', fontSize: 16, fontWeight: '700' },
   legal: { fontSize: 11, color: GRAY, textAlign: 'center', lineHeight: 16 },
 
@@ -510,7 +579,7 @@ const s = StyleSheet.create({
   aliasEmoji: { fontSize: 48, marginBottom: 8 },
   aliasTitle: { fontSize: 22, fontWeight: '800', color: TEXT, marginBottom: 6 },
   aliasSub: { fontSize: 13, color: GRAY, textAlign: 'center', marginBottom: 20, paddingHorizontal: 8, lineHeight: 18 },
-  aliasInput: { width: '100%', backgroundColor: CARD, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 17, color: TEXT, borderWidth: 1.5, borderColor: PRIMARY, textAlign: 'center', fontWeight: '700' },
+  aliasInput: { width: '100%', backgroundColor: CARD, borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, fontSize: 17, color: TEXT, borderWidth: 1.5, borderColor: SPARK, textAlign: 'center', fontWeight: '700' },
   aliasHint: { fontSize: 13, color: GRAY, marginTop: 22, marginBottom: 10 },
   aliasOpts: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'center' },
   aliasOpt: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18, backgroundColor: CARD, borderWidth: 1, borderColor: BORDER },
@@ -519,34 +588,41 @@ const s = StyleSheet.create({
   refreshBtnText: { color: PRIMARY, fontSize: 13, fontWeight: '600' },
 
   tabs: { flexDirection: 'row', backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
+  tabBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
+  tabBtnActive: { borderBottomWidth: 2, borderBottomColor: SPARK },
+  tabBtnText: { fontSize: 12, color: GRAY, fontWeight: '500' },
+  tabBtnTextActive: { color: SPARK, fontWeight: '700' },
+
   personRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: CARD, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: BORDER },
-  personAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  personAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#FFF0F4', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   personName: { fontSize: 15, fontWeight: '600', color: TEXT },
   personSrc: { fontSize: 11, color: GRAY, marginTop: 1 },
-  personChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#EEF0FF', borderWidth: 1, borderColor: PRIMARY },
+  personChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#FFF0F4', borderWidth: 1, borderColor: SPARK },
   personChipDone: { backgroundColor: '#E8F5E9', borderColor: LIVE },
-  personChipText: { fontSize: 12, fontWeight: '700', color: PRIMARY },
+  personChipText: { fontSize: 12, fontWeight: '700', color: SPARK },
   personChipTextDone: { color: LIVE },
-  tabBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  tabBtnActive: { borderBottomWidth: 2, borderBottomColor: PRIMARY },
-  tabBtnText: { fontSize: 13, color: GRAY, fontWeight: '500' },
-  tabBtnTextActive: { color: PRIMARY, fontWeight: '700' },
+
+  agentSectionTitle: { fontSize: 11, fontWeight: '700', color: GRAY, letterSpacing: 0.6, marginBottom: 8, paddingLeft: 4 },
+  agentRow: { borderColor: '#EEF0FF', borderStyle: 'dashed' as any },
+  agentAvatar: { backgroundColor: '#EEF0FF' },
+  agentChip: { backgroundColor: '#EEF0FF', borderColor: PRIMARY },
+  agentChipText: { color: PRIMARY },
 
   matchCard: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: CARD, borderRadius: 14, padding: 12, borderWidth: 0.5, borderColor: BORDER },
-  matchAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: BORDER },
-  matchAvatarRevealed: { borderColor: PRIMARY },
+  matchAvatar: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#FFF0F4', alignItems: 'center', justifyContent: 'center', borderWidth: 1.5, borderColor: BORDER },
+  matchAvatarRevealed: { borderColor: SPARK },
   matchAvatarText: { fontSize: 22 },
   matchName: { fontSize: 15, fontWeight: '700', color: TEXT },
   matchSub: { fontSize: 12, color: GRAY, marginTop: 2 },
-  matchChat: { backgroundColor: PRIMARY, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 14 },
+  matchChat: { backgroundColor: SPARK, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 14 },
   matchChatText: { color: '#fff', fontSize: 13, fontWeight: '700' },
-  matchReveal: { backgroundColor: PRIMARY, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 14 },
+  matchReveal: { backgroundColor: SPARK, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 14 },
   matchRevealText: { color: '#fff', fontSize: 13, fontWeight: '700' },
   matchPass: { backgroundColor: BG, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 14, borderWidth: 1, borderColor: BORDER },
   matchPassText: { color: GRAY, fontSize: 13, fontWeight: '600' },
 
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
-  emptyEmoji: { fontSize: 56, color: PRIMARY, marginBottom: 12 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, marginTop: 40 },
+  emptyEmoji: { fontSize: 56, marginBottom: 12 },
   emptyTitle: { fontSize: 20, fontWeight: '700', color: TEXT, marginBottom: 6 },
   emptySub: { fontSize: 14, color: GRAY, textAlign: 'center', lineHeight: 20 },
 

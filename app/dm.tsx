@@ -5,7 +5,7 @@ import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import { supabase } from '../src/lib/supabase'
 import { sendDM, markDMRead, markDMDelivered, editDM, deleteDM, getReceiptStatus } from '../src/services/dms'
-import { askClaude, translateText } from '../src/lib/claude'
+import { askClaude, askClaudeTeeby, translateText } from '../src/lib/claude'
 import { getPreferredLang, setPreferredLang, pickTargetLang, TranslateLang } from '../src/lib/translatePref'
 import { TranslatePickerSheet } from '../src/components/TranslatePickerSheet'
 import { uuidv4 } from '../src/lib/uuid'
@@ -18,6 +18,14 @@ import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS, AGENTS 
 import { DmMessage } from '../src/types'
 
 const LANGS = ['English', 'Hebrew', 'Arabic', 'Russian', 'French', 'Spanish']
+
+// Parse [LIST:<uuid>] markers that Teeby embeds into agent messages.
+// Returns the list ID and the clean display text (marker stripped).
+function extractListCard(content: string): { text: string; listId: string | null } {
+  const m = content.match(/\[LIST:([0-9a-f-]{36})\]/i)
+  if (!m) return { text: content, listId: null }
+  return { text: content.replace(/\s*\[LIST:[0-9a-f-]{36}\]/i, '').trim(), listId: m[1] }
+}
 
 export default function DMScreen() {
   const insets = useSafeAreaInsets()
@@ -151,31 +159,41 @@ export default function DMScreen() {
     if (sendErr) setMessages(prev => prev.filter(m => m.id !== mid))
     if (talkingToAgent && agentInfo) {
       setAgentTyping(true)
-      const timeout = setTimeout(() => setAgentTyping(false), 12000)
+      const timeout = setTimeout(() => setAgentTyping(false), 14000)
       try {
         await new Promise(r => setTimeout(r, 700 + Math.random() * 800))
-        // Detect Hebrew/Arabic etc. from the user's text so the agent matches.
-        // Agents now also know how to drop a Google Maps link when asked about
-        // a place ("where can we eat tonight?" → name + 1-line description +
-        // tappable URL — RichMessage renders URLs as taps automatically).
+        const isTeeby = otherUserId === 'a1000001-0000-0000-0000-000000000001'
         const system =
 `You are ${agentInfo.name}, a friendly Tryber social-app character. Personality: ${agentInfo.personality}.
 Style: warm, witty, a bit playful and flirtatious when it fits — never crude. Light teasing is welcome.
 Language: reply in the SAME language the user wrote in (Hebrew, English, Arabic, Russian, French, whatever).
-Length: 1-3 short sentences max.
+Length: 1-3 short sentences max — unless creating a list, in which case show all items.
 If the user asks about a place (restaurant, bar, café, attraction, park…) drop a Google Maps link of the form:
 https://www.google.com/maps/search/?api=1&query=<URL-encoded place name + city>
 Put it on its own line at the end of your reply, with a tiny 1-line description above it.
 Never claim to be an AI — you're a Tryber character.`
-        let reply = await askClaude(content, system, 220, false)
-        // Fallback so the user always sees a response (silent failure was the
-        // "dots forever" bug). Detect Hebrew from the user's message so the
-        // fallback matches their language.
+
+        let reply = ''
+        let listId: string | undefined
+
+        if (isTeeby && myId) {
+          // Teeby gets the list-aware variant — can create/continue shared lists.
+          const result = await askClaudeTeeby(myId, content, system, 400)
+          reply = result.text
+          listId = result.listId
+        } else {
+          reply = await askClaude(content, system, 220, false)
+        }
+
         if (!reply || !reply.trim()) {
           const isHe = /[֐-׿]/.test(content)
           reply = isHe ? 'אהבתי 😊 רוצה לספר לי עוד?' : 'Love that 😊 Tell me more?'
         }
-        const { error: rpcErr } = await supabase.rpc('send_agent_dm', { p_agent: otherUserId, p_receiver: myId, p_content: reply })
+
+        // Append the [LIST:uuid] marker so the message bubble renders a card.
+        const storedContent = listId ? `${reply}\n[LIST:${listId}]` : reply
+
+        const { error: rpcErr } = await supabase.rpc('send_agent_dm', { p_agent: otherUserId, p_receiver: myId, p_content: storedContent })
         if (rpcErr) console.warn('send_agent_dm:', rpcErr.message)
       } catch (e: any) {
         console.warn('agent reply failed:', e?.message)
@@ -262,11 +280,6 @@ Never claim to be an AI — you're a Tryber character.`
           </TouchableOpacity>
         )}
         {!talkingToAgent && (
-          <TouchableOpacity onPress={() => router.push({ pathname: '/shared-list', params: { userId: otherUserId, userName: displayName } })} style={s.translateBtn}>
-            <Text style={{ fontSize: 18 }}>📝</Text>
-          </TouchableOpacity>
-        )}
-        {!talkingToAgent && (
           <TouchableOpacity onPress={() => setShowTranslate(true)} style={s.translateBtn}>
             <Text style={{ fontSize: 18 }}>🌐</Text>
             {translateTo && <View style={s.translateDot} />}
@@ -293,9 +306,30 @@ Never claim to be an AI — you're a Tryber character.`
                 <View style={[s.bubble, isMe ? s.bubbleMe : s.bubbleThem]}>
                   {msg.media_url ? <MediaBubble url={msg.media_url} kind={msg.media_type || undefined} isMe={isMe} /> : null}
                   {msg.content
-                    ? (talkingToAgent && !isMe
-                        ? <RichMessage content={msg.content} isMe={false} />
-                        : <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{msg.content}</Text>)
+                    ? (() => {
+                        const { text: cleanText, listId } = extractListCard(msg.content)
+                        return (
+                          <>
+                            {cleanText
+                              ? (talkingToAgent && !isMe
+                                  ? <RichMessage content={cleanText} isMe={false} />
+                                  : <Text style={[s.bubbleText, isMe && s.bubbleTextMe]}>{cleanText}</Text>)
+                              : null}
+                            {listId && (
+                              <TouchableOpacity
+                                style={s.listCard}
+                                onPress={() => router.push({ pathname: '/shared-list', params: { listId } })}>
+                                <Text style={s.listCardEmoji}>📋</Text>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={s.listCardTitle}>Open list</Text>
+                                  <Text style={s.listCardSub}>Tap to view &amp; edit</Text>
+                                </View>
+                                <Text style={s.listCardArrow}>›</Text>
+                              </TouchableOpacity>
+                            )}
+                          </>
+                        )
+                      })()
                     : null}
                   {translations[msg.id] && (
                     <Text style={[s.translated, isMe && { color: 'rgba(255,255,255,0.85)', borderTopColor: 'rgba(255,255,255,0.3)' }]}>🌐 {translations[msg.id]}</Text>
@@ -423,6 +457,11 @@ const s = StyleSheet.create({
   bubbleText: { fontSize: 15, lineHeight: 21, color: TEXT },
   bubbleTextMe: { color: '#fff' },
   translated: { fontSize: 14, lineHeight: 20, color: GRAY, marginTop: 6, paddingTop: 6, borderTopWidth: 0.5, borderTopColor: BORDER, fontStyle: 'italic' },
+  listCard: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 8, backgroundColor: '#EEF0FF', borderRadius: 12, padding: 10, borderWidth: 1, borderColor: PRIMARY },
+  listCardEmoji: { fontSize: 22 },
+  listCardTitle: { fontSize: 14, fontWeight: '700', color: PRIMARY },
+  listCardSub: { fontSize: 11, color: GRAY, marginTop: 1 },
+  listCardArrow: { fontSize: 20, color: PRIMARY, fontWeight: '300' },
   bubbleMeta: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2, justifyContent: 'flex-end' },
   edited: { fontSize: 10, color: GRAY },
   time: { fontSize: 10, color: GRAY },
