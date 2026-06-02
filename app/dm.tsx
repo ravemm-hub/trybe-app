@@ -59,8 +59,13 @@ export default function DMScreen() {
       if (!user) return
       setMyId(user.id)
       const uid = user.id
-      // Load contact name
-      getContactName(otherUserId).then(cn => { if (cn) setDisplayName(cn) })
+      // PRIVACY: When the other side is in ghost mode, do NOT override the
+      // displayName with their saved contact name — that would leak the real
+      // identity we explicitly hid in the radar/explore flow. The header is
+      // gated by `theirGhost` and renders "👻 …" instead.
+      if (params?.theirMode !== 'ghost') {
+        getContactName(otherUserId).then(cn => { if (cn) setDisplayName(cn) })
+      }
       if (!talkingToAgent) supabase.from('profiles').select('ghost_name').eq('id', otherUserId).single().then(({ data }) => setOtherGhostName(data?.ghost_name || ''))
       loadMessages(uid)
       if (!talkingToAgent) markDMDelivered(uid)
@@ -112,11 +117,15 @@ export default function DMScreen() {
     if (!otherUserId) return
     ;(async () => {
       if (myId) { try { await loadAndMatchContacts(myId) } catch {} }
-      const cn = await getContactName(otherUserId)
-      if (cn) setDisplayName(cn)
+      // PRIVACY: don't surface the contact name when the conversation is in
+      // ghost mode — same logic as the initial-load guard above.
+      if (theirMode !== 'ghost') {
+        const cn = await getContactName(otherUserId)
+        if (cn) setDisplayName(cn)
+      }
       if (myId && !talkingToAgent) markDMRead(otherUserId, myId)
     })()
-  }, [otherUserId, myId, talkingToAgent]))
+  }, [otherUserId, myId, talkingToAgent, theirMode]))
 
   const sendMessage = useCallback(async () => {
     if (!draft.trim() || !myId || !otherUserId) return

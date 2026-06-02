@@ -58,6 +58,16 @@ export async function deleteDM(messageId: string, userId: string) {
     .eq('id', messageId).eq('sender_id', userId)
 }
 
+// Delete-for-everyone — DB-enforced 60-minute window + sender-only.
+export async function deleteDMForEveryone(messageId: string) {
+  return supabase.rpc('delete_dm_for_everyone', { p_message: messageId })
+}
+
+// Delete-for-me — hides the DM message from MY view only.
+export async function hideDMForMe(messageId: string) {
+  return supabase.rpc('hide_dm_for_me', { p_message: messageId })
+}
+
 export function getReceiptStatus(msg: any): 'sent' | 'delivered' | 'read' {
   if (msg.read_at) return 'read'
   if (msg.delivered_at) return 'delivered'

@@ -290,13 +290,18 @@ export default function ExploreScreen() {
                         avatar: u.identity_mode === 'ghost' ? '👻' : (u.avatar_char || null),
                       }))}
                     onTapUser={(id) => {
+                      const u = nearby.find((x: any) => x.id === id)
+                      const ghost = u?.identity_mode === 'ghost'
                       if (AGENT_IDS.includes(id)) {
-                        // Agent pin → open DM with the agent directly.
-                        const u = nearby.find((x: any) => x.id === id)
                         const name = u?.display_name || u?.username || 'Agent'
                         router.push({ pathname: '/dm', params: { userId: id, userName: name, myMode, theirMode: 'lit', myAvatar: '📡', isAgent: '1' } })
+                      } else if (ghost) {
+                        // CRITICAL: a ghost user's full profile would leak their
+                        // real identity. Skip profile-view and go straight to a
+                        // DM that stays in ghost mode (theirMode='ghost') —
+                        // dm.tsx header keeps showing "👻 …" instead of the name.
+                        router.push({ pathname: '/dm', params: { userId: id, userName: '👻 Ghost', myMode, theirMode: 'ghost', myAvatar: '📡', isAgent: '0' } })
                       } else {
-                        // Human pin → open their profile. From there the user can Message/Follow.
                         router.push({ pathname: '/profile-view', params: { userId: id } })
                       }
                     }}
@@ -315,9 +320,17 @@ export default function ExploreScreen() {
                     <TouchableOpacity
                       style={s.userCard}
                       onPress={() => {
-                        // Tap card → view profile (or agent DM, since agents don't have profiles).
-                        if (isAgent) router.push({ pathname: '/dm', params: { userId: u.id, userName: dn, myMode, theirMode: 'lit', myAvatar: '📡', isAgent: '1' } })
-                        else router.push({ pathname: '/profile-view', params: { userId: u.id } })
+                        const ghost = u.identity_mode === 'ghost'
+                        if (isAgent) {
+                          router.push({ pathname: '/dm', params: { userId: u.id, userName: dn, myMode, theirMode: 'lit', myAvatar: '📡', isAgent: '1' } })
+                        } else if (ghost) {
+                          // A ghost user's full profile would leak their identity. Open
+                          // an anonymous DM instead (theirMode='ghost' keeps the
+                          // header as "👻 …" inside dm.tsx).
+                          router.push({ pathname: '/dm', params: { userId: u.id, userName: '👻 Ghost', myMode, theirMode: 'ghost', myAvatar: '📡', isAgent: '0' } })
+                        } else {
+                          router.push({ pathname: '/profile-view', params: { userId: u.id } })
+                        }
                       }}>
                       <View style={s.userAvatar}><Text style={s.userAvatarText}>{u.identity_mode === 'ghost' ? '👻' : (u.avatar_char || dn[0] || '?')}</Text></View>
                       <View style={s.userInfo}>

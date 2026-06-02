@@ -46,6 +46,27 @@ export async function deleteMessage(messageId: string, userId: string) {
   return supabase.from('messages').update({ content: '', deleted_for_all: true }).eq('id', messageId).eq('user_id', userId)
 }
 
+// Delete-for-everyone — DB-enforced 60-minute window + author-only.
+export async function deleteMessageForEveryone(messageId: string) {
+  return supabase.rpc('delete_message_for_everyone', { p_message: messageId })
+}
+
+// Delete-for-me — hides the message from MY view only. Other members
+// still see it. RLS keeps each user's hides private.
+export async function hideMessageForMe(messageId: string) {
+  return supabase.rpc('hide_message_for_me', { p_message: messageId })
+}
+
+// Pull every message I've hidden in this group (so loadMessages can filter).
+export async function getMyHiddenInGroup(groupId: string, userId: string): Promise<Set<string>> {
+  const { data } = await supabase
+    .from('message_user_hides')
+    .select('message_id, message:messages!inner(group_id)')
+    .eq('user_id', userId)
+    .eq('message.group_id', groupId)
+  return new Set((data || []).map((r: any) => r.message_id))
+}
+
 export async function markGroupRead(groupId: string, userId: string) {
   const res = await supabase.from('group_members').update({ last_read_at: new Date().toISOString() }).eq('group_id', groupId).eq('user_id', userId)
   // Nudge the bottom-tab badge immediately instead of waiting on realtime.
