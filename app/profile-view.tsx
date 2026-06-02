@@ -171,13 +171,24 @@ export default function ProfileViewScreen() {
             </View>
 
             {!isMe && !isAgent && (
-              <View style={s.actionRow}>
-                <TouchableOpacity style={[s.followBtn, following && s.followingBtn]} onPress={toggleFollow} disabled={followBusy}>
-                  {followBusy ? <ActivityIndicator color={following ? PRIMARY : '#fff'} size="small" />
-                    : <Text style={[s.followBtnText, following && s.followingBtnText]}>{following ? '✓ Following' : '+ Follow'}</Text>}
-                </TouchableOpacity>
-                <TouchableOpacity style={s.dmBtn} onPress={openDM}><Text style={s.dmBtnText}>💬 Message</Text></TouchableOpacity>
-              </View>
+              <>
+                <View style={s.actionRow}>
+                  <TouchableOpacity style={[s.followBtn, following && s.followingBtn]} onPress={toggleFollow} disabled={followBusy}>
+                    {followBusy ? <ActivityIndicator color={following ? PRIMARY : '#fff'} size="small" />
+                      : <Text style={[s.followBtnText, following && s.followingBtnText]}>{following ? '✓ Following' : '+ Follow'}</Text>}
+                  </TouchableOpacity>
+                  <TouchableOpacity style={s.dmBtn} onPress={openDM}><Text style={s.dmBtnText}>💬 Message</Text></TouchableOpacity>
+                </View>
+                {/* Prominent Zone button — discreet but visible. Only renders when
+                    the target hasn't opted out of Zone (zoneVisible) — same gate
+                    as the small ✦ in the header. */}
+                {zoneVisible && (
+                  <TouchableOpacity style={s.zoneBigBtn} onPress={() => setZoneSheetOpen(true)}>
+                    <Text style={s.zoneBigBtnText}>✦ Rate the vibe</Text>
+                    <Text style={s.zoneBigBtnSub}>Discreet — stays private until mutual</Text>
+                  </TouchableOpacity>
+                )}
+              </>
             )}
             {isMe && (
               <TouchableOpacity style={s.editBtn} onPress={() => router.push('/(tabs)/profile')}>
@@ -211,6 +222,9 @@ const s = StyleSheet.create({
   backText: { fontSize: 32, color: PRIMARY, lineHeight: 32, marginTop: -4 },
   headerTitle: { flex: 1, fontSize: 16, fontWeight: '700', color: TEXT },
   zoneStar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF0FF', borderWidth: 1, borderColor: PRIMARY },
+  zoneBigBtn: { marginTop: 8, paddingVertical: 12, borderRadius: 14, backgroundColor: '#F5F4FF', borderWidth: 1.5, borderColor: PRIMARY, alignItems: 'center', width: '100%' },
+  zoneBigBtnText: { fontSize: 15, fontWeight: '800', color: PRIMARY },
+  zoneBigBtnSub: { fontSize: 11, color: GRAY, marginTop: 2 },
   zoneStarText: { fontSize: 18, color: PRIMARY, fontWeight: '700' },
   profileCard: { backgroundColor: CARD, paddingHorizontal: 20, paddingVertical: 20, alignItems: 'center', borderBottomWidth: 0.5, borderColor: BORDER },
   avatar: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: BORDER, marginBottom: 12, overflow: 'hidden' },

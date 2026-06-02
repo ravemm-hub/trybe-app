@@ -166,6 +166,29 @@ export async function deletePrivatePhoto(id: string) {
   return supabase.from('tryber_private_photos').delete().eq('id', id)
 }
 
+// ─── Discoverable people for the Zone screen ─────────────────────────────
+// Mix of two pools (deduped):
+//   • Contacts on Tryber — people you saved a contact name for.
+//   • Trybe members — anyone in the same Trybes as you.
+// Backend RPC filters out agents and anyone who opted out of Zone.
+
+export type DiscoverablePerson = {
+  id: string
+  display_name: string | null
+  username: string | null
+  avatar_char: string | null
+  avatar_url: string | null
+  source: 'contact' | 'trybe'
+  available: boolean
+  has_signal: boolean
+}
+
+export async function listDiscoverable(myId: string): Promise<DiscoverablePerson[]> {
+  const { data, error } = await supabase.rpc('tryber_zone_discoverable', { p_user: myId })
+  if (error) { console.warn('tryber_zone_discoverable:', error.message); return [] }
+  return (data || []) as DiscoverablePerson[]
+}
+
 // ─── Teeby alias generator ──────────────────────────────────────────────────
 // Small client-side fallback if the AI generator is unavailable.
 

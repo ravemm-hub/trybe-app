@@ -11,7 +11,9 @@ import {
   listMatches, revealMatch, passMatch, MatchRow,
   listPrivatePhotos, addPrivatePhoto, deletePrivatePhoto,
   suggestAliases, ZoneStatus,
+  listDiscoverable, DiscoverablePerson,
 } from '../src/services/tryberZone'
+import { ZoneSignalSheet } from '../src/components/ZoneSignalSheet'
 import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER } from '../src/constants'
 
 type Stage = 'loading' | 'paywall' | 'setPin' | 'confirmPin' | 'aliasSetup' | 'lock' | 'home'
@@ -31,11 +33,14 @@ export default function TryberZoneScreen() {
   const [aliasSuggestions, setAliasSuggestions] = useState<string[]>([])
 
   // Home tab
-  const [tab, setTab] = useState<'matches' | 'settings'>('matches')
+  const [tab, setTab] = useState<'people' | 'matches' | 'settings'>('people')
   const [matches, setMatches] = useState<MatchRow[]>([])
+  const [people, setPeople] = useState<DiscoverablePerson[]>([])
   const [photos, setPhotos] = useState<any[]>([])
   const [uploading, setUploading] = useState(false)
   const [activating, setActivating] = useState(false)
+  // Signal sheet target (when tapping a person row).
+  const [signalTarget, setSignalTarget] = useState<DiscoverablePerson | null>(null)
 
   const bootstrap = useCallback(async () => {
     const { data: { user } } = await supabase.auth.getUser()
@@ -68,8 +73,19 @@ export default function TryberZoneScreen() {
   }, []))
 
   const loadHome = async (uid: string) => {
-    const [m, ph] = await Promise.all([listMatches(), listPrivatePhotos(uid)])
-    setMatches(m); setPhotos(ph)
+    const [m, ph, pe] = await Promise.all([
+      listMatches(),
+      listPrivatePhotos(uid),
+      listDiscoverable(uid),
+    ])
+    setMatches(m); setPhotos(ph); setPeople(pe)
+  }
+
+  // Re-load discoverable people after a successful signal so the chip
+  // toggles to "Signaled ✓" without a full screen refresh.
+  const refreshPeople = async () => {
+    if (!userId) return
+    setPeople(await listDiscoverable(userId))
   }
 
   // ── Paywall ──
@@ -295,14 +311,71 @@ export default function TryberZoneScreen() {
       <StatusBar barStyle="dark-content" />
       <Header title="Tryber Zone ✦" />
       <View style={s.tabs}>
-        {(['matches', 'settings'] as const).map(t => (
+        {(['people', 'matches', 'settings'] as const).map(t => (
           <TouchableOpacity key={t} style={[s.tabBtn, tab === t && s.tabBtnActive]} onPress={() => setTab(t)}>
             <Text style={[s.tabBtnText, tab === t && s.tabBtnTextActive]}>
-              {t === 'matches' ? `Matches${matches.length > 0 ? ` (${matches.length})` : ''}` : 'Settings'}
+              {t === 'people'
+                ? `People${people.length > 0 ? ` (${people.length})` : ''}`
+                : t === 'matches'
+                  ? `Matches${matches.length > 0 ? ` (${matches.length})` : ''}`
+                  : 'Settings'}
             </Text>
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* PEOPLE — contacts on Tryber + members from my Trybes. Tap a row to
+          open the signal sheet. Discreet "Signaled ✓" badge for rows you've
+          already rated. */}
+      {tab === 'people' && (
+        <FlatList
+          data={people}
+          keyExtractor={p => p.id}
+          contentContainerStyle={people.length === 0 ? { flex: 1 } : { padding: 12, gap: 8 }}
+          ListEmptyComponent={(
+            <View style={s.empty}>
+              <Text style={s.emptyEmoji}>👥</Text>
+              <Text style={s.emptyTitle}>No people to discover yet</Text>
+              <Text style={s.emptySub}>Join a Trybe or save people from your contacts. We'll surface them here so you can rate the vibe.</Text>
+            </View>
+          )}
+          renderItem={({ item: p }) => {
+            const dn = p.display_name || p.username || 'User'
+            return (
+              <TouchableOpacity style={s.personRow} onPress={() => setSignalTarget(p)}>
+                <View style={s.personAvatar}>
+                  {p.avatar_url
+                    ? <Image source={{ uri: p.avatar_url }} style={{ width: '100%', height: '100%' }} />
+                    : <Text style={{ fontSize: 22 }}>{p.avatar_char || dn[0] || '?'}</Text>}
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={s.personName} numberOfLines={1}>{dn}</Text>
+                  <Text style={s.personSrc}>
+                    {p.source === 'contact' ? '📇 In your contacts' : '👥 From your Trybes'}
+                  </Text>
+                </View>
+                <View style={[s.personChip, p.has_signal && s.personChipDone]}>
+                  <Text style={[s.personChipText, p.has_signal && s.personChipTextDone]}>
+                    {p.has_signal ? '✓ Signaled' : '✦ Rate'}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )
+          }}
+        />
+      )}
+
+      {/* Signal sheet — opened from a People row. After closing, refresh so
+          the "Signaled ✓" badge appears on the row. */}
+      {userId && signalTarget && (
+        <ZoneSignalSheet
+          visible={!!signalTarget}
+          onClose={() => { setSignalTarget(null); refreshPeople() }}
+          myId={userId}
+          targetId={signalTarget.id}
+          targetAlias={signalTarget.display_name || signalTarget.username || null}
+        />
+      )}
 
       {tab === 'matches' && (
         <FlatList data={matches.filter(m => m.my_status !== 'passed' && m.their_status !== 'passed')}
@@ -446,6 +519,14 @@ const s = StyleSheet.create({
   refreshBtnText: { color: PRIMARY, fontSize: 13, fontWeight: '600' },
 
   tabs: { flexDirection: 'row', backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
+  personRow: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: CARD, borderRadius: 14, paddingVertical: 10, paddingHorizontal: 12, borderWidth: 1, borderColor: BORDER },
+  personAvatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  personName: { fontSize: 15, fontWeight: '600', color: TEXT },
+  personSrc: { fontSize: 11, color: GRAY, marginTop: 1 },
+  personChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#EEF0FF', borderWidth: 1, borderColor: PRIMARY },
+  personChipDone: { backgroundColor: '#E8F5E9', borderColor: LIVE },
+  personChipText: { fontSize: 12, fontWeight: '700', color: PRIMARY },
+  personChipTextDone: { color: LIVE },
   tabBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
   tabBtnActive: { borderBottomWidth: 2, borderBottomColor: PRIMARY },
   tabBtnText: { fontSize: 13, color: GRAY, fontWeight: '500' },
