@@ -332,7 +332,17 @@ Never claim to be an AI — you're a Tryber character.`
                       })()
                     : null}
                   {translations[msg.id] && (
-                    <Text style={[s.translated, isMe && { color: 'rgba(255,255,255,0.85)', borderTopColor: 'rgba(255,255,255,0.3)' }]}>🌐 {translations[msg.id]}</Text>
+                    <View style={[s.translationPair, isMe && s.translationPairMe]}>
+                      <View style={s.translationSection}>
+                        <Text style={[s.translationLabel, isMe && s.translationLabelMe]}>Original</Text>
+                        <Text style={[s.translationOriginal, isMe && s.translationOriginalMe]}>{msg.content}</Text>
+                      </View>
+                      <View style={s.translationDivider} />
+                      <View style={s.translationSection}>
+                        <Text style={[s.translationLabel, isMe && s.translationLabelMe]}>🌐 Translation</Text>
+                        <Text style={[s.translationText, isMe && s.translationTextMe]}>{translations[msg.id]}</Text>
+                      </View>
+                    </View>
                   )}
                   <View style={s.bubbleMeta}>
                     {msg.edited_at && <Text style={[s.edited, isMe && { color: 'rgba(255,255,255,0.5)' }]}>edited</Text>}
@@ -491,4 +501,14 @@ const s = StyleSheet.create({
   menuItem: { width: '23%', alignItems: 'center', paddingVertical: 12, borderRadius: 12, backgroundColor: BG },
   menuIcon: { fontSize: 22, marginBottom: 4 },
   menuLabel: { fontSize: 10, color: TEXT, fontWeight: '500' },
+  translationPair: { marginTop: 6, paddingTop: 8, borderTopWidth: 0.5, borderTopColor: BORDER, gap: 8 },
+  translationPairMe: { borderTopColor: 'rgba(255,255,255,0.3)' },
+  translationSection: { gap: 4 },
+  translationLabel: { fontSize: 11, fontWeight: '600', color: GRAY },
+  translationLabelMe: { color: 'rgba(255,255,255,0.7)' },
+  translationOriginal: { fontSize: 14, lineHeight: 20, color: TEXT, fontStyle: 'italic' },
+  translationOriginalMe: { color: 'rgba(255,255,255,0.9)' },
+  translationText: { fontSize: 14, lineHeight: 20, color: GRAY },
+  translationTextMe: { color: 'rgba(255,255,255,0.85)' },
+  translationDivider: { height: 0.5, backgroundColor: BORDER, marginVertical: 2 },
 })
