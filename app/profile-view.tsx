@@ -30,6 +30,9 @@ export default function ProfileViewScreen() {
   const [zoneVisible, setZoneVisible] = useState(false)   // show the ✦ button?
   const [zoneSheetOpen, setZoneSheetOpen] = useState(false)
   const [targetAlias, setTargetAlias] = useState<string | null>(null)
+  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [phone, setPhone] = useState<string | null>(null)
+  const [phoneVerified, setPhoneVerified] = useState(false)
 
   const load = useCallback(async () => {
     if (!targetId) { router.back(); return }
@@ -40,7 +43,7 @@ export default function ProfileViewScreen() {
     setContactName(cmap[targetId] || null)
     const [{ data: p }, c, fol, { data: ps }, { data: photos }, theirOpen] = await Promise.all([
       supabase.from('profiles')
-        .select('id, display_name, username, avatar_char, avatar_url, bio, ghost_name, tryber_zone_alias, birth_date, gender, location')
+        .select('id, display_name, username, avatar_char, avatar_url, bio, ghost_name, tryber_zone_alias, birth_date, gender, location, phone, phone_verified')
         .eq('id', targetId).single(),
       getProfileCounts(targetId),
       isFollowing(user.id, targetId),
@@ -51,6 +54,10 @@ export default function ProfileViewScreen() {
       isTargetOpenInZone(targetId),
     ])
     setProfile(p ? { ...p, photos: photos || [] } : null)
+    if (p) {
+      setPhone(p.phone || null)
+      setPhoneVerified(p.phone_verified || false)
+    }
     setCounts(c); setFollowing(fol); setPosts(ps || [])
     // Whether I'm currently blocking this user — drives the menu state.
     if (user.id !== targetId) setBlocked(await isUserBlocked(user.id, targetId))
@@ -111,7 +118,9 @@ export default function ProfileViewScreen() {
       <StatusBar barStyle="dark-content" />
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}><Text style={s.backText}>‹</Text></TouchableOpacity>
-        <Text style={s.headerTitle} numberOfLines={1}>{displayName}</Text>
+        <TouchableOpacity style={{ flex: 1 }} onPress={() => phone && setDetailsOpen(true)}>
+          <Text style={s.headerTitle} numberOfLines={1}>{displayName}</Text>
+        </TouchableOpacity>
         <View style={{ flexDirection: 'row', gap: 6 }}>
           {zoneVisible && (
             <TouchableOpacity onPress={() => setZoneSheetOpen(true)} style={s.zoneStar}>
@@ -172,6 +181,29 @@ export default function ProfileViewScreen() {
           targetAlias={targetAlias}
         />
       )}
+
+      {/* User details modal — shows phone when tapping header */}
+      <Modal visible={detailsOpen} transparent animationType="fade" onRequestClose={() => setDetailsOpen(false)}>
+        <TouchableOpacity style={s.modalOverlay} onPress={() => setDetailsOpen(false)} activeOpacity={1}>
+          <View style={s.detailsCard}>
+            <TouchableOpacity style={s.detailsClose} onPress={() => setDetailsOpen(false)}>
+              <Text style={s.detailsCloseText}>✕</Text>
+            </TouchableOpacity>
+            <Text style={s.detailsTitle}>{displayName}</Text>
+            {phone && (
+              <View style={s.detailsRow}>
+                <Text style={s.detailsLabel}>Phone</Text>
+                <Text style={s.detailsValue}>
+                  {isMe || phoneVerified ? phone : phone.replace(/\d(?=\d{4})/g, 'x')}
+                </Text>
+              </View>
+            )}
+            {!phone && (
+              <Text style={s.detailsEmpty}>No phone on file</Text>
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
 
       <FlatList
         data={posts}
@@ -270,7 +302,7 @@ const s = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 8, paddingVertical: 10, backgroundColor: CARD, borderBottomWidth: 0.5, borderColor: BORDER },
   backBtn: { padding: 4, width: 36 },
   backText: { fontSize: 32, color: PRIMARY, lineHeight: 32, marginTop: -4 },
-  headerTitle: { flex: 1, fontSize: 16, fontWeight: '700', color: TEXT },
+  headerTitle: { flex: 1, fontSize: 16, fontWeight: '700', color: TEXT, paddingHorizontal: 8 },
   zoneStar: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', backgroundColor: '#EEF0FF', borderWidth: 1, borderColor: PRIMARY },
   zoneBigBtn: { marginTop: 8, paddingVertical: 12, borderRadius: 14, backgroundColor: '#F5F4FF', borderWidth: 1.5, borderColor: PRIMARY, alignItems: 'center', width: '100%' },
   zoneBigBtnText: { fontSize: 15, fontWeight: '800', color: PRIMARY },
@@ -314,4 +346,13 @@ const s = StyleSheet.create({
   postMeta: { flexDirection: 'row', gap: 14, marginTop: 8, alignItems: 'center' },
   postMetaText: { fontSize: 12, color: GRAY },
   postTime: { fontSize: 11, color: GRAY, marginLeft: 'auto' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 36 },
+  detailsCard: { backgroundColor: CARD, borderRadius: 14, width: '100%', paddingHorizontal: 16, paddingVertical: 18, position: 'relative' },
+  detailsClose: { position: 'absolute', top: 8, right: 8, width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
+  detailsCloseText: { fontSize: 24, color: GRAY },
+  detailsTitle: { fontSize: 18, fontWeight: '700', color: TEXT, marginBottom: 16 },
+  detailsRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 10, borderTopWidth: 0.5, borderColor: BORDER },
+  detailsLabel: { fontSize: 14, color: GRAY, fontWeight: '500' },
+  detailsValue: { fontSize: 14, color: TEXT, fontWeight: '600' },
+  detailsEmpty: { fontSize: 14, color: GRAY, fontStyle: 'italic', marginTop: 8 },
 })
