@@ -16,6 +16,7 @@ export default function ExploreScreen() {
   const [tab, setTab] = useState<Tab>('groups')
   const [userId, setUserId] = useState<string | null>(null)
   const [groups, setGroups] = useState<any[]>([])
+  const [search, setSearch] = useState('')
   const [nearby, setNearby] = useState<any[]>([])
   const [myGroups, setMyGroups] = useState<Set<string>>(new Set())
   const [pending, setPending] = useState<Set<string>>(new Set())
@@ -174,7 +175,35 @@ export default function ExploreScreen() {
       </View>
 
       {tab === 'groups' && (
-        <FlatList data={groups} keyExtractor={g => g.id}
+        <>
+          <View style={s.searchBar}>
+            <Text style={s.searchIcon}>🔍</Text>
+            <TextInput
+              style={s.searchInput}
+              value={search}
+              onChangeText={setSearch}
+              placeholder="Search Trybes by name…"
+              placeholderTextColor={GRAY}
+              autoCapitalize="none"
+              clearButtonMode="while-editing"
+              returnKeyType="search"
+            />
+            {search.length > 0 && (
+              <TouchableOpacity onPress={() => setSearch('')} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={s.searchClear}>✕</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <FlatList data={search.trim()
+            ? groups.filter(g => {
+                const q = search.trim().toLowerCase()
+                return (g.name || '').toLowerCase().includes(q)
+                    || (g.description || '').toLowerCase().includes(q)
+                    || (g.venue_name || '').toLowerCase().includes(q)
+                    || (g.location_name || '').toLowerCase().includes(q)
+              })
+            : groups}
+            keyExtractor={g => g.id}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); if (userId) loadGroups(userId, myCoords) }} tintColor={PRIMARY} />}
           contentContainerStyle={{ padding: 12, gap: 10 }}
           ListEmptyComponent={<View style={s.empty}><Text style={s.emptyEmoji}>⚡</Text><Text style={s.emptyTitle}>No Trybes yet</Text><TouchableOpacity style={s.emptyBtn} onPress={() => router.push('/create')}><Text style={s.emptyBtnText}>Create one</Text></TouchableOpacity></View>}
@@ -212,6 +241,7 @@ export default function ExploreScreen() {
             )
           }}
         />
+        </>
       )}
 
       {tab === 'radar' && (
@@ -367,6 +397,10 @@ const s = StyleSheet.create({
   viewToggleText: { fontSize: 13, color: GRAY, fontWeight: '600' },
   viewToggleTextActive: { color: '#fff' },
   quickDm: { width: 38, height: 38, borderRadius: 19, backgroundColor: BG, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: BORDER },
+  searchBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 12, marginTop: 10, marginBottom: 6, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: CARD, borderRadius: 14, borderWidth: 1, borderColor: BORDER },
+  searchIcon: { fontSize: 14, color: GRAY },
+  searchInput: { flex: 1, fontSize: 14, color: TEXT, paddingVertical: 4 },
+  searchClear: { fontSize: 14, color: GRAY, paddingHorizontal: 4 },
   modeBtnActive: { backgroundColor: '#EEF0FF', borderWidth: 1.5, borderColor: PRIMARY },
   modeBtnText: { fontSize: 14, fontWeight: '600', color: TEXT },
   nearbyCount: { fontSize: 12, color: GRAY, fontWeight: '600', marginBottom: 8 },
