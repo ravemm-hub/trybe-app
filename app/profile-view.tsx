@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Image, Alert } from 'react-native'
+import { View, Text, FlatList, TouchableOpacity, StyleSheet, StatusBar, ActivityIndicator, Image, Alert, Modal } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router'
 import { supabase } from '../src/lib/supabase'
 import { followUser, unfollowUser, isFollowing, getProfileCounts, SocialCounts } from '../src/services/social'
 import { getContactNameMap } from '../src/lib/contacts'
 import { isTargetOpenInZone } from '../src/services/tryberZone'
+import { blockUser, unblockUser, isUserBlocked } from '../src/services/moderation'
+import { ReportSheet } from '../src/components/ReportSheet'
 import { ZoneSignalSheet } from '../src/components/ZoneSignalSheet'
-import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, AGENT_IDS } from '../src/constants'
+import { PRIMARY, BG, CARD, TEXT, GRAY, BORDER, LIVE, DANGER, AGENT_IDS } from '../src/constants'
 
 export default function ProfileViewScreen() {
   const insets = useSafeAreaInsets()
@@ -22,6 +24,9 @@ export default function ProfileViewScreen() {
   const [loading, setLoading] = useState(true)
   const [followBusy, setFollowBusy] = useState(false)
   const [contactName, setContactName] = useState<string | null>(null)
+  const [blocked, setBlocked] = useState(false)
+  const [reportOpen, setReportOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
   const [zoneVisible, setZoneVisible] = useState(false)   // show the ✦ button?
   const [zoneSheetOpen, setZoneSheetOpen] = useState(false)
   const [targetAlias, setTargetAlias] = useState<string | null>(null)
@@ -47,6 +52,8 @@ export default function ProfileViewScreen() {
     ])
     setProfile(p ? { ...p, photos: photos || [] } : null)
     setCounts(c); setFollowing(fol); setPosts(ps || [])
+    // Whether I'm currently blocking this user — drives the menu state.
+    if (user.id !== targetId) setBlocked(await isUserBlocked(user.id, targetId))
     // The ✦ "spark" button is available to ANY user on ANY other user's
     // profile — no activation, no PIN, no opt-in needed. Your signal stays
     // private; only when the OTHER side also signals positively does Teeby
@@ -105,14 +112,57 @@ export default function ProfileViewScreen() {
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}><Text style={s.backText}>‹</Text></TouchableOpacity>
         <Text style={s.headerTitle} numberOfLines={1}>{displayName}</Text>
-        {/* The ✦ button only renders when both users are Zone-active. Other
-            users literally don't know this button exists. */}
-        {zoneVisible
-          ? <TouchableOpacity onPress={() => setZoneSheetOpen(true)} style={s.zoneStar}>
+        <View style={{ flexDirection: 'row', gap: 6 }}>
+          {zoneVisible && (
+            <TouchableOpacity onPress={() => setZoneSheetOpen(true)} style={s.zoneStar}>
               <Text style={s.zoneStarText}>✦</Text>
             </TouchableOpacity>
-          : <View style={{ width: 32 }} />}
+          )}
+          {!isMe && !isAgent && (
+            <TouchableOpacity style={s.menuBtn} onPress={() => setMenuOpen(true)}>
+              <Text style={s.menuDots}>⋯</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
+
+      {/* … menu — Report / Block / Unblock */}
+      <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
+        <TouchableOpacity style={s.menuOverlay} onPress={() => setMenuOpen(false)} activeOpacity={1}>
+          <View style={s.menuCard}>
+            <TouchableOpacity style={s.menuItem} onPress={() => { setMenuOpen(false); setReportOpen(true) }}>
+              <Text style={s.menuItemIcon}>🚩</Text>
+              <Text style={s.menuItemText}>Report this user</Text>
+            </TouchableOpacity>
+            {!blocked
+              ? <TouchableOpacity style={s.menuItem} onPress={() => {
+                  setMenuOpen(false)
+                  Alert.alert(
+                    'Block ' + displayName + '?',
+                    "They won't be able to message you, see your posts in real time, or appear in your Radar. You can unblock anytime.",
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Block', style: 'destructive', onPress: async () => { await blockUser(targetId); setBlocked(true) } },
+                    ],
+                  )
+                }}>
+                  <Text style={s.menuItemIcon}>🚫</Text>
+                  <Text style={[s.menuItemText, { color: DANGER }]}>Block this user</Text>
+                </TouchableOpacity>
+              : <TouchableOpacity style={s.menuItem} onPress={async () => { setMenuOpen(false); await unblockUser(targetId); setBlocked(false) }}>
+                  <Text style={s.menuItemIcon}>✓</Text>
+                  <Text style={[s.menuItemText, { color: LIVE }]}>Unblock</Text>
+                </TouchableOpacity>}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      <ReportSheet
+        visible={reportOpen}
+        onClose={() => setReportOpen(false)}
+        target={{ type: 'user', id: targetId }}
+        targetLabel={displayName}
+      />
       {myId && zoneVisible && (
         <ZoneSignalSheet
           visible={zoneSheetOpen}
@@ -225,6 +275,13 @@ const s = StyleSheet.create({
   zoneBigBtn: { marginTop: 8, paddingVertical: 12, borderRadius: 14, backgroundColor: '#F5F4FF', borderWidth: 1.5, borderColor: PRIMARY, alignItems: 'center', width: '100%' },
   zoneBigBtnText: { fontSize: 15, fontWeight: '800', color: PRIMARY },
   zoneBigBtnSub: { fontSize: 11, color: GRAY, marginTop: 2 },
+  menuBtn: { width: 32, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  menuDots: { fontSize: 22, color: TEXT, fontWeight: '700', marginTop: -8 },
+  menuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 36 },
+  menuCard: { backgroundColor: CARD, borderRadius: 14, width: '100%', overflow: 'hidden' },
+  menuItem: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 0.5, borderColor: BORDER },
+  menuItemIcon: { fontSize: 18 },
+  menuItemText: { fontSize: 15, color: TEXT, fontWeight: '500' },
   zoneStarText: { fontSize: 18, color: PRIMARY, fontWeight: '700' },
   profileCard: { backgroundColor: CARD, paddingHorizontal: 20, paddingVertical: 20, alignItems: 'center', borderBottomWidth: 0.5, borderColor: BORDER },
   avatar: { width: 90, height: 90, borderRadius: 45, backgroundColor: '#EEF0FF', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: BORDER, marginBottom: 12, overflow: 'hidden' },
