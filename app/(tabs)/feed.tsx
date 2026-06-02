@@ -69,12 +69,31 @@ export default function FeedScreen() {
           rawPosts = rows.map((r: any) => ({ ...r, profile: pmap.get(r.user_id) || null }))
         }
       } else {
+        // Use explicit foreign key to avoid join ambiguity
         const { data, error } = await supabase.from('posts')
-          .select('*, profile:profiles(id,display_name,username,avatar_char)')
+          .select('*, profile:profiles!posts_user_id_fkey(id,display_name,username,avatar_char)')
           .is('group_id', null)
           .order('created_at', { ascending: false }).limit(50)
-        if (error) { console.warn('loadPosts error:', error.message); rawPosts = [] }
-        else rawPosts = data || []
+        if (error) {
+          console.warn('[FEED] Profile join error:', error.code, error.message)
+          // Fallback: try without profile join to see if data exists
+          const { data: raw, error: rawError } = await supabase.from('posts')
+            .select('*')
+            .is('group_id', null)
+            .order('created_at', { ascending: false }).limit(50)
+          if (rawError) {
+            console.warn('[FEED] Even raw query failed:', rawError.code, rawError.message)
+            rawPosts = []
+          } else {
+            console.warn('[FEED] Raw query succeeded (' + (raw?.length || 0) + ' posts) — profile join is broken')
+            rawPosts = raw || []
+          }
+        } else {
+          if (data && data.length === 0) {
+            console.warn('[FEED] Query succeeded but returned 0 posts — checking if table is empty')
+          }
+          rawPosts = data || []
+        }
       }
       // Build my-reaction map (so heart UI shows what I already pressed).
       let merged = rawPosts
@@ -151,7 +170,7 @@ export default function FeedScreen() {
     setDraft(''); setMediaUrl(null); setIsAnon(false)
     const { data: inserted, error } = await supabase.from('posts')
       .insert({ user_id: userId, content: contentTrim, media_url: mu, is_anonymous: anon, likes: 0, dislikes: 0 })
-      .select('*, profile:profiles(id,display_name,username,avatar_char)').single()
+      .select('*, profile:profiles!posts_user_id_fkey(id,display_name,username,avatar_char)').single()
     setPosting(false)
     if (error || !inserted) {
       // Roll back the optimistic post and surface the reason.
@@ -182,7 +201,7 @@ export default function FeedScreen() {
     setLoadingComments(true)
     try {
       const { data } = await supabase.from('post_comments')
-        .select('*, profile:profiles(display_name, username, avatar_char)')
+        .select('*, profile:profiles!post_comments_user_id_fkey(display_name, username, avatar_char)')
         .eq('post_id', post.id).order('created_at', { ascending: true })
       setComments(data || [])
     } catch {}
@@ -195,7 +214,7 @@ export default function FeedScreen() {
     try {
       const { data, error } = await supabase.from('post_comments')
         .insert({ post_id: commentsPost.id, user_id: userId, content: commentDraft.trim(), is_anonymous: false })
-        .select('*, profile:profiles(display_name, username, avatar_char)').single()
+        .select('*, profile:profiles!post_comments_user_id_fkey(display_name, username, avatar_char)').single()
       if (error) throw error
       if (data) setComments(prev => [...prev, data])
       setCommentDraft('')

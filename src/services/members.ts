@@ -3,7 +3,7 @@ import { sendPush } from '../lib/push'
 
 export async function getGroupMembers(groupId: string) {
   const { data } = await supabase.from('group_members')
-    .select('user_id, role, profile:profiles(id, display_name, username, avatar_char)')
+    .select('user_id, role, profile:profiles!group_members_user_id_fkey(id, display_name, username, avatar_char)')
     .eq('group_id', groupId)
   return data || []
 }
@@ -44,7 +44,7 @@ export async function removeMemberAdmin(groupId: string, userId: string) {
 
 export async function getJoinRequests(groupId: string) {
   const { data } = await supabase.from('join_requests')
-    .select('id, user_id, status, created_at, profile:profiles(display_name, username, avatar_char)')
+    .select('id, user_id, status, created_at, profile:profiles!join_requests_user_id_fkey(display_name, username, avatar_char)')
     .eq('group_id', groupId).eq('status', 'pending').order('created_at', { ascending: true })
   return data || []
 }

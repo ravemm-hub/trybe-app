@@ -77,7 +77,7 @@ export default function ChatScreen() {
 
     const channel = supabase.channel('group:' + id)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: 'group_id=eq.' + id }, async ({ new: msg }) => {
-        const { data: full } = await supabase.from('messages').select('*, profile:profiles(id,display_name,username,avatar_char,ghost_name)').eq('id', msg.id).single()
+        const { data: full } = await supabase.from('messages').select('*, profile:profiles!messages_user_id_fkey(id,display_name,username,avatar_char,ghost_name)').eq('id', msg.id).single()
         if (full) setMessages(prev => { if (prev.find(m => m.id === full.id)) return prev; return [...prev, full as Message] })
         // New message arrived while the chat is open → mark read so badge stays 0.
         if (userId && msg.user_id !== userId) markGroupRead(id, userId)
@@ -103,7 +103,7 @@ export default function ChatScreen() {
 
   const loadMessages = useCallback(async () => {
     const { data } = await supabase.from('messages')
-      .select('*, profile:profiles(id,display_name,username,avatar_char,ghost_name)')
+      .select('*, profile:profiles!messages_user_id_fkey(id,display_name,username,avatar_char,ghost_name)')
       .eq('group_id', id).eq('deleted_for_all', false)
       .order('created_at', { ascending: true }).limit(100)
     if (data) setMessages(data as Message[])

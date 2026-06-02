@@ -40,10 +40,34 @@ export default function MarketplaceScreen() {
   useFocusEffect(useCallback(() => { load() }, []))
 
   const load = async () => {
-    let q = supabase.from('listings').select('*, profile:profiles(id,display_name,username,avatar_char)').eq('status', 'active').order('created_at', { ascending: false }).limit(50)
-    const { data } = await q
-    setListings(data || [])
-    setLoading(false); setRefreshing(false)
+    try {
+      // Try with profile join first — use explicit foreign key to avoid join ambiguity
+      let q = supabase.from('listings').select('*, profile:profiles!listings_user_id_fkey(id,display_name,username,avatar_char)').eq('status', 'active').order('created_at', { ascending: false }).limit(50)
+      const { data, error } = await q
+      if (error) {
+        console.warn('[MARKETPLACE] Profile join error:', error.code, error.message)
+        // Fallback: try without profile join to see if data exists
+        const { data: raw, error: rawError } = await supabase.from('listings')
+          .select('*').eq('status', 'active').order('created_at', { ascending: false }).limit(50)
+        if (rawError) {
+          console.warn('[MARKETPLACE] Even raw query failed:', rawError.code, rawError.message)
+          setListings([])
+        } else {
+          console.warn('[MARKETPLACE] Raw query succeeded (' + (raw?.length || 0) + ' items) — profile join is broken')
+          setListings(raw || [])
+        }
+      } else {
+        if (data && data.length === 0) {
+          console.warn('[MARKETPLACE] Query succeeded but returned 0 items — checking if table is empty')
+        }
+        setListings(data || [])
+      }
+    } catch (e: any) {
+      console.warn('[MARKETPLACE] Load threw:', e?.message)
+      setListings([])
+    } finally {
+      setLoading(false); setRefreshing(false)
+    }
   }
 
   const createListing = async () => {
