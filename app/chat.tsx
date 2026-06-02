@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { View, Text, FlatList, TextInput, TouchableOpacity, StyleSheet, StatusBar, KeyboardAvoidingView, Platform, Alert, Modal, Pressable, ActivityIndicator } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router'
@@ -249,6 +249,29 @@ export default function ChatScreen() {
   const isWithin15Min = (ts: string) => Date.now() - new Date(ts).getTime() < 15 * 60 * 1000
   const fmt = (ts: string) => new Date(ts).toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit' })
 
+  // Format date header for messages (Today, Yesterday, or date)
+  const fmtDateHeader = (ts: string) => {
+    const msgDate = new Date(ts)
+    const today = new Date()
+    const yesterday = new Date(today)
+    yesterday.setDate(yesterday.getDate() - 1)
+
+    if (msgDate.toDateString() === today.toDateString()) return 'Today'
+    if (msgDate.toDateString() === yesterday.toDateString()) return 'Yesterday'
+    return msgDate.toLocaleDateString('en', { month: 'short', day: 'numeric', year: msgDate.getFullYear() !== today.getFullYear() ? 'numeric' : undefined })
+  }
+
+  // Check if date changed between current and previous message
+  const shouldShowDateHeader = (currentIdx: number): boolean => {
+    if (currentIdx === 0) return true
+    const current = messages[currentIdx]
+    const prev = messages[currentIdx - 1]
+    if (!current || !prev) return false
+    const currDate = new Date(current.created_at).toDateString()
+    const prevDate = new Date(prev.created_at).toDateString()
+    return currDate !== prevDate
+  }
+
   return (
     <View style={[s.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="dark-content" />
@@ -278,14 +301,18 @@ export default function ChatScreen() {
 
       {loading
         ? <View style={{ flex: 1 }} />
-        : <FlatList ref={listRef} data={messages} keyExtractor={m => m.id}
+        : <FlatList ref={listRef} data={messages} keyExtractor={(m, idx) => m.id + ':' + idx}
             style={{ flex: 1 }}
             contentContainerStyle={{ paddingVertical: 8 }}
             onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: false })}
-            renderItem={({ item: msg }) => {
+            renderItem={({ item: msg, index: idx }) => {
               const isMe = msg.user_id === userId
               const isGhost = msg.sender_mode === 'ghost'
               const agentMsg = isAgent(msg.user_id)
+
+              // Show date header if this message is from a different day than the previous one
+              const showDateHeader = shouldShowDateHeader(idx)
+
               if (msg.type === 'system') return <View style={s.systemMsg}><Text style={s.systemText}>{msg.content}</Text></View>
               if (msg.deleted_for_all) return (
                 <View style={[s.msgWrap, isMe && s.msgWrapMe]}>
@@ -296,6 +323,12 @@ export default function ChatScreen() {
                 ? '👻 ' + ((msg.profile as any)?.ghost_name || 'Anonymous')
                 : (contactNames[msg.user_id || ''] || msg.profile?.display_name || msg.profile?.username || 'User')
               return (
+                <View>
+                  {showDateHeader && (
+                    <View style={s.dateHeader}>
+                      <Text style={s.dateHeaderText}>{fmtDateHeader(msg.created_at)}</Text>
+                    </View>
+                  )}
                 <TouchableOpacity onLongPress={() => handleLongPress(msg)} activeOpacity={0.85} style={[s.msgWrap, isMe && s.msgWrapMe]}>
                   {!isMe && (
                     <View style={[s.avatar, agentMsg && s.avatarAgent]}>
@@ -328,6 +361,7 @@ export default function ChatScreen() {
                     </View>
                   </View>
                 </TouchableOpacity>
+                </View>
               )
             }}
           />
@@ -566,4 +600,6 @@ const s = StyleSheet.create({
   sendBtn: { width: 42, height: 42, borderRadius: 21, backgroundColor: PRIMARY, alignItems: 'center', justifyContent: 'center' },
   sendBtnOff: { opacity: 0.4 },
   sendBtnText: { color: '#fff', fontSize: 20, fontWeight: '700' },
+  dateHeader: { alignItems: 'center', paddingVertical: 10, marginVertical: 6 },
+  dateHeaderText: { fontSize: 12, color: GRAY, fontWeight: '500', backgroundColor: 'rgba(0,0,0,0.05)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12 },
 })
